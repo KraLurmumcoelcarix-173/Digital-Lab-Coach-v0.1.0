@@ -46,3 +46,22 @@ def test_parse_blank_lines_only():
     assert res.testcases == []
 
 
+def test_parse_multiple_testcases():
+    text = "add-sub: passed\nALU: failed (33%)\nslt-unit: passed\n"
+    res = parse_cli_output(text)
+    assert len(res.testcases) == 3
+    by_name = res.by_name()
+    assert by_name["add-sub"].status == "passed"
+    assert by_name["ALU"].status == "failed"
+    assert by_name["ALU"].fail_pct == 33
+    assert by_name["slt-unit"].status == "passed"
+
+
+def test_duplicate_name_last_occurrence_wins():
+    """Autograder re-runs the same Testcase; the later result should
+    overwrite the earlier one."""
+    text = "cpu: failed (50%)\ncpu: passed\n"
+    res = parse_cli_output(text)
+    assert len(res.testcases) == 1
+    assert res.testcases[0].status == "passed"
+
