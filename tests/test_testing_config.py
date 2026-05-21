@@ -72,3 +72,31 @@ def test_set_digital_jar_path_preserves_other_config_keys(tmp_path):
         cfg = load_config()
     assert cfg["digital_jar"] == str(fake_jar)
     assert cfg["some_other_setting"] == "preserve_me"
+
+def test_prompt_for_jar_path_returns_none_when_user_cancels(tmp_path):
+    from dlc.testing.config import prompt_for_jar_path
+    with patch("dlc.testing.config._config_dir", return_value=tmp_path):
+        with patch("tkinter.filedialog.askopenfilename", return_value=""):
+            with patch("tkinter.Tk"):
+                assert prompt_for_jar_path() is None
+
+
+def test_prompt_for_jar_path_saves_when_user_picks_file(tmp_path):
+    fake_jar = tmp_path / "Digital.jar"
+    fake_jar.write_text("")
+    from dlc.testing.config import prompt_for_jar_path, get_configured_jar
+    with patch("dlc.testing.config._config_dir", return_value=tmp_path):
+        with patch("tkinter.filedialog.askopenfilename",
+                   return_value=str(fake_jar)):
+            with patch("tkinter.Tk"):
+                result = prompt_for_jar_path()
+    assert result == str(fake_jar)
+    assert get_configured_jar() == str(fake_jar)
+
+
+def test_prompt_for_jar_path_handles_headless_environment(tmp_path):
+    import tkinter as tk
+    from dlc.testing.config import prompt_for_jar_path
+    with patch("dlc.testing.config._config_dir", return_value=tmp_path):
+        with patch("tkinter.Tk", side_effect=tk.TclError("no display")):
+            assert prompt_for_jar_path() is None

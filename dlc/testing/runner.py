@@ -69,6 +69,17 @@ def find_digital_jar() -> str | None:
             return c
     return None
 
+def ensure_digital_jar(interactive: bool = True) -> str | None:
+    """Locate Digital.jar; on miss, optionally prompt the student via a
+    native file dialog.
+    """
+    p = find_digital_jar()
+    if p is not None:
+        return p
+    if not interactive:
+        return None
+    from dlc.testing.config import prompt_for_jar_path
+    return prompt_for_jar_path()        
 
 def run_digital_cli(
     dig_path: str,
@@ -222,14 +233,3 @@ def attach_per_row_results(
             jar_path=jar_path, timeout=timeout,
         )
 
-def ensure_digital_jar(interactive: bool = True) -> str | None:
-    """Locate Digital.jar; on miss, optionally prompt the student via a
-    native file dialog.
-    """
-    p = find_digital_jar()
-    if p is not None:
-        return p
-    if not interactive:
-        return None
-    from dlc.testing.config import prompt_for_jar_path
-    return prompt_for_jar_path()        
