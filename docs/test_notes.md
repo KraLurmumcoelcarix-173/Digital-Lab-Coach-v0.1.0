@@ -238,6 +238,7 @@ print('Saved to graph.png')
 
 ### How to test manually
 
+Fact extractor:
 ```python
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
@@ -251,6 +252,16 @@ print('\nNets:'); [print(f'  net {n.net_id}: {n.pin_count}p ({n.driver_count}d/{
 print('\nComponents (graph view):'); [print(f'  [{c.index}] {c.element_name}({c.label}) preds={c.predecessors} succs={c.successors}') for c in f.components]
 print('\nBugs:'); [print(f'  [{b.kind}] {b.description}') for b in f.bugs]
 "
+```
+
+Json Bundle:
+```python
+uv run python -c "
+from dlc.parser.dig_parser import parse_dig_file
+from dlc.facts.extractor import extract_facts
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')  # your .dig
+print(extract_facts(c).to_json(indent=2))
+" | less
 ```
 
 ## Function 4 — Test result parser (TBD)
