@@ -29,3 +29,8 @@ ta_archive/
 # Build artifacts
 dist/
 build/
+
+# DLC per-row runner: temp .dig files written alongside source for
+# subcircuit resolution. The runner cleans them up; this line guards
+# against a crashed run leaving one behind.
+dlc_row_*.dig

@@ -46,7 +46,6 @@ def set_digital_jar_path(path: str) -> None:
     save_config(cfg)
 
     
-
 def prompt_for_jar_path() -> str | None:
     """Pop up a native file picker so the student can locate Digital.jar
     without typing anything."""
