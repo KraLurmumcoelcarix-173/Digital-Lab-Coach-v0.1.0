@@ -44,3 +44,31 @@ def set_digital_jar_path(path: str) -> None:
     cfg = load_config()
     cfg["digital_jar"] = str(p)
     save_config(cfg)
+
+    
+
+def prompt_for_jar_path() -> str | None:
+    """Pop up a native file picker so the student can locate Digital.jar
+    without typing anything."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return None
+
+    try:
+        root = tk.Tk()
+        root.withdraw()       
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(
+            title="Locate Digital.jar",
+            filetypes=[("Java JAR", "*.jar"), ("All files", "*.*")],
+        )
+        root.destroy()
+    except tk.TclError:
+        return None
+
+    if not path:
+        return None              
+    set_digital_jar_path(path)
+    return path
