@@ -99,4 +99,114 @@ def _tokenize(raw: str) -> Token:
         return Token(raw=s, kind="unknown", value=None)
 
 
+# Line-level parsing
 
+def _strip_inline_comment(line: str) -> str:
+    """Drop everything from the first `#` to the end of the line."""
+    idx = line.find("#")
+    if idx < 0:
+        return line
+    return line[:idx]
+
+
+def _is_loop_marker(line: str) -> bool:
+    s = line.strip()
+    if s.startswith("loop(") and s.endswith(")"):
+        return True
+    if s == "end loop":
+        return True
+    return False
+
+
+def parse_data_string(text: str) -> tuple[list[str], list[TestRow], bool]:
+    """Parse a Digital dataString into (headers, rows, has_unexpanded_loops)."""
+    headers: list[str] = []
+    rows: list[TestRow] = []
+    has_loops = False
+    next_row_index = 0
+
+    for raw_line in text.splitlines():
+        stripped = _strip_inline_comment(raw_line).strip()
+        if not stripped:
+            continue
+        if _is_loop_marker(stripped):
+            has_loops = True
+            continue
+        if not headers:
+            headers = stripped.split()
+            continue
+        tokens_raw = stripped.split()
+        if len(tokens_raw) != len(headers):
+            rows.append(TestRow(
+                raw=stripped, values=[], line_index=next_row_index,
+                is_malformed=True,
+            ))
+        else:
+            rows.append(TestRow(
+                raw=stripped,
+                values=[_tokenize(t) for t in tokens_raw],
+                line_index=next_row_index,
+                is_malformed=False,
+            ))
+        next_row_index += 1
+
+    return headers, rows, has_loops
+
+
+# Public API
+
+def extract_test_specs(circuit: Circuit) -> list[TestSpec]:
+    """Build a TestSpec for every Testcase element in `circuit`.
+    """
+    specs: list[TestSpec] = []
+    for idx, comp in enumerate(circuit.components):
+        if comp.element_name != "Testcase":
+            continue
+        raw = comp.attributes.get("Testdata", "")
+        if not isinstance(raw, str):
+            raw = ""
+        headers, rows, has_loops = parse_data_string(raw)
+        name = comp.label or f"Testcase_{idx}"
+        specs.append(TestSpec(
+            name=name,
+            component_index=idx,
+            headers=headers,
+            rows=rows,
+            raw_data_string=raw,
+            has_unexpanded_loops=has_loops,
+        ))
+    return specs
+
+
+def match_variables_to_io(
+    headers: list[str], circuit: Circuit
+) -> dict[str, VariableBinding]:
+    """Resolve each header column name against the circuit's top-level
+    In, Out, and Clock components by Label."""
+    by_in: dict[str, tuple[int, object]] = {}
+    by_out: dict[str, tuple[int, object]] = {}
+    by_clock: dict[str, tuple[int, object]] = {}
+    for i, comp in enumerate(circuit.components):
+        if comp.label is None:
+            continue
+        if comp.is_input():
+            by_in[comp.label] = (i, comp)
+        elif comp.is_output():
+            by_out[comp.label] = (i, comp)
+        elif comp.element_name == "Clock":
+            by_clock[comp.label] = (i, comp)
+
+    out: dict[str, VariableBinding] = {}
+    for var in headers:
+        if var in by_in:
+            i, comp = by_in[var]
+            out[var] = VariableBinding(var, "input", i, comp.bit_width())
+        elif var in by_out:
+            i, comp = by_out[var]
+            out[var] = VariableBinding(var, "output", i, comp.bit_width())
+        elif var in by_clock:
+            i, comp = by_clock[var]
+            out[var] = VariableBinding(var, "clock", i, 1)
+        else:
+            out[var] = VariableBinding(var, "unbound", None, None)
+    return out
