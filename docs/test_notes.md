@@ -17,20 +17,6 @@ uv run pytest -k subcircuit                # Name-match filter
 uv run pytest tests/test_netlist.py::test_buggy_multi_driver_flags_one_net_with_two_drivers
                                            # Run one specific test
 ```
-
-| File | Covers | # tests |
-|---|---|---:|
-| `tests/test_parser.py` | F1: parser, errors, subcircuit resolution | 21 |
-| `tests/test_pin_geometry.py` | F2: pin offset tables + rotation | 18 |
-| `tests/test_netlist.py` | F2: nets, buggy samples, subcircuit pin direction | 21 |
-| `tests/test_graph.py` | F2: signal-flow graph + reachability | 11 |
-| `tests/test_facts_splitter.py` | F3 Stage 1: splitter bit-range parser | 12 |
-| `tests/test_facts_widths.py` | F3 Stage 2: per-pin bit-width helpers | 27 |
-| `tests/test_facts_net_width.py` | F3 Stage 3: per-net width inference + conflicts | 9 |
-| `tests/test_facts_extractor.py` | F3 Stage 4: CircuitFacts bundle | 27 |
-| `tests/test_facts_serialization.py` | F3 Stage 5: `to_dict()` / `to_json()` JSON export | 19 |
-| **Total** | | **165 basic tests** |
-
 ---
 
 ## Function 1 — Parser (`test_parser.py`)
@@ -44,6 +30,8 @@ A `Circuit` object containing:
 - `format_version`, `source_path`
 
 ### How to test manually
+
+Baisc info:
 
 ```python
 uv run python -c "
@@ -63,7 +51,6 @@ for i, comp in enumerate(c.components):
     attrs = {k: v for k, v in comp.attributes.items() if k != 'Label'}
     print(f'  [{i}] {comp.element_name} @ ({comp.position.x},{comp.position.y}) label={comp.label} attrs={attrs}')
 "
-# basic info
 ```
 
 ---
@@ -155,6 +142,7 @@ for in_idx, outs in reach.items():
 
 
 Text dumb visulization: 
+
 ```python
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
@@ -180,6 +168,7 @@ for u, v, data in g.edges(data=True):
 
 
 Visulization: 
+
 ```python
 uv run --with matplotlib python -c "
 from dlc.parser.dig_parser import parse_dig_file
@@ -247,6 +236,7 @@ print('Saved to graph.png')
 ### How to test manually
 
 Per net width:
+
 ```python
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
@@ -262,6 +252,7 @@ print(f'conflicts: {conflicts}') "
 
 
 Fact extractor:
+
 ```python
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
@@ -277,8 +268,8 @@ print('\nBugs:'); [print(f'  [{b.kind}] {b.description}') for b in f.bugs]
 "
 ```
 
-
 Json Bundle:
+
 ```python
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
@@ -288,8 +279,88 @@ print(extract_facts(c).to_json(indent=2))
 " | less
 ```
 
-## Function 4 — Test result parser (TBD)
+## Function 4 — Test result parser
 
+F4 turns each `.dig`'s embedded Testcase data into structured test specs,
+parses Digital's CLI text output, and (optionally) re-runs Digital
+one row at a time to identify which specific rows fail. Tests across
+four files:
+
+- `tests/test_testing_spec.py` — testData → `TestSpec`.
+- `tests/test_testing_results.py` — CLI text → `TestRunResults`.
+- `tests/test_testing_run.py` — `TestSpec × TestRunResults` join.
+- `tests/test_testing_runner.py` — Digital subprocess per-row runner.
+- `tests/test_testing_config.py` — jar location config + file picker.
+
+#### How to test manually
+
+Set up the jar path:
+
+```python
+uv run python -c "
+from dlc.testing.config import (
+    set_digital_jar_path, get_configured_jar, prompt_for_jar_path,
+)
+TARGET_JAR = r'C:\Users\...\Digital.jar'  # your jar
+set_digital_jar_path(TARGET_JAR)
+print(f'Saved: {get_configured_jar()}')
+"
+```
+
+Rough overview:
+
+```python
+uv run python -c "
+from dlc.parser.dig_parser import parse_dig_file
+from dlc.testing.spec import extract_test_specs, match_variables_to_io
+
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig'  # your .dig
+
+circuit = parse_dig_file(TARGET_DIG)
+for spec in extract_test_specs(circuit):
+    print(f'Testcase \"{spec.name}\"')
+    print(f'  headers: {spec.headers}')
+    print(f'  rows: {spec.well_formed_row_count()}/{spec.row_count()} well-formed')
+    print(f'  has_unexpanded_loops: {spec.has_unexpanded_loops}')
+    bindings = match_variables_to_io(spec.headers, circuit)
+    print(f'  bindings:')
+    for var, b in bindings.items():
+        bw = f'{b.bit_width}-bit' if b.bit_width else 'n/a'
+        print(f'    {var:14s} → {b.role:7s} {bw}')
+    if spec.rows:
+        print(f'  first 3 rows:')
+        for row in spec.rows[:3]:
+            tokens = [f'{t.raw}={t.value if t.kind == \"int\" else t.kind}' for t in row.values]
+            print(f'    [{row.line_index}] {\" \".join(tokens)}')
+"
+```
+Per row test:
+
+```python
+uv run python -c "
+from dlc.parser.dig_parser import parse_dig_file
+from dlc.testing.spec import extract_test_specs
+from dlc.testing.runner import per_row_run, find_digital_jar
+
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig'  # your .dig
+
+circuit = parse_dig_file(TARGET_DIG)
+spec = extract_test_specs(circuit)[0]
+jar = find_digital_jar()
+print(f'Using Digital.jar: {jar or \"(NOT FOUND — set DIGITAL_JAR or run set_digital_jar_path)\"}')
+print(f'Running {spec.row_count()} rows of testcase \"{spec.name}\"...')
+per_row = per_row_run(spec, TARGET_DIG, jar_path=jar)
+print()
+print(f'{\"row\":>3}  {\"status\":<6}  row text')
+print('-' * 60)
+for r in per_row:
+    raw = spec.rows[r.row_index].raw
+    marker = {'passed':'PASS', 'failed':'FAIL', 'no_run':'SKIP', 'error':'ERR'}[r.status]
+    print(f'{r.row_index:>3}  {marker:<6}  {raw}')
+    if r.error_message:
+        print(f'      ↳ {r.error_message}')
+"
+```
 
 ---
 
