@@ -51,6 +51,12 @@ def find_digital_jar() -> str | None:
     if env and Path(env).exists():
         return env
 
+    from dlc.testing.config import get_configured_jar
+    cfg_path = get_configured_jar()
+    if cfg_path is not None:
+        return cfg_path
+
+    home = Path.home()
     candidates = [
         "/usr/local/share/Digital/Digital.jar",
         "/usr/share/Digital/Digital.jar",
