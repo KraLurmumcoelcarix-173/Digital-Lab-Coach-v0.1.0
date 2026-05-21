@@ -35,16 +35,12 @@ from dlc.facts.net_width import infer_net_widths, NetWidthInfo, WidthConflict
 from dlc.facts.width import pin_width
 
 
-# Elements that break a combinational cycle. Conservative for F3; F8 will
-# refine (e.g. only count a Register as breaking if the Clock pin is
-# actually wired, etc.).
 _CLOCKED_ELEMENTS = frozenset({
     "Register", "Clock", "RAM", "D-FlipFlop", "JK-FF", "T-FF", "Counter",
 })
 
 
 # Data records
-
 
 @dataclass
 class IOFact:
