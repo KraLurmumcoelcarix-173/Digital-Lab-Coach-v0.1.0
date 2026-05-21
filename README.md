@@ -25,6 +25,7 @@ Digital.jar locally if you want that feature.
    ```bash
    # macOS / Linux
    export DIGITAL_JAR=/path_to_Digital/Digital.jar
+   
    # Windows (PowerShell)
    $env:DIGITAL_JAR = "C:\path_to_Digital\Digital.jar"
 

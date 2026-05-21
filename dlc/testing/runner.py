@@ -173,13 +173,16 @@ def per_row_run(
                 continue
             run = parse_cli_output(output)
             tc = run.by_name().get(spec.name)
+            if tc is None and len(run.testcases) == 1:
+                tc = run.testcases[0]
             if tc is None:
+                names_seen = ", ".join(t.name for t in run.testcases) or "<none>"
                 results.append(PerRowResult(
                     spec_name=spec.name, row_index=row.line_index,
                     status="error",
                     error_message=(
-                        f"Digital ran but emitted no result line for "
-                        f"testcase {spec.name!r}"
+                        f"Digital ran but emitted no matching result line for "
+                        f"testcase {spec.name!r}; saw: {names_seen}"
                     ),
                     raw_output=output,
                 ))
