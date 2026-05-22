@@ -35,7 +35,7 @@ runs Digital's CLI as a subprocess, so it needs to know where your `Digital.jar`
 
 ### Setting it up
 Download Digital from
-<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog catch your jar.
+<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar.
 
 If you'd rather configure it manually:
 
@@ -56,6 +56,22 @@ If you're contributing to DLC:
 
 Need Python version >=3.12, 3.12 would be the best for developing
 
+**Linux only — install tkinter at the OS level:**
+`uv`-managed Python and many distro Pythons don't bundle tkinter.
+DLC needs it for the first-run Digital.jar file-picker dialog and
+for 3 file-picker tests in the suite. macOS and Windows ship tkinter
+with python.org Python — skip this step there.
+
+```bash
+# Debian / Ubuntu
+sudo apt install python3-tk
+# Fedora / RHEL
+sudo dnf install python3-tkinter
+# Arch
+sudo pacman -S tk
+```
+
+**General:**
 ```bash
 # Install uv once (skip if already installed)
 # macOS / Linux:
@@ -72,7 +88,7 @@ uv run pytest      # creates .venv on first call
 > **Students:** same setup applies until we ship a packaged release.
 > Install `uv`, clone, and `uv run` whatever entry point we land for
 > the student CLI/GUI later. The first run pops up the Digital.jar file
-> picker; 
+> picker.
 
 ## License
 
