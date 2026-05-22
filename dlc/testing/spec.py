@@ -9,7 +9,7 @@ match each header column to a top-level circuit port.
 from dataclasses import dataclass, field
 
 from dlc.parser.models import Circuit
-
+import re
 
 @dataclass(frozen=True)
 class Token:
@@ -108,6 +108,23 @@ def _strip_inline_comment(line: str) -> str:
         return line
     return line[:idx]
 
+_LOOP_OPEN_RE = re.compile(r'^loop\(\s*(\w+)\s*,\s*(\d+)\s*\)$')
+
+
+def _expand_loop_line(line: str, var: str, n: int) -> str:
+    pattern = re.compile(rf'\(\s*{re.escape(var)}\s*([+\-])?\s*(\d+)?\s*\)')
+    def repl(m):
+        op, num = m.group(1), m.group(2)
+        if op is None and num is None:
+            val = n
+        elif op == '+':
+            val = n + int(num)
+        elif op == '-':
+            val = n - int(num)
+        else:
+            return m.group(0)
+        return str(val)
+    return pattern.sub(repl, line)
 
 def _is_loop_marker(line: str) -> bool:
     s = line.strip()
@@ -119,22 +136,19 @@ def _is_loop_marker(line: str) -> bool:
 
 
 def parse_data_string(text: str) -> tuple[list[str], list[TestRow], bool]:
-    """Parse a Digital dataString into (headers, rows, has_unexpanded_loops)."""
+    
     headers: list[str] = []
     rows: list[TestRow] = []
-    has_loops = False
+    has_unexpanded = False
     next_row_index = 0
 
-    for raw_line in text.splitlines():
-        stripped = _strip_inline_comment(raw_line).strip()
-        if not stripped:
-            continue
-        if _is_loop_marker(stripped):
-            has_loops = True
-            continue
-        if not headers:
-            headers = stripped.split()
-            continue
+    in_loop = False
+    loop_var: str | None = None
+    loop_count = 0
+    loop_body: list[str] = []
+
+    def emit(stripped: str) -> None:
+        nonlocal next_row_index, has_unexpanded
         tokens_raw = stripped.split()
         if len(tokens_raw) != len(headers):
             rows.append(TestRow(
@@ -142,15 +156,50 @@ def parse_data_string(text: str) -> tuple[list[str], list[TestRow], bool]:
                 is_malformed=True,
             ))
         else:
+            row_tokens = [_tokenize(t) for t in tokens_raw]
             rows.append(TestRow(
-                raw=stripped,
-                values=[_tokenize(t) for t in tokens_raw],
-                line_index=next_row_index,
+                raw=stripped, values=row_tokens, line_index=next_row_index,
                 is_malformed=False,
             ))
+            if any(t.kind == "loop_expr" for t in row_tokens):
+                has_unexpanded = True
         next_row_index += 1
 
-    return headers, rows, has_loops
+    for raw_line in text.splitlines():
+        stripped = _strip_inline_comment(raw_line).strip()
+        if not stripped:
+            continue
+
+        loop_match = _LOOP_OPEN_RE.match(stripped)
+        if loop_match:
+            in_loop = True
+            loop_var = loop_match.group(1)
+            loop_count = int(loop_match.group(2))
+            loop_body = []
+            continue
+        if stripped == "end loop":
+            if loop_var is not None and loop_count > 0:
+                for n in range(loop_count):
+                    for body_line in loop_body:
+                        emit(_expand_loop_line(body_line, loop_var, n))
+            in_loop = False
+            loop_var = None
+            loop_count = 0
+            loop_body = []
+            continue
+        if in_loop:
+            loop_body.append(stripped)
+            continue
+
+        if not headers:
+            headers = stripped.split()
+            continue
+        emit(stripped)
+
+    if in_loop:
+        has_unexpanded = True
+
+    return headers, rows, has_unexpanded
 
 
 # Public API

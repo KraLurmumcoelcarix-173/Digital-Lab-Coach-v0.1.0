@@ -111,19 +111,89 @@ def test_parse_data_string_skips_comment_only_lines_and_blanks():
     assert not has_loops
 
 
-def test_parse_data_string_flags_loop_blocks():
+def test_parse_data_string_expands_loop_blocks():
     text = (
-        "WriteReg WriteData RegWrite Clock\n"
+        "A B C D\n"
         "loop(N, 30)\n"
         "(N+1) (N+1) 1 C\n"
         "end loop\n"
     )
-    headers, rows, has_loops = parse_data_string(text)
-    assert headers == ["WriteReg", "WriteData", "RegWrite", "Clock"]
-    assert has_loops
-    assert len(rows) == 1
-    assert rows[0].values[0].kind == "loop_expr"
+    headers, rows, has_unexpanded = parse_data_string(text)
+    assert headers == ["A", "B", "C", "D"]
+    assert len(rows) == 30
+    assert not has_unexpanded
+    assert rows[0].values[0].kind == "int"
+    assert rows[0].values[0].value == 1
     assert rows[0].values[3].kind == "clock"
+    assert rows[29].values[0].value == 30
+
+
+def test_loop_expansion_handles_negative_results():
+    text = "A B\nloop(N, 3)\n(N+1) (N-60)\nend loop\n"
+    _, rows, _ = parse_data_string(text)
+    assert [r.values[1].value for r in rows] == [-60, -59, -58]
+    assert [r.values[0].value for r in rows] == [1, 2, 3]
+
+
+def test_register_file_full_dataString_expands_to_93_rows():
+    text = (
+        "WriteReg WriteData RegWrite Clock ReadReg1 ReadReg2 ReadData1 ReadData2\n"
+        "\n"
+        "# $1 = 25\n"
+        "1 25 1 C 1 0 25 0\n"
+        "\n"
+        "# $2 = 30\n"
+        "2 30 1 C 0 2 0 30\n"
+        "\n"
+        "loop(N, 30)\n"
+        "(N+1) (N+1) 1 C (N+1) (N) (N+1) (N)\n"
+        "end loop\n"
+        "\n"
+        "loop(N, 30)\n"
+        "(N+1) (N-60) 1 C (N+1) (N+1) (N-60) (N-60)\n"
+        "end loop\n"
+        "\n"
+        "0 25 1 C 0 0 0 0\n"
+        "\n"
+        "loop(N, 30)\n"
+        "(N+1) (N+80) 0 C (N+1) (N+1) (N-60) (N-60)\n"
+        "end loop\n"
+    )
+    _, rows, has_unexpanded = parse_data_string(text)
+    assert len(rows) == 93
+    assert not has_unexpanded
+    assert rows[2].values[0].value == 1
+    assert rows[2].values[5].value == 0
+    assert rows[32].values[1].value == -60
+
+
+def test_unrecognized_loop_variable_keeps_loop_expr_and_flags_unexpanded():
+    text = "A\nloop(N, 3)\n(M)\nend loop\n"
+    _, rows, has_unexpanded = parse_data_string(text)
+    assert len(rows) == 3
+    assert all(r.values[0].kind == "loop_expr" for r in rows)
+    assert has_unexpanded
+
+
+def test_unclosed_loop_block_flags_unexpanded():
+    text = "A\nloop(N, 3)\n(N+1)\n"
+    _, rows, has_unexpanded = parse_data_string(text)
+    assert rows == []
+    assert has_unexpanded
+
+
+def test_multiple_loops_in_one_datastring():
+    text = (
+        "A B\n"
+        "loop(N, 2)\n(N+1) (N)\nend loop\n"
+        "loop(K, 3)\n(K) (K+10)\nend loop\n"
+    )
+    _, rows, has_unexpanded = parse_data_string(text)
+    assert len(rows) == 5     
+    assert not has_unexpanded
+    assert rows[0].values[0].value == 1   
+    assert rows[2].values[0].value == 0   
+    assert rows[4].values[1].value == 12  
 
 def test_parse_data_string_malformed_row_recorded_but_kept():
 
