@@ -231,7 +231,7 @@ print('Saved to graph.png')
 
 ---
 
-## Function 3 — Structural fact extractor (TBD)
+## Function 3 — Structural fact extractor
 
 ### How to test manually
 
@@ -400,9 +400,9 @@ Wallclock: roughly N × JVM-startup, roughly N seconds. Takes minutes for files 
 | Need | Use | Wallclock |
 |---|---|:-:|
 | Combinational circuit, quick check | Mode A | fast |
-| Stateful circuit, debugging a regression | Mode B | slower but correct |
+| Stateful circuit, debugging a regression | Mode B | slower but correct and feeds per row result to LLM |
 
-TBD: Eventually the L3 UI will surface this as a checkbox: "Get per-row
+TBD: Eventually the Layer 3 UI will surface this as a checkbox: "Get per-row
 diagnostics (slower)". For now, call the right function directly.
 ---
 
