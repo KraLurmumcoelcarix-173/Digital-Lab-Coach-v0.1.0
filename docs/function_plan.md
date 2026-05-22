@@ -1,15 +1,15 @@
 # Function Plan (F1 – F21)
 
-## Tier 1 — Core analyzer (no LLM)
+## Core analyzer (no LLM)
 
 | # | Name | Status |
 |---|---|:-:|
-| F1 | `.dig` parser | done |
-| F2 | Circuit netlist + signal-flow graph | done |
-| F3 | Structural fact extractor | done |
+| F1 | `.dig` parser | Done |
+| F2 | Circuit netlist + signal-flow graph | Done |
+| F3 | Structural fact extractor | Done |
 | F4 | Test-result parser | Done |
 
-## Tier 2 — Layer 1 deterministic checkers
+## Layer 1 deterministic checkers
 
 | # | Name | Status |
 |---|---|:-:|
@@ -18,9 +18,9 @@
 | F7 | Combinational-loop checker | TBD |
 | F8 | Interface conformance checker | TBD |
 | F9 | Timing / sequential checker (register-clock-Q) | TBD |
-| F10 | K-map / Boolean simplification checker | TBD |
+| F10 | K-map / Boolean simplification PRO | TBD |
 
-## Tier 3 — Layer 2 LLM conceptual explanation
+## Layer 2 LLM conceptual explanation
 
 | # | Name | Status |
 |---|---|:-:|
@@ -28,7 +28,7 @@
 | F12 | Conceptual explanation generator | TBD |
 | F13 | Prompt-leakage guard | TBD |
 
-## Tier 4 — Layer 3 LLM strategic debugging
+## Layer 3 LLM strategic debugging
 
 | # | Name | Status |
 |---|---|:-:|
@@ -36,7 +36,7 @@
 | F15 | Test-writing coach | TBD |
 | F16 | Signal-flow narrator | TBD |
 
-## Tier 5 — Research infrastructure
+## Research infrastructure
 
 | # | Name | Status |
 |---|---|:-:|
