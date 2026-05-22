@@ -21,8 +21,8 @@ Active development.
 | `dlc/telemetry/` | Per-interaction logging to a local SQLite database. 
 | `dlc/cli/` | Command-line entrypoint that wires the layers together for student use. 
 | `prompts/` | Versioned LLM prompt templates — one file per prompt variant, consumed by `dlc/llm/`. 
-| `configs/` | Per-lab YAML configs (expected I/Os, handout context). 
-| `data/sample_circuits/` | Test fixtures — public sample circuits created by author. 
+| `configs/` | Per-lab YAML configs (expected I/Os, handout context etc.). 
+| `data/sample_circuits/` | Test fixtures — public sample circuits created by authors. 
 | `docs/` | Architecture notes, design decisions, dev log, dev debug guide. 
 | `tests/` | pytest unit tests, one file per source module. 
 

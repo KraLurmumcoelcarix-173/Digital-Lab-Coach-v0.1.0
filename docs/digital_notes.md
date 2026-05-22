@@ -1,6 +1,6 @@
 # Digital Notes
 
-Last updated: 2026/5/19
+Last updated: 2026/5/23
 
 ---
 
@@ -99,8 +99,8 @@ Digital's coordinate system: x increases rightward, y increases downward. Anchor
 
 - **Dangling input** — input pin with no wire endpoint at its predicted coord. Detected as a singleton net containing only sink-direction pins.
 - **Multi-driver** — two or more outputs feeding the same net. Detected by `len(net.drivers()) > 1`.
-- **Combinational loop** — cycle of purely combinational gates without a clocked register breaking it. Detected via `networkx.simple_cycles(g)` (clock filtering deferred to F8).
-- **Bit-width mismatch** — N-bit signal feeding an M-bit pin. Requires splitter bit-range parsing and per-net width inference (F6 prerequisite).
+- **Combinational loop** — cycle of purely combinational gates without a clocked register breaking it. Detected via `networkx.simple_cycles(g)` (F8).
+- **Bit-width mismatch** — N-bit signal feeding an M-bit pin. Requires splitter bit-range parsing and per-net width inference.
 - **Miswire / wrong-pin / wrong-input-position** — connected to wrong pin, surfaces as a failed test vector. Layer 1 sees a valid topology; Layer 3 detects the semantic mismatch.
 
 Digital does NOT flag multi-driver on load. The error only surfaces at simulation time, and only when a signal actually traverses the conflicted net.
@@ -151,8 +151,8 @@ The ablation contrast (Layer 1 alone vs Layer 1+3 vs Layer 3 alone) is the proje
 - Subcircuit reference path issues when sharing labs across machines.
 
 ### Features we'd want DLC to add or enhance
-- Inline highlighting of dangling pins / multi-driver nets at edit time (before simulation).
-- Component-level reachability annotation ("this output is unused", "this input is undriven").
+- Inline highlighting of dangling pins / multi-driver nets at edit time (before simulation). [done]
+- Component-level reachability annotation ("this output is unused", "this input is undriven"). [done]
 
 ## Parser scope policy
 
@@ -182,12 +182,12 @@ all transistor-level elements, FSM elements, FPGA-board-specific blocks, Verilog
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 
-1. **Splitter bit-range parsing** — `"25-31, 24-20, …"` strings are stored as raw text. F3/F6 prerequisite.
+1. **Splitter bit-range parsing** — `"25-31, 24-20, …"` strings are stored as raw text. F3/F6 prerequisite. [done]
 2. **Cycle filtering for clocked feedback** — `simple_cycles(g)` finds all cycles, including legitimate Register feedback through Clock. F8 needs to subtract cycles passing through a clocked element.
 3. **Stable component IDs across edits** — currently `enumerate(components)` index; will need content-hash or position-hash for diff reports.
 
 ## Open Questions under investigation
 
 - How does Digital handle missing subcircuit files? (Investigating)
-- Does Digital's CLI mode produce structured output (JSON?) or only human-readable text? (Investigating)
+- Does Digital's CLI mode produce structured output (JSON?) or only human-readable text? [done]
 - Where exactly does Java plugin API expose hooks for adding analysis panels? (Path 3 question, defer investigation)
