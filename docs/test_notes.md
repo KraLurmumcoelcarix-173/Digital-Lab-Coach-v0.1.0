@@ -342,7 +342,7 @@ from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs
 from dlc.testing.runner import per_row_run, find_digital_jar
 
-TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/register-file.dig'  # your .dig
 
 circuit = parse_dig_file(TARGET_DIG)
 spec = extract_test_specs(circuit)[0]
