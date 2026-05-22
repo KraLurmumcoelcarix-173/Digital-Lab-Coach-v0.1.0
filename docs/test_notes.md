@@ -404,7 +404,7 @@ Wallclock: roughly N × JVM-startup, roughly N seconds. Takes minutes for files 
 ---
 
 
-### Key tests — what each guarantees
+## Key tests — what each guarantees
 
 #### Function 1 — Parser
 
@@ -422,8 +422,6 @@ Wallclock: roughly N × JVM-startup, roughly N seconds. Takes minutes for files 
 | Test | If it fails… | File |
 |---|---|---|
 | `test_tokenize_*` (decimal / hex / binary / parens-negative / clock / highZ / dontcare / loop_expr) | One of Digital's testdata cell forms no longer parses. | `tests/test_testing_spec.py` |
-| `test_parse_data_string_strips_inline_comments` | cpu.dig's `# addi x4, x0, -20` comments break the row parser. | `tests/test_testing_spec.py` |
-| `test_parse_data_string_skips_comment_only_lines_and_blanks` | alu.dig's section headers and blank lines break the row count. | `tests/test_testing_spec.py` |
 | `test_parse_data_string_expands_loop_blocks` | `loop(N, 30) … end loop` no longer expands; register-file's 93 rows collapse. | `tests/test_testing_spec.py` |
 | `test_loop_expansion_wraps_negative_results_in_parens` | Negative loop-expansion outputs back to bare `-60`; Digital rejects them and per-row hits "saw: \<none\>". | `tests/test_testing_spec.py` |
 | `test_parse_handles_java_log_noise_around_result` | Autograder Java logger noise around `cpu: passed` is no longer tolerated. | `tests/test_testing_results.py` |
