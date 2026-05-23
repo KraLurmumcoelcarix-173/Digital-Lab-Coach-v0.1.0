@@ -130,7 +130,7 @@ uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.netlist import build_netlist
 from dlc.parser.graph import build_signal_graph, reachable_outputs_from_inputs
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_latched_display.dig') # your .dig
 nl = build_netlist(c)
 g = build_signal_graph(c, nl)
 reach = reachable_outputs_from_inputs(c, g)
@@ -176,7 +176,7 @@ from dlc.parser.netlist import build_netlist
 from dlc.parser.graph import build_signal_graph
 import networkx as nx, matplotlib.pyplot as plt
 
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_latched_display.dig') # your .dig
 nl = build_netlist(c)
 g = build_signal_graph(c, nl)
 
@@ -314,7 +314,7 @@ uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs, match_variables_to_io
 
-TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_latched_display.dig'  # your .dig
 
 circuit = parse_dig_file(TARGET_DIG)
 for spec in extract_test_specs(circuit):
@@ -374,7 +374,7 @@ from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs
 from dlc.testing.runner import per_row_run, find_digital_jar
 
-TARGET_DIG = 'data/sample_circuits/tier3_realistic/alu.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_latched_display.dig'  # your .dig
 
 circuit = parse_dig_file(TARGET_DIG)
 spec = extract_test_specs(circuit)[0]

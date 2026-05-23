@@ -26,30 +26,6 @@ Active development.
 | `docs/` | Architecture notes, design decisions, dev log, dev debug guide. 
 | `tests/` | pytest unit tests, one file per source module. 
 
-## Optional: Digital.jar for per-row test verification
-
-DLC's structural analysis works on any `.dig` file with no extra setup.
-
-**For per-row pass/fail diagnostics and failing test analysis**, the tool 
-runs Digital's CLI as a subprocess, so it needs to know where your `Digital.jar` is.
-
-### Setting it up
-Download Digital from
-<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar.
-
-If you'd rather configure it manually:
-
-```bash
-# Option A 
-uv run python -c "from dlc.testing.config import set_digital_jar_path; set_digital_jar_path(r'PATH_TO_YOUR_Digital.jar')"
-
-# Option B 
-# macOS / Linux
-export DIGITAL_JAR=/path_to_Digital/Digital.jar
-# Windows PowerShell
-$env:DIGITAL_JAR = "C:\path_to_Digital\Digital.jar"
-```
-
 ## Developer setup
 
 If you're contributing to DLC:
@@ -89,6 +65,30 @@ uv run pytest      # creates .venv on first call
 > Install `uv`, clone, and `uv run` whatever entry point we land for
 > the student CLI/GUI later. The first run pops up the Digital.jar file
 > picker.
+
+## User and Developer Optional setup: Digital.jar for per-row test verification
+
+DLC's structural analysis works on any `.dig` file with no extra setup.
+
+**For per-row pass/fail diagnostics and failing test analysis**, the tool 
+runs Digital's CLI as a subprocess, so it needs to know where your `Digital.jar` is.
+
+### Setting it up
+Download Digital from
+<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar.
+
+If you'd rather configure it manually:
+
+```bash
+# Option A 
+uv run python -c "from dlc.testing.config import set_digital_jar_path; set_digital_jar_path(r'PATH_TO_YOUR_Digital.jar')"
+
+# Option B 
+# macOS / Linux
+export DIGITAL_JAR=/path_to_Digital/Digital.jar
+# Windows PowerShell
+$env:DIGITAL_JAR = "C:\path_to_Digital\Digital.jar"
+```
 
 ## License
 
