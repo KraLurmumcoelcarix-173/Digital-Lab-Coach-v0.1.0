@@ -125,6 +125,11 @@ def pin_width(component: Component, pin_name: str) -> int | None:
     if e == "Splitter":
         return _splitter_group_width(component, pin_name)
     
+    if e == "Seven-Seg":
+        if pin_name in ("a", "b", "c", "d", "e", "f", "g", "dp"):
+            return 1
+        return None
+    
     if e == "Tunnel":
         return None
     

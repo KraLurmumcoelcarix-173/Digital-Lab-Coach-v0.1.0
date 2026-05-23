@@ -65,6 +65,17 @@ _ROM_PINS = [
     PinSpec("D",   80, 20, "out"),
 ]
 
+_SEVEN_SEG_PINS = [
+    PinSpec("a",  offset_x=0,  offset_y=-40, direction="in"),
+    PinSpec("b",  offset_x=20, offset_y=-40, direction="in"),
+    PinSpec("c",  offset_x=40, offset_y=-40, direction="in"),
+    PinSpec("d",  offset_x=60, offset_y=-40, direction="in"),
+    PinSpec("e",  offset_x=0,  offset_y=180, direction="in"),
+    PinSpec("f",  offset_x=20, offset_y=180, direction="in"),
+    PinSpec("g",  offset_x=40, offset_y=180, direction="in"),
+    PinSpec("dp", offset_x=60, offset_y=240, direction="in"),
+]
+
 STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
     "Not":    _NOT_PINS,
     "In":     _INPUT_PINS,
@@ -78,6 +89,7 @@ STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
     "BitExtender":   _BITEXTENDER_PINS,
     "BarrelShifter": _BARREL_SHIFTER_PINS,
     "ROM":    _ROM_PINS,
+    "Seven-Seg": _SEVEN_SEG_PINS,
 }
 
 def _nary_gate_pins(comp: Component) -> list[PinSpec]:
