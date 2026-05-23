@@ -6,8 +6,7 @@ Last updated: 2026/5/23
 
 ## Quick reference
 
-From repo root using bash (These are all sample circuit tests, if you want to manually test a new .dig refer to 
-" How to test manually" in each function specified below):
+From repo root using bash (These are all sample circuit tests, if you want to manually test a new .dig refer to " How to test manually" in each function specified below):
 
 ```bash
 uv run pytest                              # Run all tests
@@ -301,7 +300,7 @@ uv run python -c "
 from dlc.testing.config import (
     set_digital_jar_path, get_configured_jar, prompt_for_jar_path,
 )
-TARGET_JAR = r'C:\Users\...\Digital.jar'  # your jar
+TARGET_JAR = r'"C:/Users/.../Digital.jar"'  # your jar
 set_digital_jar_path(TARGET_JAR)
 print(f'Saved: {get_configured_jar()}')
 "

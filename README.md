@@ -61,6 +61,22 @@ cd digital-lab-coach
 uv run pytest      # creates .venv on first call
 ```
 
+**Windows quirks**
+
+```markdown
+> - The shell installer only updates the shell it's run from. If you
+>   install `uv` via Git Bash but want to use it from PowerShell, run
+>   the PowerShell installer too.
+>
+> - After install, **close and reopen** your terminal (restart VS Code
+>   if it still can't find `uv`.)
+>
+> - In Git Bash, prefer forward slashes (`C:/Users/...`)
+
+>   PowerShell doesn't always parse multi-line `python -c "..."` blocks
+>   cleanly. For the `test_notes.md` manual tests, use Git Bash, or save
+>   the script to a `.py` file and run `uv run python script.py`.
+
 > **Students:** same setup applies until we ship a packaged release.
 > Install `uv`, clone, and `uv run` whatever entry point we land for
 > the student CLI/GUI later. The first run pops up the Digital.jar file
@@ -75,7 +91,7 @@ runs Digital's CLI as a subprocess, so it needs to know where your `Digital.jar`
 
 ### Setting it up
 Download Digital from
-<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar.
+<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar (UX function is implemented, but UX flow implementation is deferred to later development).
 
 If you'd rather configure it manually:
 
