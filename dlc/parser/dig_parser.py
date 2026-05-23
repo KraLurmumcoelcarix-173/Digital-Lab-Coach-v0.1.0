@@ -67,7 +67,10 @@ def _parse_attributes(element_attributes) -> dict:
                 value = ""
         else:
             # Unknown value type with no geometry (e.g. <shape>).
-            value = value_text if value_text is not None else value_tag
+            if len(value_element) > 0:
+                value = None
+            else:
+                value = value_text if value_text is not None else value_tag
 
         attributes[key] = value
 
