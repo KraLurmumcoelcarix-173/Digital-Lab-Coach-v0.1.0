@@ -262,7 +262,8 @@ print(f.header); print()
 print('I/O:'); [print(f'  {io.direction.upper()} {io.label} {io.bit_width}-bit @ {io.position}') for io in f.inputs + f.outputs]
 print('\nSubcircuits:'); [print(f'  {s.reference}: in={s.child_inputs} out={s.child_outputs}') for s in f.subcircuits]
 print('\nNets:'); [print(f'  net {n.net_id}: {n.pin_count}p ({n.driver_count}d/{n.sink_count}s) {n.bit_width}-bit anomalies={n.anomalies}') for n in f.nets]
-print('\nComponents (graph view):'); [print(f'  [{c.index}] {c.element_name}({c.label}) preds={c.predecessors} succs={c.successors}') for c in f.components]
+print('\nComponents (graph view):')
+[print(f'  [{c.index}] {c.display_name} ({c.element_name}) preds={c.predecessors} succs={c.successors}') for c in f.components]
 print('\nBugs:'); [print(f'  [{b.kind}] {b.description}') for b in f.bugs]
 "
 ```

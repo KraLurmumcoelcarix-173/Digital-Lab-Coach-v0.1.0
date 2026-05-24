@@ -57,6 +57,7 @@ class ComponentFact:
     index: int
     element_name: str
     label: str | None
+    display_name: str 
     position: tuple[int, int]
     attributes: dict
     bit_width: int | None
@@ -232,6 +233,7 @@ def _component_facts(circuit: Circuit, graph: nx.MultiDiGraph) -> list[Component
             index=idx,
             element_name=comp.element_name,
             label=comp.label,
+            display_name=_component_display_name(comp, idx),
             position=(comp.position.x, comp.position.y),
             attributes=dict(comp.attributes),
             bit_width=_component_bit_width(comp),
@@ -346,9 +348,7 @@ def _purely_combinational_cycles(
 
 def _pin_descriptor(circuit: Circuit, pin: Pin) -> str:
     comp = circuit.components[pin.component_index]
-    if comp.label:
-        return f"{comp.label}.{pin.pin_name}"
-    return f"{comp.element_name}[{pin.component_index}].{pin.pin_name}"
+    return f"{_component_display_name(comp, pin.component_index)}.{pin.pin_name}"
 
 
 def _collect_bugs(
