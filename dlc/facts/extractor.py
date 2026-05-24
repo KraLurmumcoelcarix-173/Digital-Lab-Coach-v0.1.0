@@ -127,6 +127,16 @@ class CircuitFacts:
         """
         return json.dumps(self.to_dict(), indent=indent)
 
+def _component_display_name(comp: Component, index: int) -> str:
+    if comp.label:
+        return comp.label
+    e = comp.element_name
+    if e == "Const":
+        val = comp.attributes.get("Value", 1)
+        return f"Const({val})"
+    if e == "Tunnel":
+        return f"Tunnel({comp.attributes.get('NetName', '?')})"
+    return f"{e}[{index}]"
 
 def _component_bit_width(comp: Component) -> int | None:
     """The raw `Bits` attribute, or None when absent.
