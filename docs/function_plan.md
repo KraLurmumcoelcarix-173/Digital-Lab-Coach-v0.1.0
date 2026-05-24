@@ -13,7 +13,7 @@
 
 | # | Name | Status |
 |---|---|:-:|
-| F5 | Wire completeness checker | TBD |
+| F5 | Wire completeness checker | Done |
 | F6 | Bit-width consistency checker | TBD |
 | F7 | Combinational-loop checker | TBD |
 | F8 | Interface conformance checker | TBD |
