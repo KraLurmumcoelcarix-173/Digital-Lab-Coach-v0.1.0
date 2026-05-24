@@ -156,3 +156,8 @@ def test_clean_tier1_minimal_produces_no_stage3_issues():
         issues = check_wire_completeness(c)
         for kind in ("unused_top_output", "isolated_component", "empty_tunnel"):
             assert not issues.by_kind(kind), f"{f}: unexpected {kind}"
+
+def test_dangling_input_issue_carries_net_id_for_llm_consumption():
+    c = parse_dig_file(str(SAMPLES / "tier1_buggy" / "dangling_input.dig"))
+    dangling = check_wire_completeness(c).by_kind("dangling_input")
+    assert dangling and dangling[0].net_id is not None
