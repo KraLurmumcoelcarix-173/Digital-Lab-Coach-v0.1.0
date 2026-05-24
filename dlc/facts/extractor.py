@@ -336,8 +336,9 @@ def _purely_combinational_cycles(
 
 def _pin_descriptor(circuit: Circuit, pin: Pin) -> str:
     comp = circuit.components[pin.component_index]
-    name = comp.label or comp.element_name
-    return f"{name}.{pin.pin_name}"
+    if comp.label:
+        return f"{comp.label}.{pin.pin_name}"
+    return f"{comp.element_name}[{pin.component_index}].{pin.pin_name}"
 
 
 def _collect_bugs(
