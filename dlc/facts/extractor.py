@@ -304,6 +304,27 @@ def _net_facts(
         ))
     return out
 
+def _child_has_clocked(child: Circuit) -> bool:
+    for c in child.components:
+        if c.element_name in _CLOCKED_ELEMENTS:
+            return True
+    for sub_ref in child.subcircuits:
+        if sub_ref.child_circuit is not None and _child_has_clocked(sub_ref.child_circuit):
+            return True
+    return False
+
+
+def _is_or_contains_clocked(circuit: Circuit, comp_idx: int) -> bool:
+    """True if component is a clocked element OR a subcircuit instance whose
+    resolved child contains one recursively."""
+    comp = circuit.components[comp_idx]
+    if comp.element_name in _CLOCKED_ELEMENTS:
+        return True
+    if comp.element_name.endswith(".dig"):
+        for sub_ref in circuit.subcircuits:
+            if sub_ref.parent_component is comp and sub_ref.child_circuit is not None:
+                return _child_has_clocked(sub_ref.child_circuit)
+    return False
 
 def _purely_combinational_cycles(
     circuit: Circuit, graph: nx.MultiDiGraph
