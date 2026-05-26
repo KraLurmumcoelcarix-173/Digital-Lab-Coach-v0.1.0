@@ -90,7 +90,7 @@ runs Digital's CLI as a subprocess, so it needs to know where your `Digital.jar`
 
 ### Setting it up
 Download Digital from
-<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar 
+<https://github.com/hneemann/Digital>, extract anywhere, and let the first-run dialog find your jar.
 
 If you'd rather configure it manually:
 
