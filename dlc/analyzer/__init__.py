@@ -35,3 +35,20 @@ def check_all_l1(circuit):
     ))
     out.extend(check_sequential(circuit, netlist=netlist))
     return out
+
+def check_all_l1_deep(circuit, _chain=None):
+    if _chain is None:
+        _chain = []
+    out = check_all_l1(circuit)
+    if _chain:
+        breadcrumb = " > ".join(_chain)
+        for i in out.issues:
+            i.title = f"[{breadcrumb}] {i.title}"
+    for sub_ref in circuit.subcircuits:
+        if sub_ref.child_circuit is None:
+            continue
+        child_issues = check_all_l1_deep(
+            sub_ref.child_circuit, _chain + [sub_ref.reference]
+        )
+        out.extend(child_issues)
+    return out
