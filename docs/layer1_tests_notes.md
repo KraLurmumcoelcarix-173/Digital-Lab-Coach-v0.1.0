@@ -19,24 +19,25 @@ uv run pytest tests/test_analyzer_combinational_loops.py
 ---
 
 
-## Run-all-L1 combined check
+### Recursive deep-check (whole subcircuit tree)
+
+`check_all_l1` runs the L1 checkers only on the top circuit.
+`check_all_l1_deep` recurses into every resolved subcircuit child and
+prefixes each issue's title with the file breadcrumb. Use deep when you 
+want a single report covering the entire .dig hierarchy.
 
 ```bash
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
-from dlc.analyzer import check_all_l1
-TARGET = 'data/sample_circuits/tier1_buggy/combinational_loop.dig'  # your .dig
-issues = check_all_l1(parse_dig_file(TARGET))
-print(issues.summary())
-for i in issues.issues:
+from dlc.analyzer import check_all_l1_deep
+TARGET = 'data/sample_circuits/tier2_buggy/L1_deep_check/L1_deep_top.dig' # your .dig file
+for i in check_all_l1_deep(parse_dig_file(TARGET)).issues:
     print(f'  [{i.severity.value}] {i.title}')
     print(f'    {i.message}')
-    if i.suggested_fix:
-        print(f'    fix: {i.suggested_fix}')
 "
 ```
 
-This runs F5 + F6 + F7 + F8 + F9 in one pass with netlist/facts built
+This runs F5 + F6 + F7 + F8 + F9 bug collectors in one pass with netlist/facts built
 once. Useful as a single-shot health check.
 
 
@@ -133,24 +134,6 @@ One Issue kind:
 One Issue kind:
 - `dangling_subcircuit_input` — a parent circuit references a
   subcircuit but doesn't wire one of the subcircuit's declared inputs.
-
-### Recursive deep-check (whole subcircuit tree)
-
-`check_all_l1` runs the L1 checkers only on the top circuit.
-`check_all_l1_deep` recurses into every resolved subcircuit child and
-prefixes each issue's title with the file breadcrumb. Use deep when you 
-want a single report covering the entire .dig hierarchy.
-
-```bash
-uv run python -c "
-from dlc.parser.dig_parser import parse_dig_file
-from dlc.analyzer import check_all_l1_deep
-TARGET = 'data/sample_circuits/tier2_buggy/dangling_subcircuit_input.dig' # your .dig file
-for i in check_all_l1_deep(parse_dig_file(TARGET)).issues:
-    print(f'  [{i.severity.value}] {i.title}')
-    print(f'    {i.message}')
-"
-```
 
 ### Expected output
 
