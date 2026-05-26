@@ -10,6 +10,7 @@ Last updated: 2026/5/25
 ## Quick reference
 
 ```bash
+uv run pytest tests/test_L1_clean_sweep.py
 uv run pytest tests/test_analyzer_wire_completeness.py  
 uv run pytest tests/test_analyzer_bit_widths.py        
 uv run pytest tests/test_analyzer_combinational_loops.py                        
