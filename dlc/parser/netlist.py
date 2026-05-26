@@ -295,7 +295,6 @@ def _attach_pin(
     netlist: NetList,
     pin: Pin,
     coord: tuple[int, int],
-    is_dangling: bool,
 ) -> None:
     nid = netlist.by_coord.get(coord)
     if nid is not None:
@@ -311,12 +310,14 @@ def _attach_pins_endpoint_first(
     circuit: Circuit,
     netlist: NetList,
     endpoints: set,
+    tunnel_coords: set,
 ) -> set:
-    
+
     predicted = _all_predicted_pins(circuit)
     pin_to_coord = _assign_endpoints_to_pins(
         predicted, endpoints, PIN_SNAP_TOLERANCE
     )
+    snapped_endpoints: set = set(pin_to_coord.values())
 
     claimed_endpoints: set = set()
     for c_idx, (px, py), spec in predicted:
@@ -324,14 +325,38 @@ def _attach_pins_endpoint_first(
         snapped = pin_to_coord.get((c_idx, spec.name))
         if snapped is not None:
             pin = _make_pin(c_idx, comp, spec, snapped)
-            _attach_pin(netlist, pin, snapped, is_dangling=False)
+            _attach_pin(netlist, pin, snapped)
             claimed_endpoints.add(snapped)
-        elif spec.direction == "in" or spec.direction == "bidir":
+            continue
+
+        if spec.direction == "out":
+            target = (px, py) if (px, py) in netlist.by_coord else None
+            if target is None:
+                has_unclaimed_endpoint_nearby = any(
+                    ep not in snapped_endpoints
+                    and abs(ep[0] - px) + abs(ep[1] - py) <= PIN_SNAP_TOLERANCE
+                    for ep in endpoints
+                )
+                if not has_unclaimed_endpoint_nearby:
+                    best = None
+                    best_d = PIN_SNAP_TOLERANCE + 1
+                    for tc in tunnel_coords:
+                        if tc in snapped_endpoints:
+                            continue
+                        d = abs(tc[0] - px) + abs(tc[1] - py)
+                        if d < best_d or (
+                            d == best_d and (best is None or tc < best)
+                        ):
+                            best, best_d = tc, d
+                    if best is not None and best_d <= PIN_SNAP_TOLERANCE:
+                        target = best
+            if target is None:
+                target = (px, py)
+            pin = _make_pin(c_idx, comp, spec, target)
+            _attach_pin(netlist, pin, target)
+        else:
             pin = _make_pin(c_idx, comp, spec, (px, py))
-            _attach_pin(netlist, pin, (px, py), is_dangling=True)
-        elif spec.direction == "out" and (px, py) in netlist.by_coord:
-            pin = _make_pin(c_idx, comp, spec, (px, py))
-            _attach_pin(netlist, pin, (px, py), is_dangling=False)
+            _attach_pin(netlist, pin, (px, py))
     return claimed_endpoints
 
 
@@ -546,6 +571,7 @@ def build_netlist(circuit: Circuit) -> NetList:
         uf.union(a, x)
 
     # Step 2: unify tunnel coords that share a NetName.
+    tunnel_coords: set[tuple[int, int]] = set()
     tunnels_by_name: dict[str, list[tuple[int, int]]] = {}
     for comp in circuit.components:
         if comp.element_name != "Tunnel":
@@ -553,6 +579,7 @@ def build_netlist(circuit: Circuit) -> NetList:
         net_name = comp.attributes.get("NetName")
         coord = comp.position.as_tuple()
         uf._ensure(coord)
+        tunnel_coords.add(coord)
         if net_name is not None:
             tunnels_by_name.setdefault(net_name, []).append(coord)
 

@@ -327,3 +327,80 @@ def test_output_pin_at_tunnel_coord_joins_tunnel_net():
         "the merged clk-tunnel net must have at least one driver "
         "(Clock) after the fix"
     )
+
+
+    # OUT pin tolerance fallback to nearby tunnel coords.
+
+def test_out_pin_attaches_to_offgrid_tunnel_within_tolerance():
+    from dlc.parser.models import Circuit, Component, Position, Wire
+    c = Circuit(
+        format_version=2,
+        components=[
+            Component("Decoder", Position(-300, -760), {"Selector Bits": 5}),
+            Component("Register", Position(140, -220), {"Bits": 32, "Label": "Reg 20"}, label="Reg 20"),
+            Component("Tunnel", Position(-260, -360), {"NetName": "Enable 20"}),
+            Component("Tunnel", Position(120, -180), {"NetName": "Enable 20"}),
+        ],
+        wires=[Wire(Position(120, -180), Position(140, -180))],
+        source_path="synthetic",
+    )
+    nl = build_netlist(c)
+    en_nets = [n for n in nl.nets if "Enable 20" in n.tunnel_names]
+    assert len(en_nets) == 1
+    drivers = en_nets[0].drivers()
+    assert any(d.element_name == "Decoder" and d.pin_name == "out_20"
+               for d in drivers), (
+        f"Decoder out_20 should drive the Enable 20 net via tunnel-coord "
+        f"fallback; drivers got: "
+        f"{[(d.element_name, d.pin_name) for d in drivers]}"
+    )
+
+
+def test_out_pin_does_not_poach_already_claimed_tunnel():
+    from dlc.parser.models import Circuit, Component, Position, Wire
+    c = Circuit(
+        format_version=2,
+        components=[
+            Component("Decoder", Position(-300, -760), {"Selector Bits": 5}),
+            Component("Tunnel", Position(-240, -740), {"NetName": "Enable 1"}),
+        ],
+        wires=[Wire(Position(-260, -740), Position(-240, -740))],
+        source_path="synthetic",
+    )
+    nl = build_netlist(c)
+    en1 = [n for n in nl.nets if "Enable 1" in n.tunnel_names]
+    assert len(en1) == 1
+    drivers = en1[0].drivers()
+    driver_names = sorted((d.element_name, d.pin_name) for d in drivers)
+    assert driver_names == [("Decoder", "out_1")], (
+        f"only out_1 (exact wire-endpoint match) should drive Enable 1; "
+        f"got: {driver_names}"
+    )
+
+
+def test_out_element_at_splitter_out_coord_joins_net():
+    from dlc.parser.models import Circuit, Component, Position, Wire
+    c = Circuit(
+        format_version=2,
+        components=[
+            Component("In", Position(-100, 0), {"Bits": 4, "Label": "X"}, label="X"),
+            Component("Splitter", Position(0, 0),
+                      {"Input Splitting": "4", "Output Splitting": "1,1,1,1"}),
+            Component("Out", Position(20, 60), {"Label": "ALUOp1"}, label="ALUOp1"),
+        ],
+        wires=[Wire(Position(-100, 0), Position(0, 0))],
+        source_path="synthetic",
+    )
+    nl = build_netlist(c)
+    out_idx = next(i for i, comp in enumerate(c.components)
+                   if comp.element_name == "Out")
+    out_net = next(
+        (n for n in nl.nets for p in n.pins if p.component_index == out_idx),
+        None,
+    )
+    assert out_net is not None
+    drivers = [(d.element_name, d.pin_name) for d in out_net.drivers()]
+    assert ("Splitter", "out3") in drivers, (
+        f"Out at (20, 60) should be driven by Splitter's out3 pin; "
+        f"drivers got: {drivers}"
+    )
