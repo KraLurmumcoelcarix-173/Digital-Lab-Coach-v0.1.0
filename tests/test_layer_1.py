@@ -161,3 +161,27 @@ def test_dangling_input_issue_carries_net_id_for_llm_consumption():
     c = parse_dig_file(str(SAMPLES / "tier1_buggy" / "dangling_input.dig"))
     dangling = check_wire_completeness(c).by_kind("dangling_input")
     assert dangling and dangling[0].net_id is not None
+
+# Missing subcircuit checks
+
+def test_missing_top_subcircuit_real_fixture():
+    c = parse_dig_file(
+        str(SAMPLES / "tier2_buggy" / "missing_top_subcircuit.dig")
+    )
+    issues = check_wire_completeness(c)
+    missing = issues.by_kind("missing_subcircuit")
+    assert len(missing) == 1
+    assert missing[0].severity == IssueSeverity.ERROR
+    assert "ghost.dig" in missing[0].message
+    assert "Nested" not in missing[0].title
+
+def test_missing_nested_subcircuit_real_fixture():
+    c = parse_dig_file(
+        str(SAMPLES / "tier2_buggy" / "missing_nested_subcircuit.dig")
+    )
+    issues = check_wire_completeness(c)
+    missing = issues.by_kind("missing_subcircuit")
+    assert len(missing) == 1
+    assert missing[0].severity == IssueSeverity.ERROR
+    assert "ghost2.dig" in missing[0].message
+    assert "Nested" in missing[0].title
