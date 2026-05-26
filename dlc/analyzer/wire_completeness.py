@@ -218,6 +218,60 @@ _NON_LOGIC_FOR_ISOLATION = {
     "Testcase", "Rectangle",
 }
 
+def _check_duplicate_io_labels(circuit, issues) -> None:
+
+    by_in: dict = {}
+    by_out: dict = {}
+    for idx, comp in enumerate(circuit.components):
+        label = comp.label
+        if not label:
+            continue
+        if comp.is_input():
+            by_in.setdefault(label, []).append(idx)
+        elif comp.is_output():
+            by_out.setdefault(label, []).append(idx)
+
+    for label, idxs in by_in.items():
+        if len(idxs) > 1:
+            anchor = circuit.components[idxs[0]].position
+            issues.add(Issue(
+                kind="duplicate_input_label",
+                severity=IssueSeverity.ERROR,
+                title=f"Duplicate input label: '{label}'",
+                message=(
+                    f"{len(idxs)} In elements share the label '{label}' "
+                    f"(component indices {idxs}). The testbench column "
+                    f"'{label}' can only feed one of them, and any wire "
+                    f"that references In({label}) by name is ambiguous."
+                ),
+                component_indices=idxs,
+                location=(anchor.x, anchor.y),
+                suggested_fix=(
+                    f"Rename all but one of these inputs so each has a "
+                    f"unique Label (e.g., '{label}_1', '{label}_2')."
+                ),
+            ))
+
+    for label, idxs in by_out.items():
+        if len(idxs) > 1:
+            anchor = circuit.components[idxs[0]].position
+            issues.add(Issue(
+                kind="duplicate_output_label",
+                severity=IssueSeverity.ERROR,
+                title=f"Duplicate output label: '{label}'",
+                message=(
+                    f"{len(idxs)} Out elements share the label '{label}' "
+                    f"(component indices {idxs}). The testbench expects "
+                    f"one column named '{label}' so it can't tell which "
+                    f"Out to sample."
+                ),
+                component_indices=idxs,
+                location=(anchor.x, anchor.y),
+                suggested_fix=(
+                    f"Rename all but one so each output has a unique "
+                    f"Label (e.g., '{label}_1', '{label}_2')."
+                ),
+            ))
 
 def _component_isolated_indices(
     circuit: Circuit, netlist: NetList
@@ -379,4 +433,5 @@ def check_wire_completeness(
     issues.extend(_check_unused_top_outputs(circuit, facts))
     issues.extend(_check_isolated_components(circuit, netlist))
     issues.extend(_check_empty_tunnels(circuit, netlist))
+    _check_duplicate_io_labels(circuit, issues)
     return issues
