@@ -15,7 +15,7 @@
 |---|---|:-:|
 | F5 | Wire completeness checker | Done |
 | F6 | Bit-width consistency checker | Done |
-| F7 | Combinational-loop checker | TBD |
+| F7 | Combinational-loop checker | Done |
 | F8 | Interface conformance checker | TBD |
 | F9 | Timing / sequential checker (register-clock-Q) | TBD |
 | F10 | K-map / Boolean simplification PRO | TBD |
