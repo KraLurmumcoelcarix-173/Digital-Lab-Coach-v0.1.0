@@ -16,6 +16,28 @@ uv run pytest tests/test_analyzer_bit_widths.py
 
 ---
 
+
+## Run-all-L1 combined check
+
+```bash
+uv run python -c "
+from dlc.parser.dig_parser import parse_dig_file
+from dlc.analyzer import check_all_l1
+TARGET = 'data/sample_circuits/tier1_buggy/width_mismatch.dig'  # your .dig
+issues = check_all_l1(parse_dig_file(TARGET))
+print(issues.summary())
+for i in issues.issues:
+    print(f'  [{i.severity.value}] {i.title}')
+    print(f'    {i.message}')
+    if i.suggested_fix:
+        print(f'    fix: {i.suggested_fix}')
+"
+```
+
+This runs F5 + F6 + F7 + F8 + F9 in one pass with netlist/facts built
+once. Useful as a single-shot health check.
+
+
 ## Function 5 — Wire-completeness checker
 
 ### What it produces
@@ -128,7 +150,7 @@ Two Issue kinds:
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.analyzer.bit_widths import check_bit_widths
-TARGET = 'data/sample_circuits/tier1_buggy/width_mismatch.dig'
+TARGET = 'data/sample_circuits/tier1_buggy/width_conflict.dig'  # your .dig
 issues = check_bit_widths(parse_dig_file(TARGET))
 print(issues.summary())
 for i in issues.issues:
