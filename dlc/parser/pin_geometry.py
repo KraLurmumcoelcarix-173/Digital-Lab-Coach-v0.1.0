@@ -116,20 +116,32 @@ def _nary_gate_pins(comp: Component) -> list[PinSpec]:
     """
     n = int(comp.attributes.get("Inputs", 2))
     wide = bool(comp.attributes.get("wideShape", False))
+    inverter_list = comp.attributes.get("inverterConfig") or []
+    inverted_idxs = set()
+    for name in inverter_list:
+        if isinstance(name, str) and name.startswith("In_"):
+            try:
+                inverted_idxs.add(int(name[3:]) - 1)
+            except ValueError:
+                pass
     pins: list[PinSpec] = []
+
+    def _input_x(i: int) -> int:
+        return -20 if i in inverted_idxs else 0
 
     if wide and n >= 2 and n % 2 == 0:
         half = n // 2
         for i in range(half):
             pins.append(
-                PinSpec(f"in{i}", offset_x=0, offset_y=i * 20, direction="in")
+                PinSpec(f"in{i}", offset_x=_input_x(i), offset_y=i * 20, direction="in")
             )
         bottom_start = (half - 1) * 20 + 40
         for i in range(half):
+            idx = half + i
             pins.append(
                 PinSpec(
-                    f"in{half + i}",
-                    offset_x=0,
+                    f"in{idx}",
+                    offset_x=_input_x(idx),
                     offset_y=bottom_start + i * 20,
                     direction="in",
                 )
@@ -139,11 +151,11 @@ def _nary_gate_pins(comp: Component) -> list[PinSpec]:
     else:
         for i in range(n):
             pins.append(
-                PinSpec(f"in{i}", offset_x=0, offset_y=i * 20, direction="in")
+                PinSpec(f"in{i}", offset_x=_input_x(i), offset_y=i * 20, direction="in")
             )
         center_y = ((n - 1) * 20) // 2
     pins.append(PinSpec("Y", offset_x=80, offset_y=center_y, direction="out"))
-    
+
     return pins
 
 

@@ -65,6 +65,9 @@ def _parse_attributes(element_attributes) -> dict:
                 value = data_string.text
             else:
                 value = ""
+        elif value_tag == "inverterConfig":
+            value = [s.text for s in value_element.findall("string")
+                     if s.text is not None]
         else:
             # Unknown value type with no geometry (e.g. <shape>).
             if len(value_element) > 0:

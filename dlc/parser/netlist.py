@@ -233,13 +233,25 @@ def _assign_endpoints_to_pins(
     tolerance. Sort by (distance, component_index, pin_name, endpoint).
     Walk the sorted list and claim each (pin, endpoint) pair only if
     NEITHER side has been claimed yet. Returns pin_to_coord.
+
+     Direction-aware tolerance:
+
+    - INPUT (and bidir) pins: require **exact x-match** (gap_x = 0).
+    
+    - OUTPUT pins: keep the loose Manhattan tolerance.
     """
     triples = []
     for ep in endpoints:
         for c_idx, (px, py), spec in predicted:
-            d = abs(px - ep[0]) + abs(py - ep[1])
-            if d > tolerance:
-                continue
+            dx = abs(px - ep[0])
+            dy = abs(py - ep[1])
+            d = dx + dy
+            if spec.direction in ("in", "bidir"):
+                if dx > 0 or dy > 20:
+                    continue
+            else:
+                if d > tolerance:
+                    continue
             triples.append((d, c_idx, spec.name, ep))
     triples.sort()
 
