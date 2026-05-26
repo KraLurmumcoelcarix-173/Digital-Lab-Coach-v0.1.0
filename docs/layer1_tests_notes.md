@@ -3,7 +3,7 @@
 Manual test snippets for Layer 1 deterministic checkers (F5-F9).
 Run from repo root.
 
-Last updated: 2026/5/22
+Last updated: 2026/5/25
 
 ---
 
@@ -44,7 +44,7 @@ An `IssueCollection` of `Issue` records. Each `Issue` carries:
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.analyzer.wire_completeness import check_wire_completeness
-TARGET = 'data/sample_circuits/tier1_buggy/dangling_input.dig'  # your .dig
+TARGET = 'data/sample_circuits/30_buggy_benchmark/bug2_wrong_floating_pipeline_output/Wrong_floating_pipeline_output.dig'  # your .dig
 issues = check_wire_completeness(parse_dig_file(TARGET))
 print(issues.summary())
 for i in issues.issues:
