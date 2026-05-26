@@ -48,6 +48,13 @@ def _check_driver_width_conflicts(
         ))
     return out
 
+def _is_safe_truncation(sink_comp, sink_pin_name: str,
+                       driver_w: int, sink_w: int) -> bool:
+    if driver_w <= sink_w:
+        return False
+    if sink_comp.element_name == "BarrelShifter" and sink_pin_name == "sh":
+        return True
+    return False
 
 def _check_driver_sink_width_mismatch(
     circuit: Circuit, netlist: NetList
@@ -66,13 +73,14 @@ def _check_driver_sink_width_mismatch(
             sink_w = _pin_width_with_subcircuit(circuit, s)
             if sink_w is None or sink_w == driver_w:
                 continue
+            sink_comp = circuit.components[s.component_index]
+            if _is_safe_truncation(sink_comp, s.pin_name, driver_w, sink_w):
+                continue
             d_name = _component_display_name(
                 circuit.components[driver_pin.component_index],
                 driver_pin.component_index,
             )
-            s_name = _component_display_name(
-                circuit.components[s.component_index], s.component_index,
-            )
+            s_name = _component_display_name(sink_comp, s.component_index)
             out.append(Issue(
                 kind="width_mismatch",
                 severity=IssueSeverity.ERROR,

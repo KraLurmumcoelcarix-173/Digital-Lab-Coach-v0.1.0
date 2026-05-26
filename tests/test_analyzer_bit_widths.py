@@ -38,3 +38,25 @@ def test_run_all_l1_aggregator_includes_width_issues():
     issues = check_all_l1(c)
     rel = issues.by_kind("width_mismatch") + issues.by_kind("width_conflict")
     assert len(rel) >= 1
+
+def test_barrel_shifter_sh_oversize_source_is_not_flagged():
+    from dlc.parser.models import Circuit, Component, Position, Wire
+    in_c = Component(
+        element_name="In", position=Position(0, 0),
+        attributes={"Bits": 4, "Label": "A"}, label="A",
+    )
+    bs = Component(
+        element_name="BarrelShifter", position=Position(100, 0),
+        attributes={"Bits": 2}, label=None,
+    )
+    wires = [
+        Wire(p1=Position(0, 0), p2=Position(100, 0)),       
+        Wire(p1=Position(0, 0), p2=Position(0, 40)),        
+        Wire(p1=Position(0, 40), p2=Position(100, 40)),      
+    ]
+    c = Circuit(components=[in_c, bs], wires=wires)
+    issues = check_bit_widths(c)
+    assert not any(
+        i.kind == "width_mismatch" and "sh" in i.title
+        for i in issues.issues
+    ), f"unexpected sh width_mismatch: {[i.title for i in issues.issues]}"
