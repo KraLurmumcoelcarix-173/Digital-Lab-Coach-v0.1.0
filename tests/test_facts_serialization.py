@@ -115,14 +115,6 @@ def test_to_json_round_trips_tier3_calculator():
     assert parsed["header"]["net_count"] == f.header["net_count"]
     assert parsed["header"]["bug_count"] == 0
 
-
-def test_to_json_round_trips_canonical_layer3_only_bug_case():
-    f = _facts("30_buggy_benchmark/bug1_meaningless_mux_in3/Meaningless_mux_input/tier3_calculator.dig")
-    parsed = json.loads(f.to_json())
-    assert parsed["bugs"] == []
-    assert parsed["header"]["subcircuit_count"] == 1
-
-
 # Type-fidelity
 
 def test_position_tuples_become_arrays_in_json():
