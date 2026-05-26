@@ -23,7 +23,7 @@ uv run pytest tests/test_analyzer_bit_widths.py
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.analyzer import check_all_l1
-TARGET = 'data/sample_circuits/tier1_buggy/width_mismatch.dig'  # your .dig
+TARGET = 'data/sample_circuits/tier1_buggy/combinational_loop.dig'  # your .dig
 issues = check_all_l1(parse_dig_file(TARGET))
 print(issues.summary())
 for i in issues.issues:
