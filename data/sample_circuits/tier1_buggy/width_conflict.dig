@@ -30,6 +30,10 @@
           <string>Label</string>
           <string>B</string>
         </entry>
+        <entry>
+          <string>Bits</string>
+          <int>4</int>
+        </entry>
       </elementAttributes>
       <pos x="380" y="340"/>
     </visualElement>

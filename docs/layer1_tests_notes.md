@@ -150,7 +150,7 @@ Two Issue kinds:
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.analyzer.bit_widths import check_bit_widths
-TARGET = 'data/sample_circuits/tier1_buggy/width_conflict.dig'  # your .dig
+TARGET = 'data/sample_circuits/tier1_buggy/width_mismatch.dig'  # your .dig
 issues = check_bit_widths(parse_dig_file(TARGET))
 print(issues.summary())
 for i in issues.issues:
