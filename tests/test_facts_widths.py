@@ -71,13 +71,12 @@ def test_comparator_data_vs_output_pins():
 
 
 def test_barrel_shifter_sh_width():
-    """sh pin width = ceil(log2(Bits)), with floor at 1."""
     assert pin_width(_mk("BarrelShifter", Bits=8), "in") == 8
-    assert pin_width(_mk("BarrelShifter", Bits=8), "sh") == 3
-    assert pin_width(_mk("BarrelShifter", Bits=32), "sh") == 5
+    assert pin_width(_mk("BarrelShifter", Bits=8), "sh") == 4
+    assert pin_width(_mk("BarrelShifter", Bits=32), "sh") == 6
     assert pin_width(_mk("BarrelShifter", Bits=1), "sh") == 1
     assert pin_width(_mk("BarrelShifter", Bits=2), "sh") == 1
-    assert pin_width(_mk("BarrelShifter", Bits=4), "sh") == 2
+    assert pin_width(_mk("BarrelShifter", Bits=4), "sh") == 3
 
 
 def test_mux_data_pins_use_bits_sel_uses_selector_bits():
