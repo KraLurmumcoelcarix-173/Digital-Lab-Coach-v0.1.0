@@ -17,7 +17,7 @@
 | F6 | Bit-width consistency checker | Done |
 | F7 | Combinational-loop checker | Done |
 | F8 | Interface conformance checker | Done |
-| F9 | Timing / sequential checker (register-clock-Q) | TBD |
+| F9 | Timing / sequential checker (register-clock-Q) | Done |
 | F10 | K-map / Boolean simplification PRO | TBD |
 
 ## Layer 2 LLM conceptual explanation
