@@ -12,10 +12,14 @@
   <body>
     <header>
       <h1>Digital Lab Coach</h1>
-      <div class="upload">
-        <label for="file-input" class="btn">Open .dig</label>
-        <input id="file-input" type="file" accept=".dig" />
-        <span id="filename" class="muted"></span>
+      <div class="toolbar">
+        <label for="file-input" class="btn">Add .dig</label>
+        <input id="file-input" type="file" accept=".dig" multiple />
+        <select id="file-select" class="select" disabled>
+          <option>(no file)</option>
+        </select>
+        <button id="prev-btn" class="btn-ghost" disabled>Previous</button>
+        <button id="next-btn" class="btn-ghost" disabled>Next</button>
       </div>
     </header>
 
@@ -23,16 +27,18 @@
       <section id="graph-pane">
         <div id="cy"></div>
         <div id="placeholder" class="placeholder">
-          Drop a <code>.dig</code> file above, or click <strong>Open .dig</strong>.
+          Click <strong>Add .dig</strong> to upload one or more files
+          (parent + its subcircuits).
+        </div>
+        <div id="hover-popup" class="hover-popup hidden">
+          <div class="hover-popup-title" id="hover-popup-title">&nbsp;</div>
+          <div class="hover-popup-body" id="hover-popup-body"></div>
         </div>
       </section>
 
       <aside id="summary-pane">
         <h2>Circuit summary</h2>
         <div id="summary" class="muted">No file loaded.</div>
-
-        <h2>Hover details</h2>
-        <div id="hover-info" class="muted">Hover any node or edge.</div>
       </aside>
     </main>
 
