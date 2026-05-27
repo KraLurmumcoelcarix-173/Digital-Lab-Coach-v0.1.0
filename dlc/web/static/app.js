@@ -1,22 +1,22 @@
-/* DLC front end. Loads Cytoscape, handles file uploads,
-   renders the signal-flow graph, drives the summary and hover panels.
+/* Digital Lab Coach front end. Loads Cytoscape, handles multi-file
+   uploads, renders signal-flow graph, drives summary + hover popup.
 */
 
 cytoscape.use(window.cytoscapeDagre);
 
 const FAMILY_COLORS = {
-  "io-in":     "#cfe5ff",
-  "io-out":    "#ffdcb3",
-  "gate":      "#b9e4c1",
-  "arith":     "#f4b9b9",
-  "mux":       "#d8c4ef",
-  "splitter":  "#f1ea9a",
-  "storage":   "#d3d3d3",
-  "tunnel":    "#f7d7e8",
-  "subcircuit":"#ffc1c1",
-  "const":     "#dfdfdf",
-  "clock":     "#dfdfdf",
-  "other":     "#e9ecef",
+  "io-in":      "#cfe5ff",
+  "io-out":     "#ffdcb3",
+  "gate":       "#b9e4c1",
+  "arith":      "#f4b9b9",
+  "mux":        "#d8c4ef",
+  "splitter":   "#f1ea9a",
+  "storage":    "#d3d3d3",
+  "tunnel":     "#f7d7e8",
+  "subcircuit": "#ffc1c1",
+  "const":      "#dfdfdf",
+  "clock":      "#dfdfdf",
+  "other":      "#e9ecef",
 };
 
 const CY_STYLE = [
@@ -39,19 +39,7 @@ const CY_STYLE = [
       "padding": "4px",
     },
   },
-  {
-    selector: "node:selected",
-    style: {
-      "border-color": "#2563eb",
-      "border-width": 3,
-    },
-  },
-  {
-    selector: "node.faded",
-    style: {
-      "opacity": 0.22,
-    },
-  },
+  { selector: "node.faded", style: { "opacity": 0.22 } },
   {
     selector: "edge",
     style: {
@@ -63,10 +51,7 @@ const CY_STYLE = [
       "arrow-scale": 0.9,
     },
   },
-  {
-    selector: "edge.faded",
-    style: { "opacity": 0.1 },
-  },
+  { selector: "edge.faded", style: { "opacity": 0.1 } },
   {
     selector: "edge.highlight",
     style: {
@@ -77,30 +62,53 @@ const CY_STYLE = [
   },
 ];
 
-// DOM 
-
 const fileInput   = document.getElementById("file-input");
-const filenameEl  = document.getElementById("filename");
+const fileSelect  = document.getElementById("file-select");
+const prevBtn     = document.getElementById("prev-btn");
+const nextBtn     = document.getElementById("next-btn");
 const placeholder = document.getElementById("placeholder");
 const summaryEl   = document.getElementById("summary");
-const hoverEl     = document.getElementById("hover-info");
+const popupEl     = document.getElementById("hover-popup");
+const popupTitle  = document.getElementById("hover-popup-title");
+const popupBody   = document.getElementById("hover-popup-body");
 
-let cy = null;
-
-// Upload
+let fileObjects = [];
+let loaded      = [];
+let currentIdx  = 0;
+let cy          = null;
 
 fileInput.addEventListener("change", async () => {
-  const file = fileInput.files[0];
-  if (!file) return;
-  filenameEl.textContent = file.name;
-  await uploadCircuit(file);
+  if (!fileInput.files || fileInput.files.length === 0) return;
+  for (const f of fileInput.files) {
+    fileObjects = fileObjects.filter((existing) => existing.name !== f.name);
+    fileObjects.push(f);
+  }
+  fileInput.value = "";
+  await postAll();
 });
 
-async function uploadCircuit(file) {
-  const fd = new FormData();
-  fd.append("file", file);
+prevBtn.addEventListener("click", () => {
+  if (loaded.length === 0) return;
+  currentIdx = (currentIdx - 1 + loaded.length) % loaded.length;
+  renderCurrent();
+});
 
-  summaryEl.innerHTML = `<span class="muted">Parsing ${escapeHtml(file.name)}...</span>`;
+nextBtn.addEventListener("click", () => {
+  if (loaded.length === 0) return;
+  currentIdx = (currentIdx + 1) % loaded.length;
+  renderCurrent();
+});
+
+fileSelect.addEventListener("change", () => {
+  currentIdx = parseInt(fileSelect.value, 10) || 0;
+  renderCurrent();
+});
+
+async function postAll() {
+  summaryEl.innerHTML = `<span class="muted">Uploading ${fileObjects.length} file(s)...</span>`;
+
+  const fd = new FormData();
+  for (const f of fileObjects) fd.append("files", f);
 
   let res;
   try {
@@ -115,11 +123,40 @@ async function uploadCircuit(file) {
     return;
   }
   const data = await res.json();
-  renderGraph(data.graph);
-  renderSummary(data.summary);
+  loaded = data.files || [];
+  if (loaded.length === 0) {
+    summaryEl.innerHTML = `<span style="color:#991b1b">No .dig files were processed.</span>`;
+    return;
+  }
+  if (currentIdx >= loaded.length) currentIdx = 0;
+
+  fileSelect.innerHTML = loaded
+    .map((f, i) => `<option value="${i}">${escapeHtml(f.filename)}</option>`)
+    .join("");
+  fileSelect.value = String(currentIdx);
+  fileSelect.disabled = false;
+  prevBtn.disabled = loaded.length < 2;
+  nextBtn.disabled = loaded.length < 2;
+
+  renderCurrent();
 }
 
-// Graph rendering 
+function renderCurrent() {
+  if (loaded.length === 0) return;
+  const f = loaded[currentIdx];
+  fileSelect.value = String(currentIdx);
+
+  if (f.error) {
+    placeholder.classList.remove("hidden");
+    placeholder.innerHTML = `<span style="color:#991b1b">${escapeHtml(f.filename)}: ${escapeHtml(f.error)}</span>`;
+    if (cy) { cy.destroy(); cy = null; }
+    summaryEl.innerHTML = `<span style="color:#991b1b">Parse error.</span>`;
+    return;
+  }
+
+  renderGraph(f.graph);
+  renderSummary(f.summary);
+}
 
 function renderGraph(graph) {
   placeholder.classList.add("hidden");
@@ -128,10 +165,7 @@ function renderGraph(graph) {
 
   cy = cytoscape({
     container: document.getElementById("cy"),
-    elements: {
-      nodes: graph.nodes,
-      edges: graph.edges,
-    },
+    elements: { nodes: graph.nodes, edges: graph.edges },
     style: CY_STYLE,
     layout: {
       name: "dagre",
@@ -152,51 +186,119 @@ function renderGraph(graph) {
     const nb = node.closedNeighborhood();
     nb.removeClass("faded");
     nb.edges().addClass("highlight");
-    renderHoverNode(node);
+    showNodePopup(node);
   });
   cy.on("mouseout", "node", () => {
     cy.elements().removeClass("faded");
     cy.edges().removeClass("highlight");
+    hidePopup();
   });
 
   cy.on("mouseover", "edge", (evt) => {
-    renderHoverEdge(evt.target);
+    const edge = evt.target;
+    edge.addClass("highlight");
+    showEdgePopup(edge);
   });
-  cy.on("mouseout", "edge", () => {
+  cy.on("mouseout", "edge", (evt) => {
+    evt.target.removeClass("highlight");
+    hidePopup();
   });
 }
 
-function renderHoverNode(node) {
+function showNodePopup(node) {
   const d = node.data();
+  const title = d.comp_label ? `${d.element_name} - ${d.comp_label}` : d.element_name;
+  popupTitle.textContent = title;
+
   const attrRows = Object.entries(d.attributes || {})
     .filter(([k]) => k !== "Label")
     .map(([k, v]) =>
       `<tr><td class="k">${escapeHtml(k)}</td><td class="v">${escapeHtml(String(v))}</td></tr>`
     ).join("");
-  hoverEl.innerHTML = `
+
+  const incoming = node.incomers("edge");
+  const outgoing = node.outgoers("edge");
+
+  const inputsBySinkPin = groupBy(incoming, (e) => e.data("sink_pin") || "?");
+  const outputsByDriverPin = groupBy(outgoing, (e) => e.data("driver_pin") || "?");
+
+  const inputsHtml = renderPinList(inputsBySinkPin, "input");
+  const outputsHtml = renderPinList(outputsByDriverPin, "output");
+
+  popupBody.innerHTML = `
     <table>
-      <tr><td class="k">type</td><td class="v">${escapeHtml(d.element_name)}</td></tr>
-      <tr><td class="k">label</td><td class="v">${escapeHtml(d.comp_label || "(none)")}</td></tr>
+      <tr><td class="k">family</td><td class="v">${escapeHtml(d.family_display || d.family)}</td></tr>
       <tr><td class="k">index</td><td class="v">${escapeHtml(d.id)}</td></tr>
-      <tr><td class="k">family</td><td class="v">${escapeHtml(d.family)}</td></tr>
       <tr><td class="k">.dig pos</td><td class="v">(${d.x_dig}, ${d.y_dig})</td></tr>
       ${attrRows}
     </table>
+    ${inputsHtml}
+    ${outputsHtml}
   `;
+
+  popupEl.classList.remove("hidden");
 }
 
-function renderHoverEdge(edge) {
+function showEdgePopup(edge) {
   const d = edge.data();
-  hoverEl.innerHTML = `
+  popupTitle.textContent = `Net ${d.net_id ?? "?"}`;
+
+  const sourceNode = cy.getElementById(d.source);
+  const targetNode = cy.getElementById(d.target);
+  const sourceLabel = sourceNode.data("comp_label") || sourceNode.data("element_name");
+  const targetLabel = targetNode.data("comp_label") || targetNode.data("element_name");
+
+  popupBody.innerHTML = `
     <table>
-      <tr><td class="k">net</td><td class="v">${escapeHtml(d.net_id ?? "?")}</td></tr>
-      <tr><td class="k">from</td><td class="v">${escapeHtml(d.source)}.${escapeHtml(d.driver_pin || "?")}</td></tr>
-      <tr><td class="k">to</td><td class="v">${escapeHtml(d.target)}.${escapeHtml(d.sink_pin || "?")}</td></tr>
+      <tr><td class="k">net id</td><td class="v">${escapeHtml(d.net_id ?? "?")}</td></tr>
+      <tr><td class="k">from</td><td class="v">${escapeHtml(sourceLabel)} [${escapeHtml(d.source)}] . ${escapeHtml(d.driver_pin || "?")}</td></tr>
+      <tr><td class="k">to</td><td class="v">${escapeHtml(targetLabel)} [${escapeHtml(d.target)}] . ${escapeHtml(d.sink_pin || "?")}</td></tr>
     </table>
   `;
+  popupEl.classList.remove("hidden");
 }
 
-// Summary panel 
+function hidePopup() {
+  popupEl.classList.add("hidden");
+}
+
+function renderPinList(byPin, kind) {
+  const keys = Object.keys(byPin).sort();
+  if (keys.length === 0) return "";
+
+  const sectionTitle = kind === "input" ? "INPUTS" : "OUTPUTS";
+
+  const items = keys.map((pinName) => {
+    const edges = byPin[pinName];
+    const peers = edges.map((e) => {
+      const d = e.data();
+      const otherId = kind === "input" ? d.source : d.target;
+      const otherPin = kind === "input" ? d.driver_pin : d.sink_pin;
+      const otherNode = cy.getElementById(otherId);
+      const otherLabel = otherNode.data("comp_label") || otherNode.data("element_name");
+      const arrow = kind === "input" ? "&larr;" : "&rarr;";
+      return `${arrow} ${escapeHtml(otherLabel)}[${escapeHtml(otherId)}].${escapeHtml(otherPin || "?")} (net ${escapeHtml(d.net_id ?? "?")})`;
+    }).join("<br>");
+
+    return `<li><strong>${escapeHtml(pinName)}</strong> ${peers}</li>`;
+  }).join("");
+
+  return `
+    <div class="hover-popup-section">
+      <div class="hover-popup-section-title">${sectionTitle}</div>
+      <ul>${items}</ul>
+    </div>
+  `;
+}
+
+function groupBy(collection, keyFn) {
+  const out = {};
+  collection.forEach((item) => {
+    const k = keyFn(item);
+    (out[k] = out[k] || []).push(item);
+  });
+  return out;
+}
 
 function renderSummary(s) {
   const stats = s.net_stats || {};
@@ -221,9 +323,7 @@ function renderSummary(s) {
     .join("");
   const subsList = (s.subcircuits || [])
     .map((sub) => {
-      const badge = sub.resolved
-        ? ""
-        : `<span class="badge err">missing</span>`;
+      const badge = sub.resolved ? "" : `<span class="badge err">missing</span>`;
       return `<li>${escapeHtml(sub.reference)} ${badge}</li>`;
     })
     .join("");
@@ -248,8 +348,6 @@ function renderSummary(s) {
     <table>${inventoryRows || '<tr><td class="muted">(empty)</td></tr>'}</table>
   `;
 }
-
-// Utility 
 
 function escapeHtml(s) {
   return String(s ?? "")
