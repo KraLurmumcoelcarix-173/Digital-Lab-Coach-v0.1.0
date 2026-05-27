@@ -30,7 +30,7 @@ want a single report covering the entire .dig hierarchy.
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.analyzer import check_all_l1_deep
-TARGET = 'data/sample_circuits/30_buggy_benchmark/bug5_wrong_boolean_gate_decoder_logic/wrong_bool_LED4.dig' # your .dig file
+TARGET = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig' # your .dig file
 for i in check_all_l1_deep(parse_dig_file(TARGET)).issues:
     print(f'  [{i.severity.value}] {i.title}')
     print(f'    {i.message}')

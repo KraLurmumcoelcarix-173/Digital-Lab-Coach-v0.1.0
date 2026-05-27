@@ -2,15 +2,12 @@
 Convert a parsed Circuit + NetList + signal_graph into the JSON shape
 Cytoscape.js consumes for rendering.
 
-  - to_cytoscape(...) returns the nodes + edges payload.
-  - circuit_summary(...) returns the sidebar headline numbers
 """
 
 from dlc.parser.models import Circuit
 from dlc.parser.netlist import NetList
 
 
-# Visual family - cytoscape node class
 _FAMILY_BY_ELEMENT: dict[str, str] = {
     "In": "io-in",
     "Out": "io-out",
@@ -40,6 +37,21 @@ _FAMILY_BY_ELEMENT: dict[str, str] = {
     "Rectangle": "annotation",
 }
 
+_FAMILY_DISPLAY: dict[str, str] = {
+    "io-in": "I/O",
+    "io-out": "I/O",
+    "gate": "GATE",
+    "arith": "ARITHMETIC",
+    "mux": "SELECTOR",
+    "splitter": "SPLITTER",
+    "storage": "STORAGE",
+    "tunnel": "TUNNEL",
+    "subcircuit": "SUBCIRCUIT",
+    "const": "CONSTANT",
+    "clock": "CLOCK",
+    "other": "OTHER",
+}
+
 
 def _family(element_name: str) -> str:
     if element_name.endswith(".dig"):
@@ -47,12 +59,13 @@ def _family(element_name: str) -> str:
     return _FAMILY_BY_ELEMENT.get(element_name, "other")
 
 
+def _family_display(family: str) -> str:
+    return _FAMILY_DISPLAY.get(family, family.upper())
+
+
 def _node_display_label(idx: int, comp) -> str:
     if comp.label:
         return f"{comp.label}\n[{idx}]"
-    if comp.element_name == "Tunnel":
-        net_name = comp.attributes.get("NetName", "?")
-        return f"Tunnel({net_name})\n[{idx}]"
     if comp.element_name == "Const":
         value = comp.attributes.get("Value", 0)
         return f"Const({value})\n[{idx}]"
@@ -60,10 +73,15 @@ def _node_display_label(idx: int, comp) -> str:
 
 
 def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
+    """
+    Build {"nodes": [...], "edges": [...]} in Cytoscape.js Elements
+    format. Tunnel and annotation (Testcase/Rectangle) elements are
+    omitted 
+    """
     nodes = []
     for idx, comp in enumerate(circuit.components):
         family = _family(comp.element_name)
-        if family == "annotation":
+        if family in ("annotation", "tunnel"):
             continue
         nodes.append({
             "data": {
@@ -72,6 +90,7 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
                 "element_name": comp.element_name,
                 "comp_label": comp.label or "",
                 "family": family,
+                "family_display": _family_display(family),
                 "attributes": {
                     k: v for k, v in comp.attributes.items()
                     if isinstance(v, (str, int, float, bool))
