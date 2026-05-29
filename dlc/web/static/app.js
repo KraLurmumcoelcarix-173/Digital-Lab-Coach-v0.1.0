@@ -60,27 +60,44 @@ const CY_STYLE = [
       "width": 2.5,
     },
   },
+  {
+    selector: "node.issue-target",
+    style: {
+      "border-color": "#dc2626",
+      "border-width": 4,
+      "background-color": "#fee2e2",
+    },
+  },
 ];
 
 //DOM 
 
 const MAX_FILES = 16;
 
-const fileInput   = document.getElementById("file-input");
-const fileSelect  = document.getElementById("file-select");
-const prevBtn     = document.getElementById("prev-btn");
-const nextBtn     = document.getElementById("next-btn");
-const clearBtn    = document.getElementById("clear-btn");
-const placeholder = document.getElementById("placeholder");
-const summaryEl   = document.getElementById("summary");
-const popupEl     = document.getElementById("hover-popup");
-const popupTitle  = document.getElementById("hover-popup-title");
-const popupBody   = document.getElementById("hover-popup-body");
+const fileInput     = document.getElementById("file-input");
+const fileSelect    = document.getElementById("file-select");
+const prevBtn       = document.getElementById("prev-btn");
+const nextBtn       = document.getElementById("next-btn");
+const clearBtn      = document.getElementById("clear-btn");
+const placeholder   = document.getElementById("placeholder");
+const summaryEl     = document.getElementById("summary");
+const issuesListEl  = document.getElementById("issues-list");
+const issuesCountsEl= document.getElementById("issues-counts");
+const testsStatusEl = document.getElementById("tests-status");
+const muteToggle    = document.getElementById("mute-toggle");
+const popupEl       = document.getElementById("hover-popup");
+const popupTitle    = document.getElementById("hover-popup-title");
+const popupBody     = document.getElementById("hover-popup-body");
+
+// Mute-if-passing state
+const MUTE_THRESHOLD = 3;
+let testsPassed = null;        
+let mutedByUser = new Set();  
+let activeIssueIdx = null;     
 
 //Session state 
-
-let fileObjects = [];   // browser File[]
-let loaded      = [];   // server response per file
+let fileObjects = [];  
+let loaded      = [];  
 let currentIdx  = 0;
 let cy          = null;
 
@@ -120,6 +137,8 @@ function resetDashboard() {
   fileObjects = [];
   loaded = [];
   currentIdx = 0;
+  mutedByUser = new Set();
+  activeIssueIdx = null;
   if (cy) { cy.destroy(); cy = null; }
   fileSelect.innerHTML = "<option>(no file)</option>";
   fileSelect.disabled = true;
@@ -131,8 +150,14 @@ function resetDashboard() {
     `No circuit loaded. Add a <code>.dig</code> file from the toolbar ` +
     `above &mdash; multiple files (parent + subcircuits) supported.`;
   summaryEl.innerHTML = `<span class="muted">No file loaded.</span>`;
+  issuesListEl.innerHTML = `<span class="muted">No file loaded.</span>`;
+  issuesCountsEl.innerHTML = `<span class="muted">&mdash;</span>`;
   hidePopup();
 }
+
+muteToggle.addEventListener("change", () => {
+  if (loaded.length > 0) renderIssues(loaded[currentIdx]);
+});
 
 prevBtn.addEventListener("click", () => {
   if (loaded.length === 0) return;
@@ -193,24 +218,21 @@ function renderCurrent() {
   if (loaded.length === 0) return;
   const f = loaded[currentIdx];
   fileSelect.value = String(currentIdx);
+  activeIssueIdx = null;
 
   if (f.error) {
     placeholder.classList.remove("hidden");
     placeholder.innerHTML = `<span style="color:#991b1b">${escapeHtml(f.filename)}: ${escapeHtml(f.error)}</span>`;
     if (cy) { cy.destroy(); cy = null; }
     summaryEl.innerHTML = `<span style="color:#991b1b">Parse error.</span>`;
-    return;
-  }
-  if (!f.graph || !f.summary) {
-    placeholder.classList.remove("hidden");
-    placeholder.innerHTML = `<span style="color:#991b1b">${escapeHtml(f.filename)}: server returned an empty payload (graph or summary missing). Check the server log.</span>`;
-    if (cy) { cy.destroy(); cy = null; }
-    summaryEl.innerHTML = `<span style="color:#991b1b">Empty payload.</span>`;
+    issuesListEl.innerHTML = `<span style="color:#991b1b">Could not parse; no issues to show.</span>`;
+    issuesCountsEl.innerHTML = `<span class="muted">&mdash;</span>`;
     return;
   }
 
   renderGraph(f.graph);
   renderSummary(f.summary);
+  renderIssues(f);
 }
 
 function renderGraph(graph) {
@@ -257,6 +279,9 @@ function renderGraph(graph) {
   cy.on("mouseout", "edge", (evt) => {
     evt.target.removeClass("highlight");
     hidePopup();
+  });
+  cy.on("tap", (evt) => {
+    if (evt.target === cy) clearIssueHighlight();
   });
 }
 
@@ -434,4 +459,129 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function updateTestsStatus() {
+  if (testsPassed === true) {
+    testsStatusEl.textContent = "Tests: all passed";
+    testsStatusEl.className = "tests-status passed";
+  } else if (testsPassed === false) {
+    testsStatusEl.textContent = "Tests: failures detected";
+    testsStatusEl.className = "tests-status failed";
+  } else {
+    testsStatusEl.textContent = "Tests: not yet run (test runner integration pending)";
+    testsStatusEl.className = "tests-status muted";
+  }
+}
+updateTestsStatus();
+
+function countsBadge(issues) {
+  if (!issues || issues.length === 0) {
+    return `<span class="ok">clean</span>`;
+  }
+  const nErr  = issues.filter((i) => i.severity === "error").length;
+  const nWarn = issues.filter((i) => i.severity === "warning").length;
+  const nInfo = issues.filter((i) => i.severity === "info").length;
+  const parts = [];
+  if (nErr)  parts.push(`<span class="err">${nErr} err</span>`);
+  if (nWarn) parts.push(`<span class="warn">${nWarn} warn</span>`);
+  if (nInfo) parts.push(`<span class="info">${nInfo} info</span>`);
+  return parts.join(" &middot; ");
+}
+
+function renderIssues(file) {
+  const issues = file.issues || [];
+  issuesCountsEl.innerHTML = countsBadge(issues);
+
+  if (file.issues_error) {
+    issuesListEl.innerHTML =
+      `<span style="color:#991b1b">L1 check failed: ${escapeHtml(file.issues_error)}</span>`;
+    return;
+  }
+
+  if (issues.length === 0) {
+    issuesListEl.innerHTML =
+      `<div class="muted-banner" style="cursor:default">No Layer 1 issues detected.</div>`;
+    return;
+  }
+  const shouldMute =
+    muteToggle.checked
+    && testsPassed === true
+    && issues.length <= MUTE_THRESHOLD
+    && !mutedByUser.has(currentIdx);
+  if (shouldMute) {
+    issuesListEl.innerHTML =
+      `<div class="muted-banner" id="mute-banner">
+         Tests pass; ${issues.length} minor note${issues.length === 1 ? "" : "s"} muted. Click to show.
+       </div>`;
+    document.getElementById("mute-banner").addEventListener("click", () => {
+      mutedByUser.add(currentIdx);
+      renderIssues(file);
+    });
+    return;
+  }
+
+  issuesListEl.innerHTML = issues.map((iss, idx) => {
+    const fixHtml = iss.suggested_fix
+      ? `<div class="issue-fix">${escapeHtml(iss.suggested_fix)}</div>`
+      : "";
+    return `
+      <div class="issue-card sev-${escapeHtml(iss.severity)}" data-issue-idx="${idx}">
+        <span class="sev-badge">${escapeHtml(iss.severity)}</span>
+        <span class="issue-title">${escapeHtml(iss.title)}</span>
+        <div class="issue-msg">${escapeHtml(iss.message)}</div>
+        ${fixHtml}
+      </div>
+    `;
+  }).join("");
+
+  issuesListEl.querySelectorAll(".issue-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const idx = parseInt(card.dataset.issueIdx, 10);
+      const iss = issues[idx];
+      highlightIssueComponents(iss, card);
+    });
+  });
+}
+
+function highlightIssueComponents(issue, card) {
+  if (!cy) return;
+  const comps = (issue.component_indices || []).map(String);
+  if (comps.length === 0) return;
+
+  if (activeIssueIdx === card) {
+    clearIssueHighlight();
+    return;
+  }
+
+  clearIssueHighlight();
+  activeIssueIdx = card;
+  card.classList.add("active");
+
+  cy.elements().addClass("faded");
+  comps.forEach((id) => {
+    const n = cy.getElementById(id);
+    if (n && n.nonempty && n.nonempty()) {
+      n.removeClass("faded");
+      n.addClass("issue-target");
+      n.closedNeighborhood().removeClass("faded");
+    }
+  });
+
+  const targets = cy.collection(
+    comps.map((id) => cy.getElementById(id)).filter((n) => n && n.nonempty && n.nonempty())
+  );
+  if (targets.length > 0) {
+    cy.animate({ fit: { eles: targets, padding: 80 } }, { duration: 250 });
+  }
+}
+
+function clearIssueHighlight() {
+  if (!cy) return;
+  cy.elements().removeClass("faded");
+  cy.nodes().removeClass("issue-target");
+  if (activeIssueIdx && activeIssueIdx.classList) {
+    activeIssueIdx.classList.remove("active");
+  }
+  activeIssueIdx = null;
 }

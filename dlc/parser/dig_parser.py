@@ -213,7 +213,7 @@ def _resolve_subcircuit_path(parent_dir: Path, reference: str) -> tuple[str | No
         )
         return str(chosen.resolve()), error
 
-    return None, f"Referenced file not found: {reference} (searched {parent_dir} recursively)"
+    return None, f"Referenced file not found: {reference}"
 
 def _parse_one_file(
     path: str,

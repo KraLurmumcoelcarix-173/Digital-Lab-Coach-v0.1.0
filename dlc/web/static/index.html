@@ -28,7 +28,7 @@
       <section id="graph-pane">
         <div id="cy"></div>
         <div id="placeholder" class="placeholder">
-          No circuit loaded. Add a  <code>.dig</code>  file from the toolbar
+          No circuit loaded. Add a  .dig  file from the toolbar
           above &mdash; multiple files (parent + subcircuits) supported.
         </div>
         <div id="hover-popup" class="hover-popup hidden">
@@ -38,7 +38,17 @@
       </section>
 
       <aside id="summary-pane">
-        <h2>Circuit summary</h2>
+        <div class="issues-header">
+          <h2>Layer 1 issues <span id="issues-counts" class="muted">&mdash;</span></h2>
+          <label class="mute-toggle" title="When tests pass and a file has 3 or fewer issues, collapse them to avoid noise.">
+            <input type="checkbox" id="mute-toggle" checked />
+            <span>Mute when tests pass</span>
+          </label>
+        </div>
+        <div id="tests-status" class="tests-status muted">Tests: not yet run</div>
+        <div id="issues-list" class="muted">No file loaded.</div>
+
+        <h2 style="margin-top:18px">Circuit summary</h2>
         <div id="summary" class="muted">No file loaded.</div>
       </aside>
     </main>

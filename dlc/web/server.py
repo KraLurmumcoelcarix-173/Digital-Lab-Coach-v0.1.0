@@ -23,6 +23,7 @@ from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.graph import build_signal_graph
 from dlc.parser.netlist import build_netlist
 from dlc.web.graph_export import circuit_summary, to_cytoscape
+from dlc.analyzer import check_all_l1
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -68,10 +69,18 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
             c = parse_dig_file(str(path))
             nl = build_netlist(c)
             g = build_signal_graph(c, nl)
+            try:
+                issues_payload = check_all_l1(c).to_dict()["issues"]
+                issues_error = None
+            except Exception as exc:
+                issues_payload = []
+                issues_error = f"{type(exc).__name__}: {exc}"
             results.append({
                 "filename": name,
                 "graph": to_cytoscape(c, nl, g),
                 "summary": circuit_summary(c, nl),
+                "issues": issues_payload,
+                "issues_error": issues_error,
                 "error": None,
             })
         except Exception as exc:
@@ -79,6 +88,8 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
                 "filename": name,
                 "graph": None,
                 "summary": None,
+                "issues": [],
+                "issues_error": None,
                 "error": f"{type(exc).__name__}: {exc}",
             })
 
