@@ -157,6 +157,10 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
     )
     n_multi = sum(1 for n in netlist.nets if len(n.drivers()) > 1)
 
+    n_testcases = sum(
+        1 for c in circuit.components if c.element_name == "Testcase"
+    )
+
     return {
         "source_path": circuit.source_path,
         "format_version": circuit.format_version,
@@ -164,6 +168,8 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         "inputs": inputs,
         "outputs": outputs,
         "subcircuits": subcircuits,
+        "has_testcases": n_testcases > 0,
+        "testcase_count": n_testcases,
         "net_stats": {
             "total": len(netlist.nets),
             "driven": n_driven,

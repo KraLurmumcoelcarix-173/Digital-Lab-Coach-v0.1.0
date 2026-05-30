@@ -84,10 +84,29 @@ const summaryEl     = document.getElementById("summary");
 const issuesListEl  = document.getElementById("issues-list");
 const issuesCountsEl= document.getElementById("issues-counts");
 const testsStatusEl = document.getElementById("tests-status");
+const testsResultsEl= document.getElementById("tests-results");
+const runTestsBtn   = document.getElementById("run-tests-btn");
 const muteToggle    = document.getElementById("mute-toggle");
 const popupEl       = document.getElementById("hover-popup");
 const popupTitle    = document.getElementById("hover-popup-title");
 const popupBody     = document.getElementById("hover-popup-body");
+const jarChipBtn    = document.getElementById("jar-chip");
+const jarStateEl    = document.getElementById("jar-state");
+const jarModal      = document.getElementById("jar-modal");
+const jarPathInput  = document.getElementById("jar-path-input");
+const jarBrowseBtn  = document.getElementById("jar-browse-btn");
+const jarSaveBtn    = document.getElementById("jar-save-btn");
+const jarCancelBtn  = document.getElementById("jar-cancel-btn");
+const jarModalMsg   = document.getElementById("jar-modal-msg");
+const llmStubBtn    = document.getElementById("llm-stub-btn");
+
+let sessionId = null;
+
+const eventLog = [];
+function logEvent(kind, details = {}) {
+  eventLog.push({ ts: Date.now(), kind, ...details });
+}
+window.dlcEventLog = eventLog;
 
 // Mute-if-passing state
 const MUTE_THRESHOLD = 3;
@@ -139,12 +158,15 @@ function resetDashboard() {
   currentIdx = 0;
   mutedByUser = new Set();
   activeIssueIdx = null;
+  sessionId = null;
+  testsPassed = null;
   if (cy) { cy.destroy(); cy = null; }
   fileSelect.innerHTML = "<option>(no file)</option>";
   fileSelect.disabled = true;
   prevBtn.disabled = true;
   nextBtn.disabled = true;
   clearBtn.disabled = true;
+  runTestsBtn.disabled = true;
   placeholder.classList.remove("hidden");
   placeholder.innerHTML =
     `No circuit loaded. Add a <code>.dig</code> file from the toolbar ` +
@@ -152,6 +174,10 @@ function resetDashboard() {
   summaryEl.innerHTML = `<span class="muted">No file loaded.</span>`;
   issuesListEl.innerHTML = `<span class="muted">No file loaded.</span>`;
   issuesCountsEl.innerHTML = `<span class="muted">&mdash;</span>`;
+  testsStatusEl.textContent = "No file loaded.";
+  testsStatusEl.className = "tests-status muted";
+  testsResultsEl.innerHTML = "";
+  testsResultsEl.classList.add("empty");
   hidePopup();
 }
 
@@ -196,6 +222,8 @@ async function postAll() {
   }
   const data = await res.json();
   loaded = data.files || [];
+  sessionId = data.session_id || null;
+  logEvent("upload", { session_id: sessionId, count: loaded.length });
   if (loaded.length === 0) {
     summaryEl.innerHTML = `<span style="color:#991b1b">No .dig files were processed.</span>`;
     return;
@@ -231,8 +259,9 @@ function renderCurrent() {
   }
 
   renderGraph(f.graph);
-  renderSummary(f.summary);
+  renderSummary(f.summary, f.issues || []);
   renderIssues(f);
+  renderTestsForFile(f);
 }
 
 function renderGraph(graph) {
@@ -404,7 +433,7 @@ function groupBy(collection, keyFn) {
   return out;
 }
 
-function renderSummary(s) {
+function renderSummary(s, issues) {
   const stats = s.net_stats || {};
   const undrivenBadge = stats.undriven_with_pins
     ? `<span class="badge warn">${stats.undriven_with_pins} undriven</span>`
@@ -412,6 +441,12 @@ function renderSummary(s) {
   const multiBadge = stats.multi_driver
     ? `<span class="badge err">${stats.multi_driver} multi-driver</span>`
     : "";
+  const widthKinds = new Set(["width_mismatch", "width_conflict"]);
+  const widthCount = (issues || []).filter((i) => widthKinds.has(i.kind)).length;
+  const widthBadge = widthCount
+    ? `<span class="badge widx">${widthCount} width mismatch${widthCount === 1 ? "" : "es"}</span>`
+    : "";
+  const hasAny = undrivenBadge || multiBadge || widthBadge;
 
   const inventoryRows = Object.entries(s.inventory || {})
     .sort(([, a], [, b]) => b - a)
@@ -436,7 +471,7 @@ function renderSummary(s) {
     <table>
       <tr><td class="k">nets</td><td class="v">${stats.total ?? 0}</td></tr>
       <tr><td class="k">driven</td><td class="v">${stats.driven ?? 0}</td></tr>
-          <tr><td class="k">structural issues</td><td class="v">${undrivenBadge}${multiBadge}${(!undrivenBadge && !multiBadge) ? '<span class="ok">none</span>' : ""}</td></tr>
+          <tr><td class="k">structural issues</td><td class="v">${undrivenBadge}${multiBadge}${widthBadge}${hasAny ? "" : '<span class="ok">none</span>'}</td></tr>
     </table>
 
     <h2 style="margin-top:14px">Inputs (${(s.inputs || []).length})</h2>
@@ -585,3 +620,227 @@ function clearIssueHighlight() {
   }
   activeIssueIdx = null;
 }
+
+function renderTestsForFile(file) {
+  testsResultsEl.innerHTML = "";
+  testsResultsEl.classList.add("empty");
+  const hasTests = !!(file.summary && file.summary.has_testcases);
+  if (!hasTests) {
+    runTestsBtn.disabled = true;
+    runTestsBtn.classList.remove("running");
+    runTestsBtn.textContent = "Run tests";
+    testsStatusEl.textContent = "No test data found in this file.";
+    testsStatusEl.className = "tests-status muted";
+    return;
+  }
+  runTestsBtn.disabled = false;
+  runTestsBtn.classList.remove("running");
+  runTestsBtn.textContent = "Run tests";
+  testsStatusEl.textContent =
+    `Ready: ${file.summary.testcase_count} testcase${file.summary.testcase_count === 1 ? "" : "s"} found. Click "Run tests" to execute.`;
+  testsStatusEl.className = "tests-status muted";
+}
+
+runTestsBtn.addEventListener("click", async () => {
+  if (!sessionId || loaded.length === 0) return;
+  const file = loaded[currentIdx];
+  if (!file || !file.summary || !file.summary.has_testcases) return;
+
+  runTestsBtn.disabled = true;
+  runTestsBtn.classList.add("running");
+  runTestsBtn.textContent = "Running...";
+  testsStatusEl.textContent = "Running Digital.jar per-row...";
+  testsStatusEl.className = "tests-status muted";
+  testsResultsEl.innerHTML = "";
+  testsResultsEl.classList.add("empty");
+  logEvent("tests_run_started", { filename: file.filename });
+
+  let res;
+  try {
+    res = await fetch("/api/tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        filename: file.filename,
+      }),
+    });
+  } catch (err) {
+    setTestsWarning(`Network error: ${err}`);
+    runTestsBtn.disabled = false;
+    runTestsBtn.classList.remove("running");
+    runTestsBtn.textContent = "Run tests";
+    return;
+  }
+  runTestsBtn.disabled = false;
+  runTestsBtn.classList.remove("running");
+  runTestsBtn.textContent = "Run tests";
+
+  if (!res.ok) {
+    const text = await res.text();
+    setTestsWarning(`Server error ${res.status}: ${text}`);
+    return;
+  }
+
+  const payload = await res.json();
+  logEvent("tests_run_complete", {
+    filename: file.filename,
+    ok: payload.ok,
+    all_passed: payload.all_passed,
+  });
+
+  if (!payload.ok) {
+    setTestsWarning(payload.warning || "Test runner reported an error.");
+    return;
+  }
+  if (payload.warning) {
+    setTestsWarning(payload.warning);
+  }
+
+  if ((payload.specs || []).length === 0) {
+    testsStatusEl.textContent = "No Testcase elements were found.";
+    testsStatusEl.className = "tests-status muted";
+    return;
+  }
+
+  renderTestResults(payload);
+  testsPassed = payload.all_passed === true;
+  updateTestsStatus();
+  if (loaded[currentIdx]) renderIssues(loaded[currentIdx]);
+});
+
+function setTestsWarning(msg) {
+  testsStatusEl.textContent = `Warning: ${msg}`;
+  testsStatusEl.className = "tests-status warning";
+  testsResultsEl.innerHTML = "";
+  testsResultsEl.classList.add("empty");
+}
+
+function renderTestResults(payload) {
+  testsResultsEl.classList.remove("empty");
+  const allPassed = payload.all_passed === true;
+  testsStatusEl.textContent = allPassed ? "All rows passed." : "Some rows did not pass.";
+  testsStatusEl.className = allPassed ? "tests-status passed" : "tests-status failed";
+
+  const html = payload.specs.map((spec) => {
+    const rowsHtml = spec.rows.map((row) => {
+      const errCell = row.error_message
+        ? `<td class="row-err" colspan="2">${escapeHtml(row.error_message)}</td>`
+        : `<td class="row-raw">${escapeHtml(row.raw)}</td><td class="row-status">${escapeHtml(row.status)}</td>`;
+      return `<tr class="${escapeHtml(row.status)}">
+        <td class="row-idx">${row.index}</td>
+        ${errCell}
+      </tr>`;
+    }).join("");
+    return `
+      <div class="spec-title">${escapeHtml(spec.name)} &middot; ${spec.rows.length} row${spec.rows.length === 1 ? "" : "s"}</div>
+      <table>${rowsHtml}</table>
+    `;
+  }).join("");
+  testsResultsEl.innerHTML = html;
+}
+
+async function refreshJarChip() {
+  let info;
+  try {
+    const res = await fetch("/api/config/jar");
+    info = await res.json();
+  } catch {
+    jarStateEl.innerHTML = `<span class="jar-state-unknown">unknown</span>`;
+    return;
+  }
+  if (info.exists) {
+    jarStateEl.innerHTML = `<span class="jar-state-good">found</span>`;
+    jarChipBtn.title = `Configured: ${info.path}`;
+  } else {
+    jarStateEl.innerHTML = `<span class="jar-state-missing">not set</span>`;
+    jarChipBtn.title = "Click to set Digital.jar location";
+  }
+}
+
+jarChipBtn.addEventListener("click", async () => {
+  let info;
+  try {
+    const r = await fetch("/api/config/jar");
+    info = await r.json();
+  } catch {
+    info = {};
+  }
+  jarPathInput.value = info.path || "";
+  jarModalMsg.textContent = "";
+  jarModalMsg.className = "modal-msg";
+  jarModal.classList.remove("hidden");
+});
+
+jarCancelBtn.addEventListener("click", () => jarModal.classList.add("hidden"));
+
+jarBrowseBtn.addEventListener("click", async () => {
+  jarModalMsg.textContent = "Opening native file picker on the server...";
+  jarModalMsg.className = "modal-msg";
+  let info;
+  try {
+    const r = await fetch("/api/config/jar/browse");
+    info = await r.json();
+  } catch (err) {
+    jarModalMsg.textContent = `Browse failed: ${err}`;
+    jarModalMsg.className = "modal-msg err";
+    return;
+  }
+  if (info.ok) {
+    jarPathInput.value = info.path;
+    jarModalMsg.textContent = `Selected: ${info.path}. Click Save to persist.`;
+    jarModalMsg.className = "modal-msg ok";
+  } else {
+    jarModalMsg.textContent =
+      `Browse unavailable (${info.reason || "no reason"}). Paste the path into the field above instead.`;
+    jarModalMsg.className = "modal-msg warn";
+  }
+});
+
+jarSaveBtn.addEventListener("click", async () => {
+  const path = jarPathInput.value.trim();
+  if (!path) {
+    jarModalMsg.textContent = "Path is empty.";
+    jarModalMsg.className = "modal-msg err";
+    return;
+  }
+  let res;
+  try {
+    res = await fetch("/api/config/jar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+  } catch (err) {
+    jarModalMsg.textContent = `Save failed: ${err}`;
+    jarModalMsg.className = "modal-msg err";
+    return;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    jarModalMsg.textContent = `Server rejected: ${text}`;
+    jarModalMsg.className = "modal-msg err";
+    return;
+  }
+  jarModalMsg.textContent = "Saved.";
+  jarModalMsg.className = "modal-msg ok";
+  await refreshJarChip();
+  setTimeout(() => jarModal.classList.add("hidden"), 600);
+});
+
+
+llmStubBtn.addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/llm/explain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const body = await res.text();
+    alert(`Layer 3 says: ${res.status} - ${body}`);
+  } catch (err) {
+    alert(`Layer 3 unreachable: ${err}`);
+  }
+});
+
+refreshJarChip();

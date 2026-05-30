@@ -21,6 +21,9 @@
         <button id="prev-btn" class="btn-ghost" disabled>Previous</button>
         <button id="next-btn" class="btn-ghost" disabled>Next</button>
         <button id="clear-btn" class="btn-ghost" disabled>Clear all</button>
+        <button id="jar-chip" class="jar-chip" title="Digital.jar configuration">
+          Digital.jar: <span id="jar-state">checking...</span>
+        </button>
       </div>
     </header>
 
@@ -28,7 +31,7 @@
       <section id="graph-pane">
         <div id="cy"></div>
         <div id="placeholder" class="placeholder">
-          No circuit loaded. Add a  .dig  file from the toolbar
+          No circuit loaded. Add a <code>.dig</code> file from the toolbar
           above &mdash; multiple files (parent + subcircuits) supported.
         </div>
         <div id="hover-popup" class="hover-popup hidden">
@@ -38,19 +41,63 @@
       </section>
 
       <aside id="summary-pane">
-        <div class="issues-header">
-          <h2>Layer 1 issues <span id="issues-counts" class="muted">&mdash;</span></h2>
-          <label class="mute-toggle" title="When tests pass and a file has 3 or fewer issues, collapse them to avoid noise.">
-            <input type="checkbox" id="mute-toggle" checked />
-            <span>Mute when tests pass</span>
-          </label>
-        </div>
-        <div id="tests-status" class="tests-status muted">Tests: not yet run</div>
-        <div id="issues-list" class="muted">No file loaded.</div>
+        <div class="sidebar-scroll">
+          <section class="sidebar-section">
+            <div class="issues-header">
+              <h2>Layer 1 issues <span id="issues-counts" class="muted">&mdash;</span></h2>
+              <label class="mute-toggle" title="When tests pass and a file has 3 or fewer issues, collapse them to avoid noise.">
+                <input type="checkbox" id="mute-toggle" checked />
+                <span>Mute when tests pass</span>
+              </label>
+            </div>
+            <div id="issues-list" class="muted">No file loaded.</div>
+          </section>
 
-        <h2 style="margin-top:18px">Circuit summary</h2>
-        <div id="summary" class="muted">No file loaded.</div>
+          <section class="sidebar-section">
+            <div class="section-head">
+              <h2>Tests</h2>
+              <button id="run-tests-btn" class="btn-tests" disabled>Run tests</button>
+            </div>
+            <div id="tests-status" class="tests-status muted">No file loaded.</div>
+            <div id="tests-results" class="tests-results"></div>
+          </section>
+
+          <section class="sidebar-section">
+            <h2>Circuit summary</h2>
+            <div id="summary" class="muted">No file loaded.</div>
+          </section>
+
+          <section class="sidebar-section l3-placeholder">
+            <h2>Layer 3 coach <span class="pill">soon</span></h2>
+            <p class="muted">
+              Ask the coach to explain a failing row, suggest a hidden
+              test, or read the structural facts back in COMP 311
+              vocabulary. Reserved for F11&ndash;F13.
+            </p>
+            <button id="llm-stub-btn" class="btn-ghost" disabled>Explain (not yet wired)</button>
+          </section>
+        </div>
       </aside>
+
+      <div id="jar-modal" class="modal hidden">
+        <div class="modal-card">
+          <h3>Configure Digital.jar</h3>
+          <p class="muted" style="font-size:12.5px;">
+            DLC shells out to <code>java -cp Digital.jar CLI test</code>
+            to run circuits.
+          </p>
+          <label for="jar-path-input" style="font-size:12px;color:var(--muted);">Path to Digital.jar</label>
+          <input id="jar-path-input" type="text" class="text-input"
+                 placeholder="C:\path\to\Digital.jar" />
+          <div class="modal-row">
+            <button id="jar-browse-btn" class="btn-ghost">Browse...</button>
+            <div class="modal-spacer"></div>
+            <button id="jar-cancel-btn" class="btn-ghost">Cancel</button>
+            <button id="jar-save-btn" class="btn">Save</button>
+          </div>
+          <div id="jar-modal-msg" class="modal-msg"></div>
+        </div>
+      </div>
     </main>
 
     <script src="/static/app.js"></script>
