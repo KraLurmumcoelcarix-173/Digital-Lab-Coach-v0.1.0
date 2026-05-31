@@ -125,6 +125,38 @@ def _check_orphan_clock(circuit: Circuit, netlist: NetList) -> list[Issue]:
     return out
 
 
+def _check_empty_rom(circuit: Circuit) -> list[Issue]:
+    out: list[Issue] = []
+    for idx, comp in enumerate(circuit.components):
+        if comp.element_name != "ROM":
+            continue
+        data = comp.attributes.get("Data", "")
+        if not isinstance(data, str):
+            data = "" if data is None else str(data)
+        if data.strip():
+            continue
+        name = _component_display_name(comp, idx)
+        out.append(Issue(
+            kind="empty_rom",
+            severity=IssueSeverity.WARNING,
+            title=f"{name} has no data programmed",
+            message=(
+                f"{name}'s Data attribute is empty. At runtime every "
+                f"address read will return 0 regardless of the input, "
+                f"which is rarely intended. Digital does not flag this "
+                f"on its own (it only validates malformed Data strings)."
+            ),
+            component_indices=[idx],
+            location=(comp.position.x, comp.position.y),
+            suggested_fix=(
+                f"In Digital, double-click {name} and either type the "
+                f"contents into the Data field or use 'Load Data' to "
+                f"import a .hex file."
+            ),
+        ))
+    return out
+
+
 def check_sequential(
     circuit: Circuit,
     netlist: NetList | None = None,
@@ -135,4 +167,5 @@ def check_sequential(
     issues.extend(_check_register_clock(circuit, netlist))
     issues.extend(_check_register_en(circuit, netlist))
     issues.extend(_check_orphan_clock(circuit, netlist))
+    issues.extend(_check_empty_rom(circuit))
     return issues
