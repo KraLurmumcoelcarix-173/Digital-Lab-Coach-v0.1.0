@@ -22,7 +22,7 @@ _PROMPT_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 
 def _load_prompt(name: str) -> str:
-    return (_PROMPT_DIR / name).read_text()
+    return (_PROMPT_DIR / name).read_text(encoding="utf-8")
 
 
 SYLLABUS_311 = """\
