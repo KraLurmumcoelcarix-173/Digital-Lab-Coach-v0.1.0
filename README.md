@@ -26,6 +26,22 @@ Active development.
 | `docs/` | Architecture notes, design decisions, dev log, dev debug guide. 
 | `tests/` | pytest unit tests, one file per source module. 
 
+## Temp Web testing
+
+By May 2026, The Layer 1 + Layer 2 demo runs as a local web app.
+Open it in a browser, point it at one or more `.dig` files, and
+you get the interactive graph, structural-issue verlay, per-row 
+test runner, component library, and the Layer 2 conceptual coach.
+
+Try the early web version by going over developer setup and running 
+the command below:
+
+```bash
+# From the repo root:
+uv sync                              
+uv run python -m dlc.web.server      
+```
+
 ## Developer setup (For best experience, run the set up and testing flow using bash)
 
 If you're contributing to DLC:
@@ -60,6 +76,7 @@ git clone <repo-url>
 cd digital-lab-coach
 uv run pytest      # creates .venv on first call
 ```
+After all tests green, you are all set and feel free to try temp web testing!
 
 **Side notes**
 

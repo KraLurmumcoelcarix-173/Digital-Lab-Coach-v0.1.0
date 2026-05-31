@@ -1228,7 +1228,7 @@ l2LlmBtn.addEventListener("click", async () => {
   }
 
   l2LlmBtn.disabled = true;
-  l2LlmStatus.textContent = "Talking to Claude...";
+  l2LlmStatus.textContent = "Feeding LLM the .dig files...";
   l2LlmStatus.className = "l2-llm-status running";
   l2LlmOutput.innerHTML = "";
   l2LlmOutput.classList.add("empty");

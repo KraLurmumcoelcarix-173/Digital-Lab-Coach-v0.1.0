@@ -74,12 +74,57 @@ def _node_display_label(idx: int, comp) -> str:
     return f"{comp.element_name}\n[{idx}]"
 
 
+def _build_child_by_index(circuit: Circuit) -> dict:
+    out: dict[int, "Circuit"] = {}
+    for sub_ref in circuit.subcircuits:
+        if sub_ref.child_circuit is None:
+            continue
+        for idx, comp in enumerate(circuit.components):
+            if comp is sub_ref.parent_component:
+                out[idx] = sub_ref.child_circuit
+                break
+    return out
+
+
+def _resolve_edge_bits(
+    circuit: Circuit,
+    driver_comp,
+    driver_pin: str | None,
+    target_comp,
+    sink_pin: str | None,
+    child_by_index: dict,
+    u_idx: int,
+    v_idx: int,
+) -> int | None:
+    if driver_pin:
+        w = pin_width(driver_comp, driver_pin)
+        if w is not None:
+            return w
+    if driver_comp.element_name.endswith(".dig") and driver_pin:
+        child = child_by_index.get(u_idx)
+        if child is not None:
+            for c in child.outputs():
+                if c.label == driver_pin:
+                    return int(c.attributes.get("Bits", 1))
+    if sink_pin:
+        w = pin_width(target_comp, sink_pin)
+        if w is not None:
+            return w
+    if target_comp.element_name.endswith(".dig") and sink_pin:
+        child = child_by_index.get(v_idx)
+        if child is not None:
+            for c in child.inputs():
+                if c.label == sink_pin:
+                    return int(c.attributes.get("Bits", 1))
+    return None
+
 def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
     """
     Build {"nodes": [...], "edges": [...]} in Cytoscape.js Elements
     format. Tunnel and annotation (Testcase/Rectangle) elements are
     omitted 
     """
+    child_by_index = _build_child_by_index(circuit)
     nodes = []
     for idx, comp in enumerate(circuit.components):
         family = _family(comp.element_name)
@@ -107,8 +152,13 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
     edge_id = 0
     for u, v, data in graph.edges(data=True):
         driver_comp = circuit.components[u]
+        target_comp = circuit.components[v]
         driver_pin = data.get("driver_pin")
-        bits = pin_width(driver_comp, driver_pin) if driver_pin else None
+        sink_pin = data.get("sink_pin")
+        bits = _resolve_edge_bits(
+            circuit, driver_comp, driver_pin, target_comp, sink_pin,
+            child_by_index, u, v,
+        )
         edges.append({
             "data": {
                 "id": f"e{edge_id}",
@@ -116,7 +166,7 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
                 "target": str(v),
                 "net_id": data.get("net_id"),
                 "driver_pin": driver_pin,
-                "sink_pin": data.get("sink_pin"),
+                "sink_pin": sink_pin,
                 "bits": bits,
             },
         })
