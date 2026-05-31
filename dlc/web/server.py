@@ -67,6 +67,16 @@ class TestsRequest(BaseModel):
     timeout: float = 30.0
     mode: str = "per_row"   
 
+class ApiKeyRequest(BaseModel):
+    key: str
+
+
+class LlmExplainRequest(BaseModel):
+    session_id: str
+    filename: str
+    student_goal: str | None = None
+    test_summary: str | None = None
+
 import threading
 
 _JOBS: dict[str, dict] = {}
@@ -472,9 +482,72 @@ def run_tests(req: TestsRequest) -> dict:
 def llm_explain() -> dict:
     raise HTTPException(
         status_code=501,
-        detail="Layer 3 LLM not yet implemented (planned for F11-F13).",
+        detail="Layer 3 LLM not yet implemented.",
     )
 
+@app.get("/api/config/api_key")
+def get_api_key_status() -> dict:
+    return {"configured": llm_client.has_api_key()}
+
+
+@app.post("/api/config/api_key")
+def set_api_key_endpoint(req: ApiKeyRequest) -> dict:
+    key = (req.key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Empty key.")
+    if not key.startswith("sk-"):
+        raise HTTPException(
+            status_code=400,
+            detail="That doesn't look like an Anthropic API key (expected sk-...).",
+        )
+    llm_client.set_api_key(key)
+    return {"ok": True, "configured": True}
+
+@app.get("/api/library")
+def get_library(session_id: str, filename: str) -> dict:
+    target = _resolve_target(session_id, filename)
+    try:
+        circuit = parse_dig_file(target["path"])
+        netlist = build_netlist(circuit)
+        summary = circuit_summary(circuit, netlist)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not load circuit: {type(exc).__name__}: {exc}",
+        )
+    cards = library_for_inventory(summary.get("inventory", {}))
+    return {"cards": cards, "filename": filename}
+
+@app.post("/api/llm/explain")
+def llm_explain(req: LlmExplainRequest) -> dict:
+    target = _resolve_target(req.session_id, req.filename)
+    try:
+        circuit = parse_dig_file(target["path"])
+        netlist = build_netlist(circuit)
+        graph = build_signal_graph(circuit, netlist)
+    except Exception as exc:
+        return {
+            "ok": False, "text": None, "gate_message": None,
+            "error": f"Parse failed: {exc}",
+            "usage": None, "model": None,
+        }
+    try:
+        facts_obj = extract_facts(circuit, netlist=netlist, graph=graph)
+        facts_dict = facts_obj.to_dict() if hasattr(facts_obj, "to_dict") else circuit_summary(circuit, netlist)
+    except Exception:
+        facts_dict = circuit_summary(circuit, netlist)
+
+    issues_payload = check_all_l1(circuit).to_dict()["issues"]
+    student_goal = (req.student_goal or "").strip()[:1200]
+    if len(student_goal) == 0:
+        student_goal = None
+
+    return explain_circuit(
+        facts=facts_dict,
+        issues=issues_payload,
+        test_summary=req.test_summary,
+        student_goal=student_goal,
+    )
 
 def main() -> None:
     import uvicorn
