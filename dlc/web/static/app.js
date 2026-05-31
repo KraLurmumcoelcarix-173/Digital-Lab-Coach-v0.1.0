@@ -180,6 +180,13 @@ function resetDashboard() {
   testsStatusEl.className = "tests-status muted";
   testsResultsEl.innerHTML = "";
   testsResultsEl.classList.add("empty");
+  libraryGridEl.innerHTML = `<div class="muted">Load a circuit on the Dashboard tab to populate the library.</div>`;
+  l2LibraryFilename = null;
+  goalTextarea.value = "";
+  goalCountEl.textContent = "0 words";
+  l2LlmStatus.textContent = "";
+  l2LlmOutput.innerHTML = "";
+  l2LlmOutput.classList.add("empty");
   hidePopup();
 }
 
@@ -264,6 +271,7 @@ function renderCurrent() {
   renderSummary(f.summary, f.issues || []);
   renderIssues(f);
   renderTestsForFile(f);
+  l2LibraryFilename = null;
 }
 
 function renderGraph(graph) {

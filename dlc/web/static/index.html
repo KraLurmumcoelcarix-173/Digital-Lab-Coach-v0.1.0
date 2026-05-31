@@ -31,6 +31,9 @@
         <button id="jar-chip" class="jar-chip" title="Digital.jar configuration">
           Digital.jar: <span id="jar-state">checking...</span>
         </button>
+        <button id="key-chip" class="jar-chip" title="Anthropic API key">
+          API key: <span id="key-state">checking...</span>
+        </button>
       </div>
     </header>
 
@@ -90,15 +93,42 @@
         </aside>
       </div>
 
-      <!-- Layer 2 library tab -->
+      <!-- Layer 2 library tab. -->
       <div class="page" data-page="l2" hidden>
-        <div class="tab-empty">
-          <h2>L2 Library</h2>
-          <p class="muted">
-            COMP 311 component encyclopedia and conceptual hints will live
-            here. Currently empty &mdash; content lands when the static
-            knowledge base + F12 are wired.
-          </p>
+        <div class="l2-layout">
+          <section class="l2-library">
+            <h2>Component library</h2>
+            <p class="muted l2-sub">
+              Components present in this circuit. Hover a card to expand;
+              press Up / Down inside the detail card to scroll, click
+              anywhere outside to dismiss.
+            </p>
+            <div id="library-grid" class="library-grid">
+              <div class="muted">Load a circuit on the Dashboard tab to populate the library.</div>
+            </div>
+          </section>
+
+          <aside class="l2-right">
+            <h2>Big-picture coach <span class="pill">LLM</span></h2>
+            <p class="muted l2-sub">
+              Optionally describe in 200 words or less what you intended
+              the circuit to do. Leave it blank if you want a generic
+              structured summary. Then hit Summarize.
+            </p>
+            <textarea id="goal-textarea" class="goal-text"
+              maxlength="1500"
+              placeholder="(optional) e.g. A 4-bit accumulator that loads A on load=1 and adds B otherwise"></textarea>
+            <div class="goal-row">
+              <span id="goal-count" class="muted">0 words</span>
+              <button id="l2-llm-btn" class="btn">Summarize circuit</button>
+            </div>
+            <div id="l2-llm-status" class="muted l2-llm-status"></div>
+            <div id="l2-llm-output" class="l2-output"></div>
+          </aside>
+        </div>
+
+        <div id="card-overlay" class="card-overlay hidden">
+          <div id="card-detail" class="card-detail" tabindex="0"></div>
         </div>
       </div>
 
@@ -114,6 +144,27 @@
             returns 501 until the SDK + prompts land.
           </p>
           <button id="llm-stub-btn" class="btn-ghost">Try Explain (returns 501 today)</button>
+        </div>
+      </div>
+
+      <div id="key-modal" class="modal hidden">
+        <div class="modal-card">
+          <h3>Configure Anthropic API key</h3>
+          <p class="muted" style="font-size:12.5px;">
+            Layer 2 and Layer 3 use Claude. The key is saved locally to
+            <code>~/.dlc/config.json</code> (or set the
+            <code>ANTHROPIC_API_KEY</code> env var instead). DLC never
+            transmits the key anywhere except LLM got called.
+          </p>
+          <label for="key-input" style="font-size:12px;color:var(--muted);">sk-... key</label>
+          <input id="key-input" type="password" class="text-input"
+                 placeholder="sk-ant-..." />
+          <div class="modal-row">
+            <div class="modal-spacer"></div>
+            <button id="key-cancel-btn" class="btn-ghost">Cancel</button>
+            <button id="key-save-btn" class="btn">Save</button>
+          </div>
+          <div id="key-modal-msg" class="modal-msg"></div>
         </div>
       </div>
 

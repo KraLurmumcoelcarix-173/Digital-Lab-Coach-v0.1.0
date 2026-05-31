@@ -25,6 +25,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from dlc.facts.extractor import extract_facts
+from dlc.llm import client as llm_client
+from dlc.llm.explain import explain_circuit
+
 from dlc.analyzer import check_all_l1
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.graph import build_signal_graph
@@ -38,6 +42,9 @@ from dlc.testing.results import parse_cli_output
 from dlc.testing.runner import (
     find_digital_jar, per_row_run, per_row_run_iter, run_digital_cli,
 )
+
+from dlc.web.component_kb import library_for_inventory
+
 from dlc.testing.spec import extract_test_specs
 from dlc.web.graph_export import circuit_summary, to_cytoscape
 
