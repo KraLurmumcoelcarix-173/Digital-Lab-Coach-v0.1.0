@@ -146,7 +146,7 @@ COMPONENT_KB: dict[str, dict] = {
         "port_summary": "0 inputs -> 1 output (Bits-wide)",
         "extra": {
             "behavior_example": (
-                "If Label=A, Bits=4: testcase column 'A' supplies a "
+                "If Label=A, Bits=4: testcase column A supplies a "
                 "4-bit value each row; the wire fans out to anything "
                 "connected to this In's output pin."
             ),
@@ -158,7 +158,7 @@ COMPONENT_KB: dict[str, dict] = {
         "description": (
             "Top-level circuit output. Whatever drives this pin is "
             "what the test bench observes; an undriven Out is a "
-            "classic 'forgot to wire' bug."
+            "classic forgot to wire bug."
         ),
         "transistor_count": "N/A",
         "port_summary": "1 input -> 0 outputs",
@@ -371,7 +371,7 @@ COMPONENT_KB: dict[str, dict] = {
         "port_summary": "1 bidirectional pin",
         "extra": {
             "behavior_example": (
-                "Two Tunnels both named 'WriteReg' anywhere on the "
+                "Two Tunnels both named WriteReg anywhere on the "
                 "canvas form one electrical net -- whatever drives "
                 "one shows up at the other."
             ),
@@ -389,7 +389,7 @@ COMPONENT_KB: dict[str, dict] = {
         "port_summary": "0 inputs -> 1 output (1 bit)",
         "extra": {
             "behavior_example": (
-                "Each test row with a 'C' token in the clock column "
+                "Each test row with a C token in the clock column "
                 "advances every Register's stored value to whatever D "
                 "presents on the rising edge."
             ),
@@ -408,7 +408,7 @@ COMPONENT_KB: dict[str, dict] = {
         "extra": {
             "behavior_example": (
                 "Value=5, Bits=4 -> out=0101 forever. Value=0, Bits=32 "
-                "is the canonical 'feed a zero into the Mux' pattern."
+                "is the canonical feed a zero into the Mux pattern."
             ),
             "common_mistakes": (
                 "Wrong Bits attribute (a 1-bit Const where the wire "
@@ -429,7 +429,7 @@ COMPONENT_KB: dict[str, dict] = {
         "port_summary": "0 inputs -> 1 output (Bits-wide)",
         "extra": {
             "behavior_example": (
-                "Bits=32, drives 32'b0 to wherever it connects -- often "
+                "Bits=32, drives 32 bits 0 to wherever it connects -- often "
                 "tied to the unused 0th register in a register file."
             ),
         },
@@ -445,7 +445,7 @@ COMPONENT_KB: dict[str, dict] = {
         "port_summary": "0 inputs -> 1 output (Bits-wide)",
         "extra": {
             "behavior_example": (
-                "Bits=1, drives 1 -- the canonical 'always-write' "
+                "Bits=1, drives 1 -- the canonical always-write "
                 "wire on a Register's en pin."
             ),
         },
@@ -463,7 +463,7 @@ COMPONENT_KB: dict[str, dict] = {
         "extra": {
             "behavior_example": (
                 "Drive a=1,b=1,c=1,d=0,e=0,f=1,g=1 to display the "
-                "digit '3'. Drive all 7 high to display '8'."
+                "digit 3. Drive all 7 high to display 8."
             ),
         },
     },
