@@ -44,7 +44,7 @@ COMPONENT_KB: dict[str, dict] = {
         "image": "or.png",
         "description": (
             "Outputs HIGH when ANY input is HIGH. The disjunction "
-            "primitive; pairs with AND in sum-of-products forms."
+            "primitive; pairs with AND in Sum-Of-Products forms."
         ),
         "transistor_count": "2N + 2 for an N-input OR",
         "transistor_note": "Implemented as a NOR followed by an inverter.",
@@ -61,10 +61,9 @@ COMPONENT_KB: dict[str, dict] = {
             "Outputs HIGH when an ODD number of inputs are HIGH. "
             "Workhorse of arithmetic (sum bit of a half-adder is XOR)."
         ),
-        "transistor_count": "~12 for the standard 2-input CMOS XOR",
+        "transistor_count": "About 12 for the standard 2-input CMOS XOR",
         "transistor_note": (
-            "Several implementations exist (e.g. 8T pass-transistor); 12T "
-            "static CMOS is the textbook form."
+            "Several implementations exist"
         ),
         "port_summary": "N inputs -> 1 output",
         "extra": {
@@ -143,7 +142,7 @@ COMPONENT_KB: dict[str, dict] = {
             "Top-level circuit input. The test bench drives values "
             "into this port; downstream logic reads them."
         ),
-        "transistor_count": "N/A (pad / pin)",
+        "transistor_count": "N/A",
         "port_summary": "0 inputs -> 1 output (Bits-wide)",
         "extra": {
             "behavior_example": (
@@ -161,7 +160,7 @@ COMPONENT_KB: dict[str, dict] = {
             "what the test bench observes; an undriven Out is a "
             "classic 'forgot to wire' bug."
         ),
-        "transistor_count": "N/A (pad / pin)",
+        "transistor_count": "N/A",
         "port_summary": "1 input -> 0 outputs",
         "extra": {
             "behavior_example": (
@@ -175,13 +174,15 @@ COMPONENT_KB: dict[str, dict] = {
         "display_name": "Multiplexer (MUX)",
         "image": "mux.png",
         "description": (
-            "Selects one of 2^N data inputs based on a Selector Bits "
-            "control. The fundamental selection element behind ALUs, "
-            "register-file read ports, and pipeline forwarding paths."
+            "Selects one of several data inputs and forwards it to the "
+            "output. The attribute Selector Bits = S means the MUX has "
+            "2^S data inputs and an S-bit selector signal. The "
+            "fundamental selection element behind ALUs, register-file "
+            "read ports, and pipeline forwarding paths."
         ),
-        "transistor_count": "~6-12 per data bit per input lane (varies by implementation)",
-        "transistor_note": "Pass-transistor MUXes can be smaller; CMOS tree MUXes scale by 2^N.",
-        "port_summary": "2^N data inputs + N select bits -> 1 output",
+        "transistor_count": "About 6-12 per data bit per input lane (varies by implementation)",
+        "transistor_note": "Pass-transistor MUXes can be smaller; CMOS tree MUXes scale by 2^S.",
+        "port_summary": "2^S data inputs + S select bits -> 1 output (S = Selector Bits)",
         "extra": {
             "behavior_example": (
                 "Selector Bits=1, Bits=4: in0=0101, in1=1100, sel=1 "
@@ -197,7 +198,7 @@ COMPONENT_KB: dict[str, dict] = {
             "outputs HIGH. The address-decode block in a register "
             "file's write port is exactly this."
         ),
-        "transistor_count": "~2^N AND-gate equivalents",
+        "transistor_count": "About 2^N AND-gate equivalents",
         "port_summary": "N select bits -> 2^N outputs",
         "extra": {
             "behavior_example": (
@@ -214,7 +215,7 @@ COMPONENT_KB: dict[str, dict] = {
             "outputs the index of the highest-priority asserted line. "
             "Used in interrupt controllers and reservation stations."
         ),
-        "transistor_count": "depends on width; grows ~N * 2^N",
+        "transistor_count": "depends on width; grows ~ N * 2^N",
         "port_summary": "2^N priority inputs -> N-bit num output",
         "extra": {
             "behavior_example": (
@@ -231,7 +232,7 @@ COMPONENT_KB: dict[str, dict] = {
             "N-bit ripple-carry or fast adder. Adds a + b + c_i and "
             "produces s and c_o. The arithmetic heart of any ALU."
         ),
-        "transistor_count": "~28 per bit for a textbook full adder",
+        "transistor_count": "About 28 per bit for a textbook full adder",
         "transistor_note": "Carry-lookahead variants trade transistors for speed.",
         "port_summary": "a, b (N bits), c_i (1 bit) -> s (N bits), c_o (1 bit)",
         "extra": {
@@ -248,7 +249,7 @@ COMPONENT_KB: dict[str, dict] = {
             "Shifts an N-bit input by 0 to N-1 positions in one clock. "
             "Supports the shift-by-immediate instructions of RISC-V."
         ),
-        "transistor_count": "~2 N log2(N) for a Mux-tree implementation",
+        "transistor_count": "N/A",
         "port_summary": "in (N bits), sh (log2(N) bits) -> out (N bits)",
         "extra": {
             "behavior_example": (
@@ -265,7 +266,7 @@ COMPONENT_KB: dict[str, dict] = {
             "outputs: greater, equal, or less. Used wherever you "
             "need 'is x == y?' or 'x < threshold?' decisions."
         ),
-        "transistor_count": "~6 N + reduction tree",
+        "transistor_count": "N/A",
         "port_summary": "A, B (N bits) -> gr, eq, le (1 bit each)",
         "extra": {
             "behavior_example": (
@@ -295,17 +296,25 @@ COMPONENT_KB: dict[str, dict] = {
         "display_name": "Register",
         "image": "register.png",
         "description": (
-            "N-bit edge-triggered storage element. On the rising edge "
-            "of C, if en=1, D is latched into Q. The fundamental "
-            "sequential cell behind pipelines and state machines."
+            "N-bit edge-triggered flip-flop. On the active clock edge "
+            "of C, if en=1, D is captured into Q (note: a flip-flop "
+            "samples on an edge, unlike a level-sensitive latch). The "
+            "fundamental sequential cell behind pipelines, state "
+            "machines, and the register file."
         ),
-        "transistor_count": "~24 per bit for a master-slave D flip-flop",
+        "transistor_count": "About 24 per bit for a D flip-flop",
         "port_summary": "D (N bits), C (1), en (1) -> Q (N bits)",
         "extra": {
             "behavior_example": (
                 "Bits=4, en=1. At cycle 0 D=0011, Q reflects whatever "
-                "was previously latched. After clock edge, Q=0011. If "
-                "D changes to 0101 with en=0, Q stays 0011."
+                "was previously captured. After the clock edge, Q=0011. "
+                "If D changes to 0101 with en=0, Q stays 0011."
+            ),
+            "common_mistakes": (
+                "Forgetting to wire the C pin (the register never "
+                "updates), wiring en to a stuck 0 (the register never "
+                "accepts new data), or confusing D (input) with Q "
+                "(output)."
             ),
         },
     },
@@ -317,12 +326,18 @@ COMPONENT_KB: dict[str, dict] = {
             "Used for instruction memory and lookup tables. DLC warns "
             "if Data is empty (Digital does not flag this on its own)."
         ),
-        "transistor_count": "~6 per bit cell (NOR-style)",
+        "transistor_count": "N/A",
         "port_summary": "A (AddrBits), sel (1) -> D (Bits)",
         "extra": {
             "behavior_example": (
                 "AddrBits=3, Bits=8, Data=82,86,80,81,87,c2,c7,c0. "
                 "A=2 -> D=0x80 = 10000000."
+            ),
+            "common_mistakes": (
+                "Leaving Data empty (the ROM reads as all zeros and "
+                "Digital does not warn), wrong AddrBits so part of "
+                "the address is ignored, or treating the sel/enable "
+                "pin as a MUX-style data selector."
             ),
         },
     },
@@ -395,6 +410,12 @@ COMPONENT_KB: dict[str, dict] = {
                 "Value=5, Bits=4 -> out=0101 forever. Value=0, Bits=32 "
                 "is the canonical 'feed a zero into the Mux' pattern."
             ),
+            "common_mistakes": (
+                "Wrong Bits attribute (a 1-bit Const where the wire "
+                "expects 4 bits will fail with a width mismatch), or "
+                "using Const(0) where Ground is clearer (both work, "
+                "but Ground reads more idiomatically as a rail)."
+            ),
         },
     },
     "Ground": {
@@ -404,7 +425,7 @@ COMPONENT_KB: dict[str, dict] = {
             "Drives a constant 0 of the given width. Equivalent to "
             "Const(0) but typographically distinct."
         ),
-        "transistor_count": "N/A (rail)",
+        "transistor_count": "N/A",
         "port_summary": "0 inputs -> 1 output (Bits-wide)",
         "extra": {
             "behavior_example": (
@@ -420,7 +441,7 @@ COMPONENT_KB: dict[str, dict] = {
             "Drives a constant 1. Often used on an en pin to mean "
             "'always enabled'."
         ),
-        "transistor_count": "N/A (rail)",
+        "transistor_count": "N/A",
         "port_summary": "0 inputs -> 1 output (Bits-wide)",
         "extra": {
             "behavior_example": (
