@@ -478,13 +478,6 @@ def run_tests(req: TestsRequest) -> dict:
         "specs": spec_payloads,
     }
 
-@app.post("/api/llm/explain")
-def llm_explain() -> dict:
-    raise HTTPException(
-        status_code=501,
-        detail="Layer 3 LLM not yet implemented.",
-    )
-
 @app.get("/api/config/api_key")
 def get_api_key_status() -> dict:
     return {"configured": llm_client.has_api_key()}
