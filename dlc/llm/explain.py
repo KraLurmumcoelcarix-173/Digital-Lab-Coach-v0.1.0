@@ -123,6 +123,7 @@ def explain_circuit(
     student_goal: str | None,
     *,
     api_key: str | None = None,
+    model: str | None = None,
 ) -> dict:
     gate = _gate_text_for_issues(issues)
     if gate is None:
@@ -142,9 +143,11 @@ def explain_circuit(
         lectures_list=SYLLABUS_311,
     )
 
+    from dlc.llm.client import DEFAULT_MODEL
     result = call_llm(
         prompt,
         api_key=api_key,
+        model=model or DEFAULT_MODEL,
         system=(
             "You are a circuit reasoning assistant for UNC COMP 311. "
             "Use plain text only. No markdown, no bullets, no headers."

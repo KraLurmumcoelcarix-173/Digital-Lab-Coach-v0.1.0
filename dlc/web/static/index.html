@@ -31,8 +31,8 @@
         <button id="jar-chip" class="jar-chip" title="Digital.jar configuration">
           Digital.jar: <span id="jar-state">checking...</span>
         </button>
-        <button id="key-chip" class="jar-chip" title="Anthropic API key">
-          API key: <span id="key-state">checking...</span>
+        <button id="key-chip" class="jar-chip" title="LLM API keys">
+          API keys: <span id="key-state">checking...</span>
         </button>
       </div>
     </header>
@@ -118,6 +118,12 @@
             <textarea id="goal-textarea" class="goal-text"
               maxlength="1500"
               placeholder="(optional) e.g. A 4-bit accumulator that loads A on load=1 and adds B otherwise"></textarea>
+            <div class="model-row">
+              <label for="l2-model-select" class="muted" style="font-size:11.5px;">Model</label>
+              <select id="l2-model-select" class="select" style="min-width:170px;max-width:240px;">
+                <option>loading...</option>
+              </select>
+            </div>
             <div class="goal-row">
               <span id="goal-count" class="muted">0 words</span>
               <button id="l2-llm-btn" class="btn">Summarize circuit</button>
@@ -146,21 +152,48 @@
       </div>
 
       <div id="key-modal" class="modal hidden">
-        <div class="modal-card">
-          <h3>Configure Anthropic API key</h3>
+        <div class="modal-card" style="width:min(560px,92vw);">
+          <h3>LLM API keys</h3>
           <p class="muted" style="font-size:12.5px;">
-            Layer 2 and Layer 3 use Claude currently. DLC never
-            transmits the key anywhere except LLM got called.
+            Keys are saved locally to <code>~/.dlc/config.json</code>
+            (or set the matching env var instead). DLC only sends them
+            to the chosen provider when you click Summarize.
           </p>
-          <label for="key-input" style="font-size:12px;color:var(--muted);">sk-... key</label>
-          <input id="key-input" type="password" class="text-input"
-                 placeholder="sk-ant-..." />
-          <div class="modal-row">
-            <div class="modal-spacer"></div>
-            <button id="key-cancel-btn" class="btn-ghost">Cancel</button>
-            <button id="key-save-btn" class="btn">Save</button>
+
+          <div class="key-row" data-provider="anthropic">
+            <div class="key-row-head">
+              <span class="key-row-name">Anthropic</span>
+              <span class="key-row-status" id="key-status-anthropic">missing</span>
+            </div>
+            <div class="key-row-controls">
+              <input type="password" class="text-input key-input"
+                     id="key-input-anthropic"
+                     placeholder="sk-ant-..." />
+              <button class="btn key-save-btn" data-provider="anthropic">Save</button>
+              <button class="btn-ghost key-clear-btn" data-provider="anthropic">Clear</button>
+            </div>
+            <div class="modal-msg key-row-msg" id="key-msg-anthropic"></div>
           </div>
-          <div id="key-modal-msg" class="modal-msg"></div>
+
+          <div class="key-row" data-provider="openai">
+            <div class="key-row-head">
+              <span class="key-row-name">OpenAI</span>
+              <span class="key-row-status" id="key-status-openai">missing</span>
+            </div>
+            <div class="key-row-controls">
+              <input type="password" class="text-input key-input"
+                     id="key-input-openai"
+                     placeholder="sk-..." />
+              <button class="btn key-save-btn" data-provider="openai">Save</button>
+              <button class="btn-ghost key-clear-btn" data-provider="openai">Clear</button>
+            </div>
+            <div class="modal-msg key-row-msg" id="key-msg-openai"></div>
+          </div>
+
+          <div class="modal-row" style="margin-top:18px;">
+            <div class="modal-spacer"></div>
+            <button id="key-cancel-btn" class="btn-ghost">Close</button>
+          </div>
         </div>
       </div>
 

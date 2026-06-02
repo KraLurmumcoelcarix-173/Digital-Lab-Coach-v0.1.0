@@ -68,6 +68,7 @@ class TestsRequest(BaseModel):
     mode: str = "per_row"   
 
 class ApiKeyRequest(BaseModel):
+    provider: str = "anthropic"
     key: str
 
 
@@ -76,6 +77,7 @@ class LlmExplainRequest(BaseModel):
     filename: str
     student_goal: str | None = None
     test_summary: str | None = None
+    model: str | None = None
 
 import threading
 
@@ -478,23 +480,62 @@ def run_tests(req: TestsRequest) -> dict:
         "specs": spec_payloads,
     }
 
+_PROVIDERS = ["anthropic", "openai"]
+
+
 @app.get("/api/config/api_key")
-def get_api_key_status() -> dict:
-    return {"configured": llm_client.has_api_key()}
+def get_api_key_status(provider: str | None = None) -> dict:
+    per_provider = {p: llm_client.has_api_key(p) for p in _PROVIDERS}
+    if provider is None:
+        return {
+            "configured": per_provider["anthropic"],
+            "providers": per_provider,
+        }
+    if provider not in _PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider!r}")
+    return {"provider": provider, "configured": per_provider[provider]}
 
 
 @app.post("/api/config/api_key")
 def set_api_key_endpoint(req: ApiKeyRequest) -> dict:
+    provider = (req.provider or "anthropic").strip()
     key = (req.key or "").strip()
+    if provider not in _PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider!r}")
     if not key:
         raise HTTPException(status_code=400, detail="Empty key.")
     if not key.startswith("sk-"):
         raise HTTPException(
             status_code=400,
-            detail="That doesn't look like an Anthropic API key (expected sk-...).",
+            detail=f"That doesn't look like a {provider} API key (expected sk-...).",
         )
-    llm_client.set_api_key(key)
-    return {"ok": True, "configured": True}
+    llm_client.set_api_key(provider, key)
+    return {"ok": True, "provider": provider, "configured": True}
+
+
+@app.delete("/api/config/api_key")
+def clear_api_key_endpoint(provider: str) -> dict:
+    if provider not in _PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider!r}")
+    llm_client.clear_api_key(provider)
+    return {
+        "ok": True, "provider": provider,
+        "configured": llm_client.has_api_key(provider),
+    }
+
+
+@app.get("/api/llm/models")
+def list_models() -> dict:
+    models = []
+    for model_id, info in llm_client.MODEL_CATALOG.items():
+        models.append({
+            "id": model_id,
+            "label": info["label"],
+            "provider": info["provider"],
+            "tier": info["tier"],
+            "key_configured": llm_client.has_api_key(info["provider"]),
+        })
+    return {"models": models, "default": llm_client.DEFAULT_MODEL}
 
 @app.get("/api/library")
 def get_library(session_id: str, filename: str) -> dict:
@@ -540,6 +581,7 @@ def llm_explain(req: LlmExplainRequest) -> dict:
         issues=issues_payload,
         test_summary=req.test_summary,
         student_goal=student_goal,
+        model=req.model,
     )
 
 def main() -> None:

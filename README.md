@@ -8,7 +8,7 @@ companion tool) prototype.
 
 ## Status
 
-Active development.
+Active development. No release yet.
 
 ## File Layout
 

@@ -105,10 +105,17 @@ const llmStubBtn    = document.getElementById("llm-stub-btn");
 const keyChipBtn    = document.getElementById("key-chip");
 const keyStateEl    = document.getElementById("key-state");
 const keyModal      = document.getElementById("key-modal");
-const keyInput      = document.getElementById("key-input");
-const keySaveBtn    = document.getElementById("key-save-btn");
 const keyCancelBtn  = document.getElementById("key-cancel-btn");
-const keyModalMsg   = document.getElementById("key-modal-msg");
+
+
+const KEY_PROVIDERS = ["anthropic", "openai"];
+const keyEls = Object.fromEntries(KEY_PROVIDERS.map((p) => [p, {
+  status: document.getElementById(`key-status-${p}`),
+  input:  document.getElementById(`key-input-${p}`),
+  msg:    document.getElementById(`key-msg-${p}`),
+}]));
+
+const l2ModelSelect = document.getElementById("l2-model-select");
 const libraryGridEl = document.getElementById("library-grid");
 const cardOverlay   = document.getElementById("card-overlay");
 const cardDetail    = document.getElementById("card-detail");
@@ -1227,12 +1234,24 @@ l2LlmBtn.addEventListener("click", async () => {
     else if (slot.payload.all_passed === false) testSummary = "Some rows failed.";
   }
 
+  const selectedModel = l2ModelSelect.value || null;
+  const selectedInfo = modelCatalog.find((m) => m.id === selectedModel);
+  if (selectedInfo && !selectedInfo.key_configured) {
+    l2LlmStatus.textContent =
+      `No ${selectedInfo.provider} API key configured. Open the API keys chip in the toolbar.`;
+    l2LlmStatus.className = "l2-llm-status error";
+    return;
+  }
+
   l2LlmBtn.disabled = true;
-  l2LlmStatus.textContent = "Feeding LLM the .dig files...";
+  l2LlmStatus.textContent =
+    `Talking to ${selectedInfo ? selectedInfo.label : "the model"}...`;
   l2LlmStatus.className = "l2-llm-status running";
   l2LlmOutput.innerHTML = "";
   l2LlmOutput.classList.add("empty");
-  logEvent("l2_llm_started", { filename: file.filename, has_goal: goal.length > 0 });
+  logEvent("l2_llm_started", {
+    filename: file.filename, has_goal: goal.length > 0, model: selectedModel,
+  });
 
   let res;
   try {
@@ -1244,6 +1263,7 @@ l2LlmBtn.addEventListener("click", async () => {
         filename: file.filename,
         student_goal: goal || null,
         test_summary: testSummary,
+        model: selectedModel,
       }),
     });
   } catch (err) {
@@ -1280,7 +1300,85 @@ l2LlmBtn.addEventListener("click", async () => {
   l2LlmStatus.textContent = "Done.";
   l2LlmStatus.className = "l2-llm-status done";
   l2LlmOutput.classList.remove("empty");
-  l2LlmOutput.innerHTML = escapeHtml(payload.text || "(empty response)");
+  l2LlmOutput.innerHTML = renderL2ParagraphCards(payload.text || "(empty response)");
+  wireL2CardEvents();
+});
+
+const L2_CARD_TYPES = [
+  { key: "purpose", name: "Overall purpose",     hint: "What this circuit does." },
+  { key: "subs",    name: "Subcircuits",         hint: "Role of each child .dig." },
+  { key: "flow",    name: "Signal flow example", hint: "One row traced end to end." },
+  { key: "goal",    name: "Goal comparison",     hint: "Versus what you asked for." },
+  { key: "topo",    name: "Topology",            hint: "Architectural pattern." },
+  { key: "lect",    name: "Course concepts",     hint: "Most relevant lectures." },
+];
+
+function _splitL2Paragraphs(text) {
+  const chunks = text
+    .split(/\n\s*\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const cleaned = chunks.map((c) =>
+    c.replace(/^\s*[\(\[]?\s*\d+\s*[\)\]\.\:]\s*/, "").trim()
+  );
+  if (cleaned.length > 6) {
+    const head = cleaned.slice(0, 5);
+    const tail = cleaned.slice(5).join("\n\n");
+    return [...head, tail];
+  }
+  return cleaned;
+}
+
+function renderL2ParagraphCards(rawText) {
+  const paras = _splitL2Paragraphs(rawText);
+  if (paras.length === 0) {
+    return `<div class="muted">(empty response)</div>`;
+  }
+  const cards = L2_CARD_TYPES.map((type, idx) => {
+    const body = paras[idx] || "";
+    const empty = body.length === 0;
+    return `
+      <div class="l2-card l2-card-${type.key} ${empty ? "l2-card-empty" : ""}" data-card-idx="${idx}">
+        <div class="l2-card-head" role="button" tabindex="0">
+          <span class="l2-card-num">${idx + 1}</span>
+          <span class="l2-card-name">${type.name}</span>
+          <span class="l2-card-hint">${type.hint}</span>
+          <span class="l2-card-toggle">+</span>
+        </div>
+        <div class="l2-card-body">${empty ? `<span class="muted">(no content for this section)</span>` : escapeHtml(body)}</div>
+      </div>
+    `;
+  }).join("");
+  return `<div class="l2-card-grid">${cards}</div>`;
+}
+
+function wireL2CardEvents() {
+  const cards = l2LlmOutput.querySelectorAll(".l2-card");
+  cards.forEach((card) => {
+    const head = card.querySelector(".l2-card-head");
+    const toggle = () => card.classList.toggle("expanded");
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
+}
+
+window.addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+  const l2page = document.querySelector('.page[data-page="l2"]');
+  if (!l2page || l2page.hasAttribute("hidden")) return;
+  const n = parseInt(e.key, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 6) return;
+  const card = l2LlmOutput.querySelector(`.l2-card[data-card-idx="${n - 1}"]`);
+  if (card) {
+    card.classList.toggle("expanded");
+    e.preventDefault();
+  }
 });
 
 // Tab switching
