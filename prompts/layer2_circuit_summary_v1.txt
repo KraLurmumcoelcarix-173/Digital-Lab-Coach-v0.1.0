@@ -184,6 +184,26 @@ P3.5 GIVEN the trace reaches a top-level output,
      THEN state the final value at that output pin using its
      label from the outputs list.
 
+P3.6 GIVEN [CIRCUIT FACTS] contains a "roms" entry whose
+     "words_at_addresses" list is non-empty,
+     WHEN you write paragraph 3,
+     THEN drive the trace with the ROM's real contents: cite at least
+     two consecutive addresses and the actual words stored there (for
+     example "the ROM holds 0x13 at address 0 and 0x500113 at address
+     1") and follow those words through the circuit.
+
+P3.7 GIVEN [CIRCUIT FACTS] contains a ROM but its "words_at_addresses"
+     list is empty or absent,
+     WHEN you write paragraph 3,
+     THEN use two or three consecutive illustrative addresses with
+     plausible words for the data width and label them "(illustrative)".
+
+P3.8 GIVEN you are writing the signal-flow trace,
+     WHEN you name any address, stored word, register value, or output,
+     THEN state its concrete numeric value; never use a vague
+     placeholder such as "an instruction word", "a value", or "some
+     data" without an accompanying number.
+
 ## Paragraph 4 - Goal comparison
 
 P4.1 GIVEN [STUDENT GOAL] contains exactly the string "(none)",

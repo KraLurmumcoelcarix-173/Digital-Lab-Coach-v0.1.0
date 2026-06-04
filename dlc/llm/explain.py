@@ -69,6 +69,15 @@ def _compact_facts(facts: dict) -> dict:
         "has_clock": "Clock" in (facts.get("inventory", {}) or {}),
         "has_register": "Register" in (facts.get("inventory", {}) or {}),
         "has_rom": "ROM" in (facts.get("inventory", {}) or {}),
+        "roms": [
+            {"label": r.get("label"),
+             "addr_bits": r.get("addr_bits"),
+             "data_bits": r.get("data_bits"),
+             "int_format": r.get("int_format"),
+             "word_count": r.get("word_count"),
+             "words_at_addresses": (r.get("words_preview") or [])[:12]}
+            for r in facts.get("roms", [])
+        ],
     }
 
 

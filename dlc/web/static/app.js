@@ -136,6 +136,10 @@ const l2LlmOutput   = document.getElementById("l2-llm-output");
 const graderSelect  = document.getElementById("grader-model-select");
 const gradeBody     = document.getElementById("grade-body");
 let lastGradedSummary = null;
+let gradeAutoRetries = 0;
+let _summaryIsAutoRetry = false;
+const GRADE_RETRY_THRESHOLD = 85;
+const MAX_GRADE_RETRIES = 2;
 
 let sessionId = null;
 
@@ -311,6 +315,7 @@ function renderCurrent() {
   l2LlmStatus.className = "l2-llm-status";
   l2LlmOutput.innerHTML = "";
   l2LlmOutput.classList.add("empty");
+  _resetGrade();
 }
 
 function renderGraph(graph) {
@@ -1409,6 +1414,11 @@ goalTextarea.addEventListener("input", () => {
 });
 
 l2LlmBtn.addEventListener("click", async () => {
+  // Reset the auto-retry counter only on a genuine user click, not on the
+  // programmatic re-click that a low grade triggers.
+  const wasAutoRetry = _summaryIsAutoRetry;
+  _summaryIsAutoRetry = false;
+  if (!wasAutoRetry) gradeAutoRetries = 0;
   if (!sessionId || loaded.length === 0) {
     l2LlmStatus.textContent = "Load a circuit first.";
     l2LlmStatus.className = "l2-llm-status error";
@@ -1570,6 +1580,21 @@ async function gradeCurrentSummary(summaryText) {
     return;
   }
   renderGradeDonut(g);
+
+  // A low grade usually means a weak summary -> regenerate (capped).
+  if (typeof g.total === "number" && g.total < GRADE_RETRY_THRESHOLD
+      && gradeAutoRetries < MAX_GRADE_RETRIES) {
+    gradeAutoRetries++;
+    const host = gradeBody.querySelector(".grade-info") || gradeBody;
+    const n = document.createElement("div");
+    n.className = "grade-note";
+    n.textContent = `Score ${g.total} < ${GRADE_RETRY_THRESHOLD} - regenerating a more credible summary (retry ${gradeAutoRetries}/${MAX_GRADE_RETRIES})...`;
+    host.appendChild(n);
+    _summaryIsAutoRetry = true;
+    setTimeout(() => l2LlmBtn.click(), 500);
+  } else {
+    gradeAutoRetries = 0;
+  }
 }
 
 function renderGradeDonut(g) {
@@ -1585,7 +1610,7 @@ function renderGradeDonut(g) {
     const color = GRADE_COLORS[i % GRADE_COLORS.length];
     arcs += `<path d="${_arcPath(cx, cy, r, start, end)}" stroke="${color}" stroke-opacity="0.18" stroke-width="${sw}" fill="none"></path>`;
     if (valEnd > start + 0.2) {
-      arcs += `<path d="${_arcPath(cx, cy, r, start, valEnd)}" stroke="${color}" stroke-width="${sw}" fill="none"></path>`;
+      arcs += `<path class="grade-val" data-i="${i}" d="${_arcPath(cx, cy, r, start, valEnd)}" stroke="${color}" stroke-width="${sw}" fill="none"></path>`;
     }
     arcs += `<path class="grade-seg-hit" data-i="${i}" d="${_arcPath(cx, cy, r, start, end)}" stroke="transparent" stroke-width="${sw + 6}" fill="none"></path>`;
     cursor += span;
@@ -1618,6 +1643,9 @@ function renderGradeDonut(g) {
     `<div class="grade-detail muted">Hover a slice or row for how it is graded.</div>${note}${meta}</div></div>`;
 
   const detail = gradeBody.querySelector(".grade-detail");
+  const card = gradeBody.querySelector(".grade-card");
+  const valArcs = gradeBody.querySelectorAll(".grade-val");
+  const legRows = gradeBody.querySelectorAll(".grade-legend-row");
   const show = (i) => {
     const s = subs[i];
     if (!s) return;
@@ -1627,14 +1655,29 @@ function renderGradeDonut(g) {
       `<div class="gd-how">${escapeHtml(s.description || "")}</div>` +
       (s.rationale ? `<div class="gd-why">"${escapeHtml(s.rationale)}"</div>` : "");
   };
-  const reset = () => {
+  // Highlight + "pop" the slice WITHOUT moving the hit geometry, so the
+  // pointer never bounces in/out near a slice edge. Hovering a slice OR its
+  // legend row highlights the same slice; cleared only on leaving the block.
+  const highlight = (i) => {
+    valArcs.forEach((p) => {
+      const on = parseInt(p.dataset.i, 10) === i;
+      p.setAttribute("stroke-width", on ? (sw + 6) : sw);
+      p.style.opacity = on ? "1" : "0.5";
+    });
+    legRows.forEach((row) => row.classList.toggle("active", parseInt(row.dataset.i, 10) === i));
+    show(i);
+  };
+  const clearHi = () => {
+    valArcs.forEach((p) => { p.setAttribute("stroke-width", sw); p.style.opacity = "1"; });
+    legRows.forEach((row) => row.classList.remove("active"));
     detail.classList.add("muted");
     detail.textContent = "Hover a slice or row for how it is graded.";
   };
-  gradeBody.querySelectorAll(".grade-seg-hit, .grade-legend-row").forEach((el) => {
-    el.addEventListener("mouseenter", () => show(parseInt(el.dataset.i, 10)));
-    el.addEventListener("mouseleave", reset);
-  });
+  gradeBody.querySelectorAll(".grade-seg-hit").forEach((el) =>
+    el.addEventListener("mouseenter", () => highlight(parseInt(el.dataset.i, 10))));
+  legRows.forEach((row) =>
+    row.addEventListener("mouseenter", () => highlight(parseInt(row.dataset.i, 10))));
+  if (card) card.addEventListener("mouseleave", clearHi);
 }
 
 const L2_CARD_TYPES = [

@@ -116,6 +116,7 @@ class CircuitFacts:
     components: list[ComponentFact]
     nets: list[NetFact]
     bugs: list[BugFact]
+    roms: list = field(default_factory=list)
 
 
 # Helpers
@@ -498,6 +499,32 @@ def _collect_bugs(
 
 # Public API
 
+def _rom_facts(circuit: Circuit) -> list[dict]:
+    roms = []
+    for idx, comp in enumerate(circuit.components):
+        if comp.element_name != "ROM":
+            continue
+        raw = comp.attributes.get("Data", "")
+        if not isinstance(raw, str):
+            raw = "" if raw is None else str(raw)
+        tokens = [t for t in raw.replace(",", " ").split() if t]
+        fmt = str(comp.attributes.get("intFormat", "hex") or "hex").lower()
+        if fmt == "hex":
+            words = ["0x" + t.lower().removeprefix("0x") for t in tokens]
+        else:
+            words = tokens
+        roms.append({
+            "component_index": idx,
+            "label": comp.label,
+            "addr_bits": comp.attributes.get("AddrBits"),
+            "data_bits": comp.attributes.get("Bits"),
+            "int_format": fmt,
+            "word_count": len(tokens),
+            "words_preview": words[:16],
+        })
+    return roms
+
+
 def extract_facts(
     circuit: Circuit,
     netlist: NetList | None = None,
@@ -518,6 +545,7 @@ def extract_facts(
     comp_facts = _component_facts(circuit, graph)
     net_facts = _net_facts(circuit, netlist, per_net_width, conflicts)
     bugs = _collect_bugs(circuit, netlist, graph, conflicts)
+    rom_facts = _rom_facts(circuit)
 
     header = {
         "component_count": len(circuit.components),
@@ -540,4 +568,5 @@ def extract_facts(
         components=comp_facts,
         nets=net_facts,
         bugs=bugs,
+        roms=rom_facts,
     )

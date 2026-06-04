@@ -676,7 +676,9 @@ main {
   display: flex; align-items: center; gap: 7px;
   padding: 2px 4px; border-radius: 5px; cursor: default;
 }
-.grade-legend-row:hover { background: var(--ghost); }
+.grade-legend-row:hover,
+.grade-legend-row.active { background: var(--ghost); }
+.grade-val { transition: stroke-width 0.1s ease, opacity 0.1s ease; }
 .grade-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
 .grade-legend-row .lg-label { flex: 1; }
 .grade-legend-row .lg-score { font-variant-numeric: tabular-nums; font-weight: 600; }
