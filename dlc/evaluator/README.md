@@ -1,6 +1,6 @@
 # Layer 2 evaluation harness
 
-Two scripts. **Neither runs on import** — you configure, then invoke explicitly.
+Two scripts. **Neither runs on import** — Configure, then invoke explicitly.
 All outputs go to `config.OUTPUT_DIR` (default `~/dlc_benchmark_out`, overridable
 with `$DLC_BENCH_OUT`) — **outside the repo, IRB-safe**. 
 
@@ -32,8 +32,7 @@ uv run python -m dlc.evaluator.benchmark
 
 ## Cost (rough)
 216 gen + 216 grade calls. Cheap models are cents; Opus generations/grades dominate.
-Your stated ceiling (a few hundred $) holds comfortably. Tip: validate end-to-end on
-**1 circuit** (set `BENCH_CIRCUITS` to one entry) before the full sweep.
+Tip: validate end-to-end on **1 circuit** (set `BENCH_CIRCUITS` to one entry) before the full sweep.
 
 ## Notes
 - The benchmark does **not** run Digital.jar — L2 quality doesn't need pass/fail, and
