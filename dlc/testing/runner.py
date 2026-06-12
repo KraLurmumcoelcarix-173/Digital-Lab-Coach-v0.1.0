@@ -156,7 +156,10 @@ def _write_single_row_dig(
 ) -> str:
     """..."""
     src_path = Path(original_dig_path)
-    src = src_path.read_text()
+    # .dig files are UTF-8 XML; explicit encoding both ways or Windows
+    # GBK locales raise localized UnicodeDecodeError/UnicodeEncodeError
+    # on any non-ASCII label/comment (docs anti-pattern 4.3).
+    src = src_path.read_text(encoding="utf-8")
     new_body = " ".join(headers) + "\n" + row_raw
     new_content, count = _DATASTRING_RE.subn(
         lambda m: m.group(1) + new_body + m.group(2),
@@ -168,7 +171,7 @@ def _write_single_row_dig(
     fd, path = tempfile.mkstemp(
         suffix=".dig", prefix="dlc_row_", dir=str(src_path.parent),
     )
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(new_content)
     return path
 

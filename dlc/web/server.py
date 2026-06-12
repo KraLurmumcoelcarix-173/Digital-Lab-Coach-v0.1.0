@@ -53,7 +53,7 @@ from dlc.web.graph_export import circuit_summary, to_cytoscape
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="Digital Lab Coach", version="0.1.0")
+app = FastAPI(title="Digital Lab Coach", version="0.3.1")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _SESSIONS: dict[str, dict] = {}
@@ -214,6 +214,26 @@ def _resolve_target(session_id: str, filename: str) -> dict:
     return target
 
 
+def _l1_error_block(circuit) -> str | None:
+    """Tests are refused while Layer 1 structural ERRORS (at any
+    nesting depth) are unresolved — results from a structurally broken
+    circuit are unreliable. Warnings don't block: the
+    "mute when tests pass" flow depends on warnings staying testable.
+    """
+    try:
+        n_err = len(check_all_l1_deep(circuit).errors())
+    except Exception:
+        return None  # never let the gate itself break testing
+    if n_err == 0:
+        return None
+    plural = "s" if n_err != 1 else ""
+    return (
+        f"Blocked: {n_err} Layer 1 structural error{plural} unresolved "
+        f"(see the Dashboard issues panel). Fix them first — test "
+        f"results on a broken circuit are unreliable."
+    )
+
+
 def _run_general(target: dict, timeout: float) -> dict:
     try:
         circuit = parse_dig_file(target["path"])
@@ -227,6 +247,12 @@ def _run_general(target: dict, timeout: float) -> dict:
         return {
             "ok": True, "warning": None, "mode": "general",
             "specs": [], "all_passed": None,
+        }
+    blocked = _l1_error_block(circuit)
+    if blocked:
+        return {
+            "ok": False, "warning": blocked,
+            "mode": "general", "specs": [], "all_passed": None,
         }
     jar_path = find_digital_jar()
     if jar_path is None:
@@ -302,6 +328,13 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
         write({
             "ok": True, "finished": True, "warning": None,
             "all_passed": None,
+        })
+        return
+    blocked = _l1_error_block(circuit)
+    if blocked:
+        write({
+            "ok": False, "finished": True,
+            "warning": blocked, "all_passed": None,
         })
         return
     jar_path = find_digital_jar()
@@ -418,7 +451,7 @@ def tests_all(req: TestsAllRequest) -> dict:
 
     jar_path = find_digital_jar()
     files_payload: list[dict] = []
-    n_with_tests = n_passed = n_failed = n_error = 0
+    n_with_tests = n_passed = n_failed = n_error = n_blocked = 0
 
     for f in session["files"]:
         entry = {
@@ -438,6 +471,11 @@ def tests_all(req: TestsAllRequest) -> dict:
         if not specs:
             continue
         n_with_tests += 1
+        blocked = _l1_error_block(circuit)
+        if blocked:
+            entry.update(ok=False, status="blocked", warning=blocked)
+            n_blocked += 1
+            continue
         if jar_path is None:
             entry.update(ok=False, status="error",
                          warning="Digital.jar not configured. Open the jar picker.")
@@ -505,6 +543,7 @@ def tests_all(req: TestsAllRequest) -> dict:
             "passed": n_passed,
             "failed": n_failed,
             "errors": n_error,
+            "blocked": n_blocked,
         },
         "all_passed": (n_with_tests > 0 and n_passed == n_with_tests),
     }
@@ -578,6 +617,15 @@ def run_tests(req: TestsRequest) -> dict:
         return {
             "ok": True,
             "warning": None,
+            "all_passed": None,
+            "specs": [],
+        }
+
+    blocked = _l1_error_block(circuit)
+    if blocked:
+        return {
+            "ok": False,
+            "warning": blocked,
             "all_passed": None,
             "specs": [],
         }

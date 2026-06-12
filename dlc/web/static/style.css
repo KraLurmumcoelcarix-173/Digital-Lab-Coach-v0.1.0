@@ -1164,7 +1164,9 @@ main {
   font-size: 12.5px;
 }
 .test-all-panel.hidden { display: none; }
-.page[data-page="main"] { position: relative; }
+/* NOTE: the panel lives directly under <main> (position: relative), NOT
+   inside .page[data-page="main"] — that page must keep its
+   `position: absolute; inset: 0` stretch or the dashboard collapses. */
 
 .test-all-head {
   display: flex;
@@ -1209,6 +1211,7 @@ main {
 }
 .ta-pass { background: #d1fae5; color: #065f46; }
 .ta-fail { background: #fee2e2; color: #991b1b; }
+.ta-blocked { background: #ede9fe; color: #5b21b6; }
 .ta-err  { background: #fef3c7; color: #92400e; }
 .ta-none { background: #f1f5f9; color: #64748b; }
 

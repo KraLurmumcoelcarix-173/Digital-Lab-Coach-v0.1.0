@@ -25,7 +25,7 @@ BENCH_GRADER = "claude-opus-4-8"
 MODEL_PRICES = {
     "claude-haiku-4-5-20251001": (1.0, 5.0),
     "claude-sonnet-4-6":         (3.0, 15.0),
-    "claude-opus-4-8":           (15.0, 75.0),
+    "claude-opus-4-8":           (5.0, 25.0),
     "gpt-4o-mini":               (0.15, 0.60),
     "gpt-4o":                    (2.50, 10.0),
     "gpt-5":                     (1.25, 10.0),

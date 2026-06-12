@@ -268,12 +268,17 @@ async function postAll() {
   try {
     res = await fetch("/api/circuit", { method: "POST", body: fd });
   } catch (err) {
-    summaryEl.textContent = "Upload failed: " + err;
+    summaryEl.innerHTML =
+      `<span style="color:#991b1b">Upload failed: ${escapeHtml(String(err))}.</span> ` +
+      `<span class="muted">If this keeps happening (many/large files, or tests still ` +
+      `running), click "Clear all" and re-upload.</span>`;
     return;
   }
   if (!res.ok) {
     const text = await res.text();
-    summaryEl.innerHTML = `<span style="color:#991b1b">${escapeHtml(text)}</span>`;
+    summaryEl.innerHTML =
+      `<span style="color:#991b1b">${escapeHtml(text)}</span> ` +
+      `<span class="muted">If this keeps happening, click "Clear all" and re-upload.</span>`;
     return;
   }
   const data = await res.json();
@@ -358,6 +363,14 @@ function renderGraph(graph) {
     wheelSensitivity: 0.2,
     minZoom: 0.15,
     maxZoom: 3,
+  });
+
+  // If the container was still settling when dagre ran (e.g. graph
+  // built while another tab was active), re-measure and re-fit once
+  // so the tree always starts centered.
+  const inst = cy;
+  inst.once("layoutstop", () => {
+    setTimeout(() => { try { inst.resize(); inst.fit(undefined, 40); } catch {} }, 0);
   });
 
   cy.on("mouseover", "node", (evt) => {
@@ -570,6 +583,12 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function fileL1Errors(file) {
+  // Blocking is on ERRORS only (any nesting depth): warnings stay
+  // testable so the "mute when tests pass" flow keeps working.
+  return ((file && file.issues) || []).filter((i) => i.severity === "error");
+}
+
 function getFileTestsPassed(filename) {
   const st = testState[filename];
   if (!st || st.status !== "done" || !st.payload) return null;
@@ -718,6 +737,19 @@ function renderTestsForFile(file) {
     return;
   }
 
+  const l1Errors = fileL1Errors(file);
+  if (l1Errors.length > 0) {
+    runTestsBtn.disabled = true;
+    runTestsBtn.classList.remove("running");
+    runTestsBtn.textContent = "Run tests";
+    testsStatusEl.textContent =
+      `Blocked: ${l1Errors.length} Layer 1 error${l1Errors.length === 1 ? "" : "s"} unresolved. ` +
+      `Fix the structural errors above first - they make test results unreliable.`;
+    testsStatusEl.className = "tests-status warning";
+    hideProgress();
+    return;
+  }
+
   const slot = testState[file.filename];
 
   if (!slot || slot.status === "idle") {
@@ -785,6 +817,7 @@ runTestsBtn.addEventListener("click", async () => {
   if (!sessionId || loaded.length === 0) return;
   const file = loaded[currentIdx];
   if (!file || !file.summary || !file.summary.has_testcases) return;
+  if (fileL1Errors(file).length > 0) return;  // blocked: fix L1 errors first
   const filename = file.filename;
   const mode = perRowToggle.checked ? "per_row" : "general";
 
@@ -898,7 +931,7 @@ testAllBtn.addEventListener("click", async () => {
   // Each tested file's payload is general-mode shaped — drop it into
   // testState so the per-file Tests panel and issue muting update too.
   for (const f of data.files || []) {
-    if (f.status === "no_tests" || f.status === "parse_error") continue;
+    if (f.status === "no_tests" || f.status === "parse_error" || f.status === "blocked") continue;
     setTestSlot(f.filename, {
       status: "done",
       payload: { ok: f.ok, warning: f.warning, specs: f.specs, all_passed: f.all_passed },
@@ -915,13 +948,16 @@ function renderTestAllPanel(data) {
     testAllHeadEl.textContent = "No testcases found in any uploaded file.";
   } else {
     const head = `${s.passed}/${s.files_with_tests} circuit${s.files_with_tests === 1 ? "" : "s"} pass`;
-    const extra = s.errors ? ` · ${s.errors} error${s.errors === 1 ? "" : "s"}` : "";
-    testAllHeadEl.textContent = head + extra;
+    const extras = [];
+    if (s.blocked) extras.push(`${s.blocked} blocked by L1 errors`);
+    if (s.errors) extras.push(`${s.errors} error${s.errors === 1 ? "" : "s"}`);
+    testAllHeadEl.textContent = head + (extras.length ? " · " + extras.join(" · ") : "");
   }
   testAllListEl.innerHTML = (data.files || []).map((f) => {
     const chip = {
       passed: `<span class="ta-chip ta-pass">pass</span>`,
       failed: `<span class="ta-chip ta-fail">fail</span>`,
+      blocked: `<span class="ta-chip ta-blocked">blocked</span>`,
       error: `<span class="ta-chip ta-err">error</span>`,
       parse_error: `<span class="ta-chip ta-err">parse error</span>`,
       no_tests: `<span class="ta-chip ta-none">no tests</span>`,
