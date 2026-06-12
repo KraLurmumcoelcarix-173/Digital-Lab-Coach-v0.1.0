@@ -141,10 +141,11 @@ const l2LlmOutput   = document.getElementById("l2-llm-output");
 const graderSelect  = document.getElementById("grader-model-select");
 const gradeBody     = document.getElementById("grade-body");
 let lastGradedSummary = null;
-let gradeAutoRetries = 0;
-let _summaryIsAutoRetry = false;
-const GRADE_RETRY_THRESHOLD = 85;
-const MAX_GRADE_RETRIES = 2;
+// Below this total, the grade panel suggests (but never auto-runs) a
+// fresh Summarize attempt. The old silent auto-retry was removed: it
+// re-spent tokens without consent and could replace a summary with a
+// worse one.
+const GRADE_HINT_THRESHOLD = 85;
 
 let sessionId = null;
 
@@ -1550,11 +1551,6 @@ goalTextarea.addEventListener("input", () => {
 });
 
 l2LlmBtn.addEventListener("click", async () => {
-  // Reset the auto-retry counter only on a genuine user click, not on the
-  // programmatic re-click that a low grade triggers.
-  const wasAutoRetry = _summaryIsAutoRetry;
-  _summaryIsAutoRetry = false;
-  if (!wasAutoRetry) gradeAutoRetries = 0;
   if (!sessionId || loaded.length === 0) {
     l2LlmStatus.textContent = "Load a circuit first.";
     l2LlmStatus.className = "l2-llm-status error";
@@ -1717,19 +1713,16 @@ async function gradeCurrentSummary(summaryText) {
   }
   renderGradeDonut(g);
 
-  // A low grade usually means a weak summary -> regenerate (capped).
-  if (typeof g.total === "number" && g.total < GRADE_RETRY_THRESHOLD
-      && gradeAutoRetries < MAX_GRADE_RETRIES) {
-    gradeAutoRetries++;
+  // One summary -> one grade. A low score only SUGGESTS a re-run; the
+  // user decides (the old auto-retry silently re-clicked Summarize).
+  if (typeof g.total === "number" && g.total < GRADE_HINT_THRESHOLD) {
     const host = gradeBody.querySelector(".grade-info") || gradeBody;
     const n = document.createElement("div");
     n.className = "grade-note";
-    n.textContent = `Score ${g.total} < ${GRADE_RETRY_THRESHOLD} - regenerating a more credible summary (retry ${gradeAutoRetries}/${MAX_GRADE_RETRIES})...`;
+    n.textContent =
+      `Score ${g.total} is below ${GRADE_HINT_THRESHOLD} - click ` +
+      `"Summarize circuit" again if you want a fresh attempt.`;
     host.appendChild(n);
-    _summaryIsAutoRetry = true;
-    setTimeout(() => l2LlmBtn.click(), 500);
-  } else {
-    gradeAutoRetries = 0;
   }
 }
 
@@ -1773,14 +1766,36 @@ function renderGradeDonut(g) {
     ? `<div class="grade-note capped">Capped at ${g.total} - hallucinated: ${escapeHtml((g.hallucinated_items || []).join(", ") || "yes")}.</div>`
     : "";
   const meta = `<div class="grade-meta">Grader: ${escapeHtml(g.grader_model || "?")}${(g.raw_total != null && g.raw_total !== g.total) ? ` (raw ${g.raw_total})` : ""}</div>`;
-  const flags = (g.flags && g.flags.length)
-    ? `<div class="grade-flags"><div class="grade-flags-title">Grader notes - issues caught (not scored)</div><ul>` +
-      g.flags.map((f) => `<li>${escapeHtml(String(f))}</li>`).join("") + `</ul></div>`
-    : "";
+  // Flags = problems the grader caught in the SUMMARY's text (not in
+  // the circuit) that the sub-scores don't already express. Collapsed
+  // to one line; hover (or click/tap) to expand.
+  let flags = "";
+  if (g.flags && g.flags.length) {
+    const items = g.flags.map((f) => {
+      if (typeof f === "string") return `<li>${escapeHtml(f)}</li>`;
+      const para = f.paragraph ? `<span class="flag-para">¶${f.paragraph}</span> ` : "";
+      const quote = f.quote ? `<span class="flag-quote">“${escapeHtml(f.quote)}”</span> — ` : "";
+      return `<li>${para}${quote}${escapeHtml(f.issue || "")}</li>`;
+    }).join("");
+    flags =
+      `<div class="grade-flags collapsed" id="grade-flags">` +
+      `<div class="grade-flags-title">Grader feedback: ${g.flags.length} issue${g.flags.length === 1 ? "" : "s"} ` +
+      `in this summary's wording <span class="flag-hint">(hover to expand)</span></div>` +
+      `<div class="grade-flags-body">` +
+      `<div class="grade-flags-sub muted">Problems the grader spotted in the summary text it graded — ` +
+      `not issues with your circuit, and not already counted in the scores above.</div>` +
+      `<ul>${items}</ul></div></div>`;
+  }
 
   gradeBody.innerHTML =
     `<div class="grade-card">${svg}<div class="grade-info">${legend}` +
     `<div class="grade-detail muted">Hover a slice or row for how it is graded.</div>${note}${meta}</div></div>${flags}`;
+
+  const flagsEl = gradeBody.querySelector("#grade-flags");
+  if (flagsEl) {
+    // Hover previews (CSS); click/tap pins it open or re-collapses.
+    flagsEl.addEventListener("click", () => flagsEl.classList.toggle("collapsed"));
+  }
 
   const detail = gradeBody.querySelector(".grade-detail");
   const card = gradeBody.querySelector(".grade-card");

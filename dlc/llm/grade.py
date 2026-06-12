@@ -26,7 +26,8 @@ RUBRIC = [
     ("key_component_mention",    "Key-component mention",    10, "Deterministic",
      "Share of top-level I/O labels and non-Tunnel/Const components mentioned at least once."),
     ("topology_accuracy",        "Topology accuracy",        10, "LLM",
-     "Paragraph 5: was the architectural pattern named correctly (or N/A correctly stated)?"),
+     "Paragraph 5: was the architectural pattern named correctly (or N/A correctly stated)? "
+     "Full marks when the needed path (e.g. through the mux) was already traced in paragraph 3."),
     ("lecture_relevance",        "Lecture-tag relevance",    10, "LLM",
      "Paragraph 6: are the 1-3 cited lectures each defensibly relevant?"),
 ]
@@ -100,6 +101,32 @@ def _parse_grader_json(text: str) -> dict | None:
         return json.loads(cleaned[start:end + 1])
     except json.JSONDecodeError:
         return None
+
+
+def _normalize_flag(f) -> dict | None:
+    """Flags are structured grader feedback about THE SUMMARY TEXT:
+    {"paragraph": 1-6|None, "quote": str, "issue": str}. Models that
+    ignore the shape and emit plain strings are normalized too."""
+    if isinstance(f, dict):
+        issue = str(f.get("issue", "")).strip()
+        if not issue:
+            return None
+        para = f.get("paragraph")
+        try:
+            para = int(para)
+        except (TypeError, ValueError):
+            para = None
+        if para is not None and not (1 <= para <= 6):
+            para = None
+        return {
+            "paragraph": para,
+            "quote": str(f.get("quote", "") or "").strip()[:160],
+            "issue": issue,
+        }
+    s = str(f).strip()
+    if not s:
+        return None
+    return {"paragraph": None, "quote": "", "issue": s}
 
 
 def _band(total: int) -> str:
@@ -176,7 +203,11 @@ def grade_summary(
 
     hallucination = bool(parsed.get("hallucination", False))
     hallucinated = parsed.get("hallucinated_items", []) or []
-    flags = [str(f).strip() for f in (parsed.get("flags", []) or []) if str(f).strip()]
+    flags = []
+    for f in (parsed.get("flags", []) or []):
+        nf = _normalize_flag(f)
+        if nf is not None:
+            flags.append(nf)
     raw_total, capped = total, False
     if hallucination and total > HALLUCINATION_CAP:
         total, capped = HALLUCINATION_CAP, True

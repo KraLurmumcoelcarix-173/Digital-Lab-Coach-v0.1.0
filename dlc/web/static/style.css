@@ -705,6 +705,7 @@ main {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fffdf5;
+  cursor: pointer;
 }
 .grade-flags-title {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
@@ -712,6 +713,21 @@ main {
 }
 .grade-flags ul { margin: 0; padding-left: 18px; }
 .grade-flags li { font-size: 12px; line-height: 1.4; margin: 2px 0; }
+
+/* Collapsed by default: hover previews, click pins open/closed. */
+.grade-flags.collapsed .grade-flags-body { display: none; }
+.grade-flags.collapsed:hover .grade-flags-body { display: block; }
+.grade-flags.collapsed .grade-flags-title { margin-bottom: 0; }
+.grade-flags.collapsed:hover .grade-flags-title { margin-bottom: 5px; }
+.flag-hint { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.grade-flags-sub { font-size: 11px; line-height: 1.4; margin-bottom: 6px; }
+.flag-para {
+  display: inline-block;
+  background: #eef2ff; color: #3730a3;
+  padding: 0 5px; border-radius: 4px;
+  font-size: 10.5px; font-weight: 600;
+}
+.flag-quote { font-style: italic; color: #374151; }
 
 .library-grid {
   display: grid;

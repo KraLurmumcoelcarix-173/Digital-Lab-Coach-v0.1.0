@@ -44,6 +44,12 @@ Its six paragraphs are, in order: (1) overall purpose, (2) subcircuit roles,
   not invent a goal.
 - topology_accuracy (0-10): Is paragraph 5's architectural pattern named
   correctly, or is "N/A" correctly stated when the circuit has no Clock?
+  Award the FULL 10 when the named pattern is consistent with the facts AND
+  the necessary datapath (e.g. the multiplexer/select path) was already
+  traced in the paragraph 3 example - paragraph 5 does not need to re-derive
+  or re-justify connections the trace already walked through. Deduct only
+  for a wrongly named pattern, an incorrect N/A, or a topology claim that
+  contradicts the facts.
 - lecture_relevance (0-10): Are the 1-3 lectures cited in paragraph 6 each
   defensibly relevant, citing real lecture numbers?
 
@@ -57,10 +63,18 @@ every fabricated item in "hallucinated_items".
 
 # ISSUE FLAGS
 
-In "flags", list ONLY genuine problems a careful reader would catch - an
-instruction word or value stated without being decoded or derived, an internal
-contradiction, or a claim that contradicts the facts or test rows. One short
-sentence each. Do NOT:
+"flags" is your structured feedback channel: problems IN THE SUMMARY TEXT
+that a careful reader would catch but that the sub-scores above do not
+already express. It is NOT about problems in the student's circuit.
+
+Each flag must be a JSON object of exactly this shape:
+  {"paragraph": <1-6, or null if unclear>,
+   "quote": "<the shortest summary excerpt that shows the problem, 12 words max>",
+   "issue": "<one short sentence: what is wrong and why>"}
+
+List ONLY genuine problems - an instruction word or value stated without
+being decoded or derived, an internal contradiction, or a claim that
+contradicts the facts or test rows. Do NOT:
   - list confirmations that something is correct, consistent, or "fine";
   - repeat a weakness already reflected in the sub-scores above (flags are only
     for issues those scores do not already capture);
