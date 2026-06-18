@@ -69,10 +69,6 @@ def test_check_all_l1_deep_surfaces_child_bug_with_breadcrumb():
     assert len(child_origin) >= 1
 
 def test_check_all_l1_deep_scopes_and_remaps_nested_issues():
-    """Nested issues carry their breadcrumb in `scope`, keep child
-    indices in `child_component_indices`, and point
-    `component_indices` at the TOP-level instance so the web overlay
-    can highlight the right node."""
     from pathlib import Path
     from dlc.analyzer import check_all_l1_deep
     from dlc.parser.dig_parser import parse_dig_file

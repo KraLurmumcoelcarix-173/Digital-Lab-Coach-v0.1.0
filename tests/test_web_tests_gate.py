@@ -14,9 +14,7 @@ from dlc.web.server import app
 
 SAMPLES = Path(__file__).parent.parent / "data" / "sample_circuits"
 
-# Out 'Y' is never driven (unused_top_output, severity=error) but the
-# file still carries a Testcase — the exact "broken circuit with tests"
-# shape the gate exists for.
+
 BROKEN_WITH_TESTS = """<?xml version="1.0" encoding="utf-8"?>
 <circuit>
   <version>2</version>

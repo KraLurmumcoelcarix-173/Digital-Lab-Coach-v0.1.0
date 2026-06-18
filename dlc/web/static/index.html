@@ -17,6 +17,7 @@
           <button class="tab active" data-tab="main">Dashboard</button>
           <button class="tab" data-tab="l2">L2 Library</button>
           <button class="tab" data-tab="l3">L3 Coach</button>
+          <button class="tab" data-tab="kmap">K-map</button>
         </nav>
       </div>
       <div class="toolbar">
@@ -181,6 +182,11 @@
           </p>
           <button id="llm-stub-btn" class="btn-ghost">Try Explain (returns 501 today)</button>
         </div>
+      </div>
+
+      <div class="page" data-page="kmap" hidden>
+        <iframe id="kmap-frame" src="/static/kmap.html" title="K-map Coach"
+                style="width:100%;height:calc(100vh - 150px);min-height:600px;border:0;border-radius:12px;background:#f4f6fb;"></iframe>
       </div>
 
       <div id="key-modal" class="modal hidden">

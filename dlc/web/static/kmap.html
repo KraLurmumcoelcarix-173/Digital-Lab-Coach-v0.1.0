@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K-Map Coach</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 1240px; margin: 0 auto;
+         padding: 18px; background: #f4f6fb; color: #1f2430; }
+  h1 { text-align: center; color: #1a237e; margin: 0 0 2px; }
+  .subtitle { text-align: center; color: #6b7280; margin: 0 0 16px; font-size: 14px; }
+
+  .card { background: #fff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+          margin-bottom: 14px; }
+
+  #principles { border-left: 5px solid #1a237e; }
+  #principles h3 { margin: 0 0 6px; color: #1a237e; font-size: 15px; }
+  #principles ul { margin: 0; padding-left: 18px; }
+  #principles li { font-size: 13px; line-height: 1.55; }
+
+  .controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .controls label { font-weight: 600; font-size: 14px; }
+  select { padding: 7px 12px; border-radius: 8px; border: 1px solid #cbd2e0; font-size: 14px; background:#fff;}
+
+  .seg { display: inline-flex; border: 1px solid #c5cae9; border-radius: 8px; overflow: hidden; }
+  .seg button { border: none; background: #fff; padding: 7px 16px; cursor: pointer; font-size: 14px; font-weight: 600; color: #3949ab; }
+  .seg button.active { background: #1a237e; color: #fff; }
+
+  button.act { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; font-size: 14px; background: #1a237e; color: #fff; }
+  button.act:hover { background: #283593; }
+  button.act.ghost { background: #e8eaf6; color: #1a237e; }
+  button.act.ghost:hover { background: #c5cae9; }
+  button.act.warn { background: #fbe9e7; color: #c62828; }
+
+  .expr-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .expr-row input { flex: 1; min-width: 220px; padding: 9px 13px; border-radius: 8px; border: 1px solid #cbd2e0; font-size: 14px; }
+  .hint { color: #8a94a6; font-size: 12px; margin-top: 6px; }
+  .err { color: #c62828; font-size: 13px; margin-top: 6px; display: none; }
+
+  .layout { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .col-map { flex: 1; min-width: 340px; }
+  .col-truth { width: 250px; }
+
+  .kmap-wrapper { display: inline-block; }
+  .panels { position: relative; display: grid; gap: 26px; justify-content: start; }
+  .panel-title { font-size: 12px; font-weight: 700; color: #283593; background:#e8eaf6; display:inline-block;
+                 padding: 2px 8px; border-radius: 6px; margin-bottom: 6px; }
+  .axis-top { font-size: 11px; font-weight: 700; color: #5c6bc0; margin-bottom: 2px; }
+  .grid-with-labels { display: flex; }
+  .rowvar { display: flex; align-items: center; margin-right: 4px; margin-top: 22px; }
+  .rowvar span { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; font-weight: 700; color: #5c6bc0; }
+  .labels-col { display: grid; gap: 4px; margin-right: 6px; }
+  .labels-col span { display:flex; align-items:center; justify-content:center; height: 50px; font-size: 12px; font-weight: 600; color: #6b7280; }
+  .labels-row { display: grid; gap: 4px; margin-bottom: 4px; }
+  .labels-row span { display:flex; align-items:center; justify-content:center; height: 22px; font-size: 12px; font-weight: 600; color: #6b7280; }
+  .kmap-grid { display: grid; gap: 4px; }
+  .kmap-cell { width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;
+               border: 1px solid #dfe3ec; border-radius: 7px; font-weight: 700; font-size: 17px;
+               cursor: pointer; user-select: none; transition: transform .1s; background:#fff; position: relative; z-index: 1;}
+  .kmap-cell:hover { transform: scale(1.06); }
+  .kmap-cell.v0 { color: #b0b6c3; }
+  .kmap-cell.v1 { color: #2e7d32; background: #f1f8f1; }
+  .kmap-cell.vX { color: #ef6c00; background: #fff7ec; }
+  .kmap-cell.minterm-tag::after { content: attr(data-m); position:absolute; top:2px; left:4px; font-size:9px; font-weight:600; color:#c2c8d4; }
+  .kmap-cell.pending { outline: 3px dashed #455a64; outline-offset: -3px; }
+
+  .loop-layer { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; }
+  .loop { position: absolute; border: 3px solid; border-radius: 11px; }
+  .loop-label { position: absolute; z-index: 6; font-size: 11px; font-weight: 700; padding: 0 4px; border-radius: 5px; background: #fff; border: 1.5px solid; pointer-events: none; }
+
+  table.truth { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.truth th, table.truth td { border: 1px solid #e3e7f0; padding: 4px 6px; text-align: center; }
+  table.truth th { background: #eef1f9; color: #3949ab; }
+  table.truth td.out { cursor: pointer; font-weight: 700; }
+  table.truth td.out.v1 { background:#f1f8f1; color:#2e7d32; }
+  table.truth td.out.vX { background:#fff7ec; color:#ef6c00; }
+  table.truth td.out.v0 { color:#b0b6c3; }
+  table.truth.locked td.out { cursor: default; }
+  .truth-scroll { max-height: 540px; overflow-y: auto; }
+
+  #results h3 { margin: 0 0 10px; color: #1a237e; }
+  .answer { font-size: 20px; font-weight: 700; color: #1a237e; padding: 12px; background: #eef1f9; border-radius: 8px; text-align: center; word-break: break-word; }
+  .explain { margin: 12px 0 0; padding-left: 0; list-style: none; }
+  .explain li { font-size: 13px; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; display:flex; gap:8px; align-items:center;}
+  .swatch { width: 14px; height: 14px; border-radius: 4px; border: 2px solid; flex: none; }
+  .covers { margin-top: 12px; }
+  .covers .chip { display:inline-block; padding: 5px 10px; margin: 3px; border-radius: 7px; background:#f0f2f8; cursor:pointer; font-size: 13px; border: 1px solid transparent;}
+  .covers .chip.active { border-color:#1a237e; background:#e8eaf6; }
+  .feedback { padding: 12px 14px; border-radius: 8px; font-size: 14px; }
+  .feedback.correct { background:#e8f5e9; color:#1b5e20; }
+  .feedback.suboptimal { background:#fff8e1; color:#8d6e00; }
+  .feedback.wrong { background:#ffebee; color:#b71c1c; }
+  .feedback h4 { margin: 0 0 6px; }
+  .feedback ul { margin: 0; padding-left: 18px; }
+  .pgroups { margin-top: 10px; }
+  .pgroups .pg { display:inline-flex; align-items:center; gap:6px; padding: 4px 8px; margin: 3px; border-radius: 7px; background:#f0f2f8; font-size:13px; }
+  .pgroups .pg button { border:none; background:transparent; color:#b71c1c; cursor:pointer; font-weight:700; }
+  .muted { color:#8a94a6; font-style: italic; }
+</style>
+</head>
+<body>
+  <h1>K-Map Coach</h1>
+  <p class="subtitle">Fill the truth table or draw on the map · Solve, or Practice your own grouping</p>
+
+  <div class="card" id="principles"></div>
+
+  <div class="card controls">
+    <label>Variables
+      <select id="varCount" onchange="App.setVars(this.value)">
+        <option value="2">2</option><option value="3">3</option>
+        <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
+      </select>
+    </label>
+    <span class="seg" id="modeSeg">
+      <button data-mode="solve" class="active" onclick="App.setMode('solve')">Solve</button>
+      <button data-mode="practice" onclick="App.setMode('practice')">Practice</button>
+    </span>
+    <span class="seg" id="formSeg">
+      <button data-form="SOP" class="active" onclick="App.setForm('SOP')">SOP</button>
+      <button data-form="POS" onclick="App.setForm('POS')">POS</button>
+    </span>
+    <span id="actionBar"></span>
+    <button class="act ghost" onclick="App.example()">Example</button>
+    <button class="act warn" onclick="App.clearAll()">Clear</button>
+  </div>
+
+  <div class="card">
+    <div class="expr-row">
+      <input id="exprInput" placeholder="e.g.  A'BC + AB'  or  m(1,2,5) + d(7)">
+      <button class="act" onclick="App.parseExpr()">Load</button>
+    </div>
+    <div class="hint">Type a sum-of-products (use ' for NOT), or a minterm list m(..) with optional don't-cares d(..).</div>
+    <div class="err" id="exprErr"></div>
+  </div>
+
+  <div class="layout">
+    <div class="card col-map">
+      <div id="practiceBar" style="display:none; margin-bottom:10px;"></div>
+      <div class="kmap-wrapper" id="kmapWrapper"></div>
+      <div class="pgroups" id="pgroups"></div>
+    </div>
+    <div class="card col-truth">
+      <h3 style="margin:0 0 8px; color:#1a237e; font-size:15px;">Truth table</h3>
+      <div class="truth-scroll" id="truthTable"></div>
+    </div>
+    <div class="card col-map" id="results" style="min-width:300px;">
+      <h3>Results</h3>
+      <p class="muted">Press <b>Solve</b> for the minimal answer, or switch to <b>Practice</b>.</p>
+    </div>
+  </div>
+
+  <script>
+
+(function (root) {
+  "use strict";
+
+  var VARS = "ABCDEF";
+
+  // low-level pattern helpers 
+  function patternMinterms(pattern, n) {
+    var res = [0];
+    for (var i = 0; i < n; i++) {
+      var w = 1 << (n - 1 - i); // weight of variable i
+      if (pattern[i] === null) {
+        var next = [];
+        for (var k = 0; k < res.length; k++) {
+          next.push(res[k]);
+          next.push(res[k] | w);
+        }
+        res = next;
+      } else if (pattern[i] === 1) {
+        for (var j = 0; j < res.length; j++) res[j] |= w;
+      }
+    }
+    return res;
+  }
+
+  function mintermBits(m, n) {
+    var b = [];
+    for (var i = n - 1; i >= 0; i--) b.push((m >> i) & 1);
+    return b; // b[0] is A (MSB)
+  }
+
+  // Smallest sub-cube (pattern) that contains every given minterm.
+  function spanningPattern(minterms, n) {
+    var p = [];
+    for (var i = 0; i < n; i++) {
+      var weight = 1 << (n - 1 - i);
+      var first = (minterms[0] & weight) ? 1 : 0;
+      var same = true;
+      for (var k = 1; k < minterms.length; k++) {
+        if (((minterms[k] & weight) ? 1 : 0) !== first) { same = false; break; }
+      }
+      p.push(same ? first : null);
+    }
+    return p;
+  }
+
+  function isPowerOfTwo(x) { return x > 0 && (x & (x - 1)) === 0; }
+
+  // SOP literal for a 1-grouping pattern: fixed 1 -> X, fixed 0 -> X'.
+  function literalSOP(pattern, n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+      if (pattern[i] === 1) s += VARS[i];
+      else if (pattern[i] === 0) s += VARS[i] + "'";
+    }
+    return s === "" ? "1" : s;
+  }
+
+  // POS sum-term for a 0-grouping pattern (De Morgan of the product of zeros):
+  // fixed 0 -> X, fixed 1 -> X', OR-ed inside parentheses.
+  function literalPOS(pattern, n) {
+    var lits = [];
+    for (var i = 0; i < n; i++) {
+      if (pattern[i] === 0) lits.push(VARS[i]);
+      else if (pattern[i] === 1) lits.push(VARS[i] + "'");
+    }
+    return lits.length === 0 ? "0" : "(" + lits.join("+") + ")";
+  }
+
+  // model 
+
+  function KMapModel(numVars) {
+    if (numVars < 2 || numVars > 6) {
+      throw new Error("Number of variables must be between 2 and 6");
+    }
+    this.numVars = numVars;
+    this.numRowVars = Math.floor(numVars / 2);
+    this.numColVars = numVars - this.numRowVars;
+    this.numRows = 1 << this.numRowVars;
+    this.numCols = 1 << this.numColVars;
+    this.rowLabels = grayCode(this.numRowVars);
+    this.colLabels = grayCode(this.numColVars);
+    this.varNames = VARS.slice(0, numVars);
+    this.rowVarNames = VARS.slice(0, this.numRowVars);
+    this.colVarNames = VARS.slice(this.numRowVars, numVars);
+
+    // reverse maps: binary value of the axis bits -> grid index
+    this.rowValToIndex = {};
+    for (var r = 0; r < this.numRows; r++) this.rowValToIndex[parseInt(this.rowLabels[r], 2)] = r;
+    this.colValToIndex = {};
+    for (var c = 0; c < this.numCols; c++) this.colValToIndex[parseInt(this.colLabels[c], 2)] = c;
+
+    this.grid = [];
+    for (var i = 0; i < this.numRows; i++) {
+      this.grid.push(new Array(this.numCols).fill("0"));
+    }
+  }
+  function grayCode(bits) {
+    if (bits === 0) return [""];
+    var n = 1 << bits, out = [];
+    for (var i = 0; i < n; i++) {
+      var g = i ^ (i >> 1);
+      out.push(g.toString(2).padStart(bits, "0"));
+    }
+    return out;
+  }
+  KMapModel.prototype.toggleCell = function (r, c) {
+    var cyc = { "0": "1", "1": "X", "X": "0" };
+    this.grid[r][c] = cyc[this.grid[r][c]];
+  };
+  KMapModel.prototype.getCellValue = function (r, c) { return this.grid[r][c]; };
+  KMapModel.prototype.setCellValue = function (r, c, v) { this.grid[r][c] = v; };
+  KMapModel.prototype.getMintermIndex = function (r, c) {
+    var rv = parseInt(this.rowLabels[r], 2);
+    var cv = parseInt(this.colLabels[c], 2);
+    return (rv << this.numColVars) | cv;
+  };
+  KMapModel.prototype.mintermToCell = function (m) {
+    var rv = m >> this.numColVars;
+    var cv = m & (this.numCols - 1);
+    return [this.rowValToIndex[rv], this.colValToIndex[cv]];
+  };
+  KMapModel.prototype.valueAtMinterm = function (m) {
+    var rc = this.mintermToCell(m);
+    return this.grid[rc[0]][rc[1]];
+  };
+  KMapModel.prototype.clear = function () {
+    for (var r = 0; r < this.numRows; r++)
+      for (var c = 0; c < this.numCols; c++) this.grid[r][c] = "0";
+  };
+  // Set the whole function from a list of minterm values, indexed by minterm.
+  KMapModel.prototype.setFromMintermValues = function (vals) {
+    for (var m = 0; m < (1 << this.numVars); m++) {
+      var rc = this.mintermToCell(m);
+      this.grid[rc[0]][rc[1]] = vals[m] || "0";
+    }
+  };
+  // Storage-geometry-agnostic helpers so the UI can address cells by minterm.
+  KMapModel.prototype.toggleMinterm = function (m) { var rc = this.mintermToCell(m); this.toggleCell(rc[0], rc[1]); };
+  KMapModel.prototype.setMinterm = function (m, v) { var rc = this.mintermToCell(m); this.setCellValue(rc[0], rc[1], v); };
+
+  // expression parser (SOP text -> minterms) 
+
+  var ExpressionParser = {
+    parse: function (expression, numVars) {
+      var minterms = new Set();
+      var dontCares = new Set();
+      var varNames = VARS.slice(0, numVars);
+      var terms = expression.replace(/\s+/g, "").split("+").filter(function (t) { return t.length > 0; });
+      for (var ti = 0; ti < terms.length; ti++) {
+        var term = terms[ti];
+        var dMatch = term.match(/^d\((\d+(?:,\d+)*)\)$/i);
+        if (dMatch) {
+          dMatch[1].split(",").forEach(function (s) { dontCares.add(parseInt(s, 10)); });
+          continue;
+        }
+        var mMatch = term.match(/^m\((\d+(?:,\d+)*)\)$/i);
+        if (mMatch) {
+          mMatch[1].split(",").forEach(function (s) { minterms.add(parseInt(s, 10)); });
+          continue;
+        }
+        var varValues = {};
+        var i = 0;
+        while (i < term.length) {
+          var ch = term[i].toUpperCase();
+          if (varNames.indexOf(ch) === -1) {
+            throw new Error("Invalid variable '" + term[i] + "'. Supported: " + varNames);
+          }
+          if (i + 1 < term.length && term[i + 1] === "'") { varValues[ch] = 0; i += 2; }
+          else { varValues[ch] = 1; i++; }
+        }
+        var bits = [];
+        for (var v = 0; v < varNames.length; v++) {
+          var name = varNames[v];
+          bits.push(name in varValues ? varValues[name] : -1);
+        }
+        expand(bits, 0, 0, numVars, minterms);
+      }
+      return { minterms: minterms, dontCares: dontCares };
+    }
+  };
+  function expand(bits, index, cur, n, out) {
+    if (index === n) { out.add(cur); return; }
+    if (bits[index] === -1) {
+      expand(bits, index + 1, (cur << 1) | 0, n, out);
+      expand(bits, index + 1, (cur << 1) | 1, n, out);
+    } else {
+      expand(bits, index + 1, (cur << 1) | bits[index], n, out);
+    }
+  }
+
+  // solver
+
+  function KMapSolver() {}
+
+  // Every implicant 
+  KMapSolver.prototype._allImplicants = function (allowed, n) {
+    var total = Math.pow(3, n);
+    var imps = [];
+    for (var code = 0; code < total; code++) {
+      var p = [], x = code, ok = true;
+      for (var i = 0; i < n; i++) { var d = x % 3; x = Math.floor(x / 3); p.push(d === 2 ? null : d); }
+      var ms = patternMinterms(p, n);
+      for (var k = 0; k < ms.length; k++) { if (!allowed.has(ms[k])) { ok = false; break; } }
+      if (ok) imps.push({ pattern: p, minterms: ms });
+    }
+    return imps;
+  };
+
+  KMapSolver.prototype.primeImplicants = function (allowed, n) {
+    var imps = this._allImplicants(allowed, n);
+    var primes = [];
+    for (var a = 0; a < imps.length; a++) {
+      var p = imps[a].pattern, prime = true;
+      for (var i = 0; i < n && prime; i++) {
+        if (p[i] === null) continue;
+        var relaxed = p.slice(); relaxed[i] = null;
+        var ms = patternMinterms(relaxed, n), allOk = true;
+        for (var k = 0; k < ms.length; k++) { if (!allowed.has(ms[k])) { allOk = false; break; } }
+        if (allOk) prime = false; // could be enlarged -> not prime
+      }
+      if (prime) primes.push(imps[a]);
+    }
+    return primes;
+  };
+
+  // Petrick: all minimum-size sets of PI indices that cover every clause.
+  function petrick(clauses) {
+    var products = [new Set()];
+    for (var ci = 0; ci < clauses.length; ci++) {
+      var clause = clauses[ci], next = [];
+      for (var pi = 0; pi < products.length; pi++) {
+        for (var j = 0; j < clause.length; j++) {
+          var s = new Set(products[pi]); s.add(clause[j]); next.push(s);
+        }
+      }
+      products = absorb(next);
+    }
+    var min = Infinity;
+    for (var p = 0; p < products.length; p++) min = Math.min(min, products[p].size);
+    return products.filter(function (s) { return s.size === min; });
+  }
+  function absorb(list) {
+    var sorted = list.slice().sort(function (a, b) { return a.size - b.size; });
+    var keep = [];
+    for (var i = 0; i < sorted.length; i++) {
+      var s = sorted[i], dominated = false;
+      for (var j = 0; j < keep.length; j++) {
+        if (isSubset(keep[j], s)) { dominated = true; break; }
+      }
+      if (!dominated) keep.push(s);
+    }
+    return keep;
+  }
+  function isSubset(a, b) {
+    if (a.size > b.size) return false;
+    var it = a.values(), x;
+    while (!(x = it.next()).done) { if (!b.has(x.value)) return false; }
+    return true;
+  }
+
+  // Build a renderable group object from a pattern.
+  KMapSolver.prototype._group = function (pattern, model, mode) {
+    var n = model.numVars;
+    var minterms = patternMinterms(pattern, n);
+    var cells = minterms.map(function (m) { return model.mintermToCell(m); });
+    var rowsSet = {}, colsSet = {};
+    cells.forEach(function (rc) { rowsSet[rc[0]] = 1; colsSet[rc[1]] = 1; });
+    var rows = Object.keys(rowsSet).map(Number).sort(function (a, b) { return a - b; });
+    var cols = Object.keys(colsSet).map(Number).sort(function (a, b) { return a - b; });
+    return {
+      pattern: pattern, minterms: minterms.slice().sort(function (a, b) { return a - b; }),
+      cells: cells, rows: rows, cols: cols, size: minterms.length,
+      literal: mode === "POS" ? literalPOS(pattern, n) : literalSOP(pattern, n)
+    };
+  };
+
+  // Main solve. mode = 'SOP' (group 1s) or 'POS' (group 0s).
+  KMapSolver.prototype.solve = function (model, mode) {
+    var n = model.numVars;
+    var target = mode === "POS" ? "0" : "1";
+    var allowed = new Set(), required = [];
+    for (var m = 0; m < (1 << n); m++) {
+      var v = model.valueAtMinterm(m);
+      if (v === target || v === "X") allowed.add(m);
+      if (v === target) required.push(m);
+    }
+    var principles = this.principles(mode);
+    if (required.length === 0) {
+      var konst = mode === "POS" ? "1" : "0";
+      return {
+        mode: mode, constant: konst, expression: konst, primeImplicants: [],
+        covers: [], principles: principles,
+        explain: ["No " + (target === "1" ? "1s" : "0s") + " to group — the function is the constant " + konst + "."]
+      };
+    }
+    var self = this;
+    var pis = this.primeImplicants(allowed, n).map(function (p) { return self._group(p.pattern, model, mode); });
+    // keep only PIs that actually cover a required cell (drop all-don't-care loops)
+    var reqSet = new Set(required);
+    var useful = pis.filter(function (g) { return g.minterms.some(function (mm) { return reqSet.has(mm); }); });
+
+    // coverage: essential PIs + Petrick on the rest
+    var coverIdxByMin = {};
+    required.forEach(function (mm) {
+      coverIdxByMin[mm] = [];
+      useful.forEach(function (g, i) { if (g.minterms.indexOf(mm) !== -1) coverIdxByMin[mm].push(i); });
+    });
+    var essential = new Set();
+    required.forEach(function (mm) { if (coverIdxByMin[mm].length === 1) essential.add(coverIdxByMin[mm][0]); });
+    var coveredByEss = new Set();
+    essential.forEach(function (i) { useful[i].minterms.forEach(function (mm) { coveredByEss.add(mm); }); });
+    var remaining = required.filter(function (mm) { return !coveredByEss.has(mm); });
+
+    var covers;
+    if (remaining.length === 0) {
+      covers = [Array.from(essential).map(function (i) { return useful[i]; })];
+    } else {
+      var clauses = remaining.map(function (mm) {
+        return coverIdxByMin[mm].filter(function (i) { return !essential.has(i); });
+      });
+      var sets = petrick(clauses);
+      var essArr = Array.from(essential);
+      covers = sets.map(function (s) {
+        return essArr.concat(Array.from(s)).map(function (i) { return useful[i]; });
+      });
+    }
+    // rank: fewest groups (all equal after Petrick), then fewest literals, then text
+    covers.forEach(function (cov) {
+      cov._lits = cov.reduce(function (a, g) { return a + g.minterms.length === 0 ? a : a + countLiterals(g.pattern); }, 0);
+    });
+    covers.sort(function (a, b) { return a._lits - b._lits; });
+
+    var self2 = this;
+    return {
+      mode: mode, constant: null,
+      primeImplicants: useful,
+      covers: covers,
+      expression: this.expression(covers[0], mode),
+      principles: principles,
+      explain: self2.explainCover(covers[0], model, mode)
+    };
+  };
+
+  function countLiterals(pattern) {
+    var c = 0;
+    for (var i = 0; i < pattern.length; i++) if (pattern[i] !== null) c++;
+    return c;
+  }
+
+  KMapSolver.prototype.expression = function (cover, mode) {
+    if (!cover || cover.length === 0) return mode === "POS" ? "1" : "0";
+    var terms = cover.map(function (g) { return g.literal; });
+    return mode === "POS" ? terms.join(" · ") : terms.join(" + ");
+  };
+
+  KMapSolver.prototype.principles = function (mode) {
+    if (mode === "POS") {
+      return [
+        "Group the 0s (and any X you find useful); never include a 1.",
+        "Make each group as LARGE as possible — only sizes 1, 2, 4, 8, 16, …",
+        "Use as FEW groups as possible; every 0 must be in at least one group.",
+        "Groups are rectangles, may wrap around the edges, and may overlap.",
+        "Each group becomes a SUM term; the answer is their product (AND)."
+      ];
+    }
+    return [
+      "Group the 1s (and any X you find useful); never include a 0.",
+      "Make each group as LARGE as possible — only sizes 1, 2, 4, 8, 16, …",
+      "Use as FEW groups as possible; every 1 must be in at least one group.",
+      "Groups are rectangles, may wrap around the edges, and may overlap.",
+      "Each group becomes a PRODUCT term; the answer is their sum (OR)."
+    ];
+  };
+
+  KMapSolver.prototype.explainCover = function (cover, model, mode) {
+    var out = [];
+    if (!cover || cover.length === 0) return out;
+    cover.forEach(function (g) {
+      var varies = g.pattern.map(function (b, i) { return b === null ? VARS[i] : null; })
+        .filter(function (x) { return x; });
+      var why = varies.length ? (varies.join(",") + " vary") : "no variable varies";
+      out.push(g.literal + "  (size " + g.size + "): covers minterms {" +
+        g.minterms.join(",") + "} — " + why + ".");
+    });
+    return out;
+  };
+
+  // practice-mode checker 
+  // studentGroups: array of groups; each group is an array of MINTERMS (ints).
+  // "Correct" is strict: every 1 (or 0 for POS) covered, no opposite cell
+  // covered, every group a valid maximal (prime) rectangle, AND the number of
+  // groups equals the solver's minimum.
+  KMapSolver.prototype.checkGrouping = function (model, studentGroups, mode) {
+    var n = model.numVars;
+    var target = mode === "POS" ? "0" : "1";
+    var required = [];
+    for (var m = 0; m < (1 << n); m++) if (model.valueAtMinterm(m) === target) required.push(m);
+
+    var details = [], valid = true, infos = [];
+    for (var gi = 0; gi < studentGroups.length; gi++) {
+      var mins = studentGroups[gi];
+      if (!mins || !mins.length) continue;
+      var uniq = Array.from(new Set(mins));
+      if (!isPowerOfTwo(uniq.length)) {
+        valid = false;
+        details.push("Group " + (gi + 1) + " has " + uniq.length + " cells — a group must hold 1, 2, 4, 8, … cells.");
+        continue;
+      }
+      var span = spanningPattern(uniq, n);
+      var spanMin = patternMinterms(span, n);
+      if (spanMin.length !== uniq.length) {
+        valid = false;
+        details.push("Group " + (gi + 1) + " is not a rectangle — its cells don't form one K-map group.");
+        continue;
+      }
+      var bad = uniq.filter(function (mm) {
+        var v = model.valueAtMinterm(mm); return v !== target && v !== "X";
+      });
+      if (bad.length) {
+        valid = false;
+        details.push("Group " + (gi + 1) + " includes minterm(s) {" + bad.join(",") + "} which are " +
+          (target === "1" ? "0s" : "1s") + " — not allowed in " + mode + ".");
+        continue;
+      }
+      infos.push({ minterms: uniq, span: span, literal: mode === "POS" ? literalPOS(span, n) : literalSOP(span, n) });
+    }
+    if (!valid) {
+      return { ok: false, level: "wrong", headline: "Not yet — fix the group(s):", details: details };
+    }
+
+    var covered = new Set();
+    infos.forEach(function (g) { g.minterms.forEach(function (mm) { covered.add(mm); }); });
+    var missing = required.filter(function (mm) { return !covered.has(mm); });
+    if (missing.length) {
+      return {
+        ok: false, level: "wrong",
+        headline: "Not yet — some " + (target === "1" ? "1s" : "0s") + " aren't covered:",
+        details: ["Uncovered minterm(s): {" + missing.join(",") + "}."]
+      };
+    }
+
+    var solved = this.solve(model, mode);
+    var minGroups = solved.covers.length ? solved.covers[0].length : 0;
+
+    // strictness: every student group must be maximal (prime) — not enlargeable.
+    var allowed = new Set();
+    for (var mm2 = 0; mm2 < (1 << n); mm2++) { var v2 = model.valueAtMinterm(mm2); if (v2 === target || v2 === "X") allowed.add(mm2); }
+    var enlargeable = [];
+    infos.forEach(function (g) {
+      for (var i = 0; i < n; i++) {
+        if (g.span[i] === null) continue;
+        var relaxed = g.span.slice(); relaxed[i] = null;
+        var ms = patternMinterms(relaxed, n), ok = true;
+        for (var k = 0; k < ms.length; k++) if (!allowed.has(ms[k])) { ok = false; break; }
+        if (ok) { enlargeable.push(g.literal); break; }
+      }
+    });
+
+    var myExpr = this.expression(infos.map(function (g) { return { literal: g.literal }; }), mode);
+
+    if (infos.length === minGroups && enlargeable.length === 0) {
+      return { ok: true, level: "correct", headline: "✓ Correct!", details: ["Your answer: " + mode + " = " + myExpr] };
+    }
+    // strict: a valid cover that isn't a clean minimum
+    var d = [];
+    if (infos.length > minGroups) {
+      d.push("You used " + infos.length + " groups; the minimum is " + minGroups + ".");
+    } else if (enlargeable.length) {
+      d.push("Group" + (enlargeable.length > 1 ? "s" : "") + " " + enlargeable.join(", ") + " could be made larger.");
+    }
+    d.push("A minimal answer: " + mode + " = " + solved.expression);
+    return {
+      ok: false, level: "suboptimal",
+      headline: infos.length > minGroups ? "Correct logic — but not minimal." : "Almost — make every group as large as possible.",
+      details: d
+    };
+  };
+
+  var api = {
+    KMapModel: KMapModel,
+    ExpressionParser: ExpressionParser,
+    KMapSolver: KMapSolver,
+    patternMinterms: patternMinterms,
+    spanningPattern: spanningPattern,
+    literalSOP: literalSOP,
+    literalPOS: literalPOS,
+    mintermBits: mintermBits
+  };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  if (root) { for (var key in api) if (api.hasOwnProperty(key)) root[key] = api[key]; }
+})(typeof window !== "undefined" ? window : null);
+
+  </script>
+  <script>
+  var App = (function () {
+    var VARS = 'ABCDEF';
+    var COLORS = ['#e53935','#1e88e5','#43a047','#fb8c00','#8e24aa','#00897b','#6d4c41','#d81b60','#3949ab','#7cb342'];
+    var solver = new KMapSolver();
+    var state = {
+      model: new KMapModel(4),
+      mode: 'solve', form: 'SOP',
+      lastSolve: null, selectedCover: 0,
+      pending: [],   // [minterm,...] current group (practice)
+      groups: []     // [{cells:[minterm,...], color}] committed (practice)
+    };
+
+    function grayN(bits) { var out = [], n = 1 << bits; for (var i = 0; i < n; i++) { var g = i ^ (i >> 1); out.push(g.toString(2).padStart(bits, '0')); } return out; }
+    function buildLayout(m) {
+      var n = m.numVars;
+      if (n <= 4) {
+        return { panels: [{
+          title: '', rowVarName: m.rowVarNames, colVarName: m.colVarNames,
+          rowLabels: m.rowLabels, colLabels: m.colLabels,
+          cell: function (sr, sc) { return m.getMintermIndex(sr, sc); }
+        }], perRow: 1 };
+      }
+      var selBits = n - 4;                 // 1 (n=5) or 2 (n=6)
+      var subVars = VARS.slice(n - 4, n);  // last 4 vars: BCDE / CDEF
+      var rowVarName = subVars.slice(0, 2), colVarName = subVars.slice(2, 4);
+      var selVars = VARS.slice(0, selBits);
+      var g2 = grayN(2);
+      var panels = grayN(selBits).map(function (sl) {
+        var selVal = parseInt(sl, 2);
+        return {
+          title: selVars + ' = ' + sl, rowVarName: rowVarName, colVarName: colVarName,
+          rowLabels: g2, colLabels: g2,
+          cell: function (sr, sc) { return (selVal << 4) | (parseInt(g2[sr], 2) << 2) | parseInt(g2[sc], 2); }
+        };
+      });
+      return { panels: panels, perRow: 2 };
+    }
+
+    // setup / mode
+    function setVars(n) { state.model = new KMapModel(parseInt(n, 10)); resetTransient(); renderAll(); }
+    function setMode(m) {
+      state.mode = m;
+      document.querySelectorAll('#modeSeg button').forEach(function (b) { b.classList.toggle('active', b.dataset.mode === m); });
+      resetTransient(); renderAll();
+    }
+    function setForm(f) {
+      state.form = f;
+      document.querySelectorAll('#formSeg button').forEach(function (b) { b.classList.toggle('active', b.dataset.form === f); });
+      renderPrinciples();
+      if (state.mode === 'practice') { state.pending = []; state.groups = []; renderAll(); }
+      else { if (state.lastSolve) solve(); else renderAll(); }
+    }
+    function resetTransient() { state.lastSolve = null; state.selectedCover = 0; state.pending = []; state.groups = []; }
+
+    // interaction 
+    function cellClick(m) {
+      if (state.mode === 'solve') { state.model.toggleMinterm(m); state.lastSolve = null; renderAll(); }
+      else {
+        var target = state.form === 'POS' ? '0' : '1', v = state.model.valueAtMinterm(m);
+        if (v !== target && v !== 'X') { flashCell(m); return; }
+        var i = state.pending.indexOf(m);
+        if (i === -1) state.pending.push(m); else state.pending.splice(i, 1);
+        renderKmap(); renderPracticeBar();
+      }
+    }
+    function truthToggle(m) { if (state.mode !== 'solve') return; state.model.toggleMinterm(m); state.lastSolve = null; renderAll(); }
+
+    // practice
+    function commitGroup() {
+      if (!state.pending.length) return;
+      var single = validateSingle(state.pending);
+      if (!single.ok) { showFeedback({ ok:false, level:'wrong', headline:"That group isn't valid:", details:[single.msg] }); return; }
+      state.groups.push({ cells: state.pending.slice(), color: COLORS[state.groups.length % COLORS.length] });
+      state.pending = []; clearFeedback(); renderAll();
+    }
+    function validateSingle(mins) {
+      var n = state.model.numVars, target = state.form === 'POS' ? '0' : '1';
+      var uniq = Array.from(new Set(mins));
+      if (uniq.length & (uniq.length - 1)) return { ok:false, msg:'A group must have 1, 2, 4, 8, … cells (you have ' + uniq.length + ').' };
+      var span = spanningPattern(uniq, n);
+      if (patternMinterms(span, n).length !== uniq.length) return { ok:false, msg:"Those cells don't form a rectangle / valid K-map group." };
+      var bad = uniq.filter(function (mm) { var v = state.model.valueAtMinterm(mm); return v !== target && v !== 'X'; });
+      if (bad.length) return { ok:false, msg:'Group includes ' + (target==='1'?'a 0':'a 1') + ' (minterm ' + bad.join(',') + ').' };
+      return { ok:true };
+    }
+    function removeGroup(i) { state.groups.splice(i, 1); renderAll(); }
+    function resetGroups() { state.pending = []; state.groups = []; clearFeedback(); renderAll(); }
+    function check() {
+      if (!state.groups.length) { showFeedback({ ok:false, level:'wrong', headline:'Make at least one group first.', details:[] }); return; }
+      showFeedback(solver.checkGrouping(state.model, state.groups.map(function (g) { return g.cells; }), state.form));
+    }
+
+    // solve 
+    function solve() { state.lastSolve = solver.solve(state.model, state.form); state.selectedCover = 0; renderResults(); renderKmap(); }
+    function selectCover(i) { state.selectedCover = i; renderResults(); renderKmap(); }
+    function parseExpr() {
+      var input = document.getElementById('exprInput').value.trim(), errEl = document.getElementById('exprErr'); errEl.style.display = 'none';
+      if (!input) return;
+      try {
+        var r = ExpressionParser.parse(input, state.model.numVars);
+        for (var m = 0; m < (1 << state.model.numVars); m++) state.model.setMinterm(m, r.minterms.has(m) ? '1' : (r.dontCares.has(m) ? 'X' : '0'));
+        resetTransient(); renderAll();
+      } catch (e) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+    }
+    function clearAll() { state.model.clear(); resetTransient(); document.getElementById('exprInput').value = ''; renderAll(); }
+    function example() {
+      var presets = { 2:"A'B + AB'", 3:"A'C + AB' + m(7)", 4:"m(0,1,2,5,6,7,8,9,10,14)",
+        5:"m(0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30)", 6:"m(0,1,2,3,8,9,10,11,16,17,18,19)" };
+      document.getElementById('exprInput').value = presets[state.model.numVars] || ''; parseExpr();
+    }
+
+    // rendering 
+    function renderAll() {
+      renderPrinciples(); renderActionBar(); renderKmap(); renderTruth(); renderPracticeBar(); renderPgroups();
+      if (state.mode === 'solve') { if (state.lastSolve) renderResults(); else clearResults(); }
+      else renderPracticeResults();
+    }
+    function renderPrinciples() {
+      var p = solver.principles(state.form), html = '<h3>Goal: minimal ' + state.form + ' — the rules</h3><ul>';
+      p.forEach(function (l) { html += '<li>' + l + '</li>'; }); document.getElementById('principles').innerHTML = html + '</ul>';
+    }
+    function renderActionBar() {
+      var bar = document.getElementById('actionBar');
+      bar.innerHTML = state.mode === 'solve'
+        ? '<button class="act" onclick="App.solve()">Solve</button>'
+        : '<button class="act" onclick="App.commitGroup()">Done grouping ✓</button>' +
+          '<button class="act ghost" onclick="App.check()">Check</button>' +
+          '<button class="act ghost" onclick="App.resetGroups()">Reset groups</button>' +
+          '<button class="act ghost" onclick="App.solve()">Show me</button>';
+    }
+    function renderPracticeBar() {
+      var bar = document.getElementById('practiceBar');
+      if (state.mode !== 'practice') { bar.style.display = 'none'; return; }
+      bar.style.display = 'block';
+      bar.innerHTML = '<span class="muted">Practice: click the ' + (state.form === 'POS' ? '0s' : '1s') +
+        ' to build a group, press <b>Done grouping ✓</b>, repeat, then <b>Check</b>. ' +
+        (state.pending.length ? 'Current group: ' + state.pending.length + ' cell(s).' : '') + '</span>';
+    }
+    function renderKmap() {
+      var m = state.model, L = buildLayout(m);
+      var html = '<div class="panels" id="panels" style="grid-template-columns:repeat(' + L.perRow + ',auto);">';
+      L.panels.forEach(function (panel, pi) { html += renderPanel(panel, pi, m); });
+      html += '<div class="loop-layer" id="loopLayer"></div></div>';
+      document.getElementById('kmapWrapper').innerHTML = html;
+      drawLoops();
+    }
+    function renderPanel(panel, pi, m) {
+      var nr = panel.rowLabels.length, nc = panel.colLabels.length, colTmpl = 'grid-template-columns:repeat(' + nc + ',50px);';
+      var html = '<div class="panel">';
+      if (panel.title) html += '<div class="panel-title">' + panel.title + '</div>';
+      html += '<div class="axis-top" style="margin-left:62px;">' + panel.colVarName + '</div>';
+      html += '<div class="grid-with-labels"><div class="rowvar"><span>' + panel.rowVarName + '</span></div>';
+      html += '<div class="labels-col" style="grid-template-rows:repeat(' + nr + ',50px); margin-top:24px;">';
+      for (var r = 0; r < nr; r++) html += '<span>' + panel.rowLabels[r] + '</span>';
+      html += '</div><div><div class="labels-row" style="' + colTmpl + '">';
+      for (var c = 0; c < nc; c++) html += '<span>' + panel.colLabels[c] + '</span>';
+      html += '</div><div class="kmap-grid" style="' + colTmpl + '">';
+      for (var rr = 0; rr < nr; rr++) for (var cc = 0; cc < nc; cc++) {
+        var mm = panel.cell(rr, cc), v = m.valueAtMinterm(mm);
+        var pend = state.mode === 'practice' && state.pending.indexOf(mm) !== -1;
+        html += '<div class="kmap-cell minterm-tag v' + v + (pend ? ' pending' : '') + '" data-m="' + mm +
+                '" data-submap="' + pi + '" data-sr="' + rr + '" data-sc="' + cc + '" onclick="App.cellClick(' + mm + ')">' + v + '</div>';
+      }
+      return html + '</div></div></div></div>';
+    }
+
+    function currentLoopGroups() {
+      if (state.mode === 'practice') return state.groups.map(function (g) { return { minterms: g.cells, color: g.color, literal: '' }; });
+      if (state.lastSolve && state.lastSolve.covers.length) {
+        var cover = state.lastSolve.covers[state.selectedCover] || [];
+        return cover.map(function (g, i) { return { minterms: g.minterms, color: COLORS[i % COLORS.length], literal: g.literal }; });
+      }
+      return [];
+    }
+    function drawLoops() {
+      var layer = document.getElementById('loopLayer'); if (!layer) return; layer.innerHTML = '';
+      var groups = currentLoopGroups(), areaRect = layer.getBoundingClientRect();
+      groups.forEach(function (g, gi) {
+        var color = g.color, inset = Math.min(3 + gi * 3, 12), bySub = {};
+        g.minterms.forEach(function (mm) { var c = document.querySelector('.kmap-cell[data-m="' + mm + '"]'); if (!c) return; (bySub[c.dataset.submap] = bySub[c.dataset.submap] || []).push(c); });
+        var labelPlaced = false;
+        Object.keys(bySub).forEach(function (sub) {
+          var cells = bySub[sub];
+          var srs = uniqSorted(cells.map(function (c) { return +c.dataset.sr; }));
+          var scs = uniqSorted(cells.map(function (c) { return +c.dataset.sc; }));
+          runs(srs).forEach(function (rRun) {
+            runs(scs).forEach(function (cRun) {
+              var a = cellBy(sub, rRun[0], cRun[0]), b = cellBy(sub, rRun[rRun.length - 1], cRun[cRun.length - 1]);
+              if (!a || !b) return;
+              var ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+              var d = document.createElement('div'); d.className = 'loop';
+              d.style.left = (ar.left - areaRect.left + inset) + 'px';
+              d.style.top = (ar.top - areaRect.top + inset) + 'px';
+              d.style.width = (br.right - ar.left - 2 * inset) + 'px';
+              d.style.height = (br.bottom - ar.top - 2 * inset) + 'px';
+              d.style.borderColor = color; d.style.background = hexA(color, .08);
+              layer.appendChild(d);
+              if (!labelPlaced && g.literal) {
+                var lab = document.createElement('div'); lab.className = 'loop-label'; lab.textContent = g.literal;
+                lab.style.color = color; lab.style.borderColor = color;
+                lab.style.left = (ar.left - areaRect.left + inset + 2) + 'px';
+                lab.style.top = (ar.top - areaRect.top + inset - 9) + 'px';
+                layer.appendChild(lab); labelPlaced = true;
+              }
+            });
+          });
+        });
+      });
+    }
+
+    function renderTruth() {
+      var m = state.model, n = m.numVars, el = document.getElementById('truthTable');
+      var html = '<table class="truth' + (state.mode === 'practice' ? ' locked' : '') + '"><thead><tr><th>#</th>';
+      for (var i = 0; i < n; i++) html += '<th>' + m.varNames[i] + '</th>';
+      html += '<th>F</th></tr></thead><tbody>';
+      for (var mm = 0; mm < (1 << n); mm++) {
+        var bits = mintermBits(mm, n), v = m.valueAtMinterm(mm);
+        html += '<tr><td>' + mm + '</td>';
+        for (var b = 0; b < n; b++) html += '<td>' + bits[b] + '</td>';
+        html += '<td class="out v' + v + '" onclick="App.truthToggle(' + mm + ')">' + v + '</td></tr>';
+      }
+      el.innerHTML = html + '</tbody></table>';
+    }
+    function renderPgroups() {
+      var el = document.getElementById('pgroups');
+      if (state.mode !== 'practice' || !state.groups.length) { el.innerHTML = ''; return; }
+      var html = '';
+      state.groups.forEach(function (g, i) {
+        html += '<span class="pg"><span class="swatch" style="border-color:' + g.color + ';background:' + hexA(g.color,.15) + '"></span>Group ' + (i + 1) + ' (' + g.cells.length + ')<button onclick="App.removeGroup(' + i + ')">✕</button></span>';
+      });
+      el.innerHTML = html;
+    }
+    function renderResults() {
+      var res = state.lastSolve; if (!res) { clearResults(); return; }
+      var el = document.getElementById('results'), html = '<h3>Results — minimal ' + res.mode + '</h3>';
+      if (res.constant) { el.innerHTML = html + '<div class="answer">' + res.mode + ' = ' + res.constant + '</div><p class="muted">' + (res.explain[0] || '') + '</p>'; return; }
+      var cover = res.covers[state.selectedCover] || res.covers[0];
+      html += '<div class="answer">' + res.mode + ' = ' + solver.expression(cover, res.mode) + '</div><ul class="explain">';
+      cover.forEach(function (g, i) {
+        var col = COLORS[i % COLORS.length];
+        var varies = g.pattern.map(function (bb, k) { return bb === null ? state.model.varNames[k] : null; }).filter(Boolean);
+        html += '<li><span class="swatch" style="border-color:' + col + ';background:' + hexA(col,.15) + '"></span><span><b>' + g.literal + '</b> — covers {' + g.minterms.join(',') + '}, size ' + g.size + (varies.length ? ' (' + varies.join(',') + ' vary)' : '') + '</span></li>';
+      });
+      html += '</ul>';
+      if (res.covers.length > 1) {
+        html += '<div class="covers"><b style="font-size:13px;">' + res.covers.length + ' equally-minimal solutions:</b><br>';
+        res.covers.forEach(function (cov, i) { html += '<span class="chip' + (i === state.selectedCover ? ' active' : '') + '" onclick="App.selectCover(' + i + ')">' + solver.expression(cov, res.mode) + '</span>'; });
+        html += '</div>';
+      }
+      el.innerHTML = html;
+    }
+    function renderPracticeResults() {
+      document.getElementById('results').innerHTML = '<h3>Practice</h3><p class="muted">Build your groups on the map, then press <b>Check</b>. Press <b>Show me</b> to reveal the minimal answer.</p>';
+    }
+    function showFeedback(res) {
+      var cls = res.level || (res.ok ? 'correct' : 'wrong');
+      var html = '<h3>Practice</h3><div class="feedback ' + cls + '"><h4>' + res.headline + '</h4>';
+      if (res.details && res.details.length) { html += '<ul>'; res.details.forEach(function (d) { html += '<li>' + d + '</li>'; }); html += '</ul>'; }
+      document.getElementById('results').innerHTML = html + '</div>';
+    }
+    function clearFeedback() { if (state.mode === 'practice') renderPracticeResults(); }
+    function clearResults() { document.getElementById('results').innerHTML = '<h3>Results</h3><p class="muted">Press <b>Solve</b> for the minimal answer, or switch to <b>Practice</b>.</p>'; }
+
+    // helpers 
+    function uniqSorted(a) { return Array.from(new Set(a)).sort(function (x, y) { return x - y; }); }
+    function runs(sorted) { var out = [], cur = []; for (var i = 0; i < sorted.length; i++) { if (!cur.length || sorted[i] === cur[cur.length - 1] + 1) cur.push(sorted[i]); else { out.push(cur); cur = [sorted[i]]; } } if (cur.length) out.push(cur); return out; }
+    function cellBy(sub, sr, sc) { return document.querySelector('.kmap-cell[data-submap="' + sub + '"][data-sr="' + sr + '"][data-sc="' + sc + '"]'); }
+    function flashCell(m) { var e = document.querySelector('.kmap-cell[data-m="' + m + '"]'); if (!e) return; var old = e.style.background; e.style.background = '#ffcdd2'; setTimeout(function () { e.style.background = old; }, 180); }
+    function hexA(hex, a) { var n = parseInt(hex.replace('#', ''), 16); return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+
+    renderAll();
+    window.addEventListener('resize', drawLoops);
+    return { setVars: setVars, setMode: setMode, setForm: setForm, cellClick: cellClick, truthToggle: truthToggle,
+             commitGroup: commitGroup, removeGroup: removeGroup, resetGroups: resetGroups, check: check,
+             solve: solve, selectCover: selectCover, parseExpr: parseExpr, clearAll: clearAll, example: example };
+  })();
+  </script>
+</body>
+</html>

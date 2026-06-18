@@ -172,7 +172,7 @@ all transistor-level elements, FSM elements, FPGA-board-specific blocks, Verilog
 
 - Command: `java -cp Digital.jar CLI test -circ FILE.dig [-verbose]`
 - Output format: `Test: passed` or `Test: failed (N%)` per test case
-- Exit codes (verified against Digital v0.31):
+- Exit codes:
   - `0` — every testcase passed
   - `1` — at least one testcase failed OR reported a testcase-level
     error (e.g. `name: Test signal Qx not found in the circuit!`)

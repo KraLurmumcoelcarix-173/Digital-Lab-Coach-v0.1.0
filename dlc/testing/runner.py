@@ -156,9 +156,6 @@ def _write_single_row_dig(
 ) -> str:
     """..."""
     src_path = Path(original_dig_path)
-    # .dig files are UTF-8 XML; explicit encoding both ways or Windows
-    # GBK locales raise localized UnicodeDecodeError/UnicodeEncodeError
-    # on any non-ASCII label/comment (docs anti-pattern 4.3).
     src = src_path.read_text(encoding="utf-8")
     new_body = " ".join(headers) + "\n" + row_raw
     new_content, count = _DATASTRING_RE.subn(
