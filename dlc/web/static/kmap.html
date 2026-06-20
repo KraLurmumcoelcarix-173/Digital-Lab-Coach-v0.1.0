@@ -63,7 +63,6 @@
   .kmap-cell.v1 { color: #2e7d32; background: #f1f8f1; }
   .kmap-cell.vX { color: #ef6c00; background: #fff7ec; }
   .kmap-cell.minterm-tag::after { content: attr(data-m); position:absolute; top:2px; left:4px; font-size:9px; font-weight:600; color:#c2c8d4; }
-  .kmap-cell.pending { outline: 3px dashed #455a64; outline-offset: -3px; }
 
   .loop-layer { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; }
   .loop { position: absolute; border: 3px solid; border-radius: 11px; }
@@ -76,7 +75,6 @@
   table.truth td.out.v1 { background:#f1f8f1; color:#2e7d32; }
   table.truth td.out.vX { background:#fff7ec; color:#ef6c00; }
   table.truth td.out.v0 { color:#b0b6c3; }
-  table.truth.locked td.out { cursor: default; }
   .truth-scroll { max-height: 540px; overflow-y: auto; }
 
   #results h3 { margin: 0 0 10px; color: #1a237e; }
@@ -87,21 +85,12 @@
   .covers { margin-top: 12px; }
   .covers .chip { display:inline-block; padding: 5px 10px; margin: 3px; border-radius: 7px; background:#f0f2f8; cursor:pointer; font-size: 13px; border: 1px solid transparent;}
   .covers .chip.active { border-color:#1a237e; background:#e8eaf6; }
-  .feedback { padding: 12px 14px; border-radius: 8px; font-size: 14px; }
-  .feedback.correct { background:#e8f5e9; color:#1b5e20; }
-  .feedback.suboptimal { background:#fff8e1; color:#8d6e00; }
-  .feedback.wrong { background:#ffebee; color:#b71c1c; }
-  .feedback h4 { margin: 0 0 6px; }
-  .feedback ul { margin: 0; padding-left: 18px; }
-  .pgroups { margin-top: 10px; }
-  .pgroups .pg { display:inline-flex; align-items:center; gap:6px; padding: 4px 8px; margin: 3px; border-radius: 7px; background:#f0f2f8; font-size:13px; }
-  .pgroups .pg button { border:none; background:transparent; color:#b71c1c; cursor:pointer; font-weight:700; }
   .muted { color:#8a94a6; font-style: italic; }
 </style>
 </head>
 <body>
   <h1>K-Map Coach</h1>
-  <p class="subtitle">Fill the truth table or draw on the map · Solve, or Practice your own grouping</p>
+  <p class="subtitle">Fill the truth table or draw on the map, then Solve for the minimal SOP / POS</p>
 
   <div class="card" id="principles"></div>
 
@@ -112,15 +101,11 @@
         <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
       </select>
     </label>
-    <span class="seg" id="modeSeg">
-      <button data-mode="solve" class="active" onclick="App.setMode('solve')">Solve</button>
-      <button data-mode="practice" onclick="App.setMode('practice')">Practice</button>
-    </span>
     <span class="seg" id="formSeg">
       <button data-form="SOP" class="active" onclick="App.setForm('SOP')">SOP</button>
       <button data-form="POS" onclick="App.setForm('POS')">POS</button>
     </span>
-    <span id="actionBar"></span>
+    <button class="act" onclick="App.solve()">Solve</button>
     <button class="act ghost" onclick="App.example()">Example</button>
     <button class="act warn" onclick="App.clearAll()">Clear</button>
   </div>
@@ -136,9 +121,7 @@
 
   <div class="layout">
     <div class="card col-map">
-      <div id="practiceBar" style="display:none; margin-bottom:10px;"></div>
       <div class="kmap-wrapper" id="kmapWrapper"></div>
-      <div class="pgroups" id="pgroups"></div>
     </div>
     <div class="card col-truth">
       <h3 style="margin:0 0 8px; color:#1a237e; font-size:15px;">Truth table</h3>
@@ -146,7 +129,7 @@
     </div>
     <div class="card col-map" id="results" style="min-width:300px;">
       <h3>Results</h3>
-      <p class="muted">Press <b>Solve</b> for the minimal answer, or switch to <b>Practice</b>.</p>
+      <p class="muted">Press <b>Solve</b> for the minimal answer.</p>
     </div>
   </div>
 
@@ -158,6 +141,8 @@
   var VARS = "ABCDEF";
 
   // low-level pattern helpers 
+
+  // All minterms covered by a pattern (free bits expand both ways).
   function patternMinterms(pattern, n) {
     var res = [0];
     for (var i = 0; i < n; i++) {
@@ -220,7 +205,7 @@
     return lits.length === 0 ? "0" : "(" + lits.join("+") + ")";
   }
 
-  // model 
+  // model
 
   function KMapModel(numVars) {
     if (numVars < 2 || numVars > 6) {
@@ -342,11 +327,11 @@
     }
   }
 
-  // solver
+  // solver 
 
   function KMapSolver() {}
 
-  // Every implicant 
+  // Every implicant (sub-cube whose minterms are all "allowed").
   KMapSolver.prototype._allImplicants = function (allowed, n) {
     var total = Math.pow(3, n);
     var imps = [];
@@ -449,7 +434,6 @@
     }
     var self = this;
     var pis = this.primeImplicants(allowed, n).map(function (p) { return self._group(p.pattern, model, mode); });
-    // keep only PIs that actually cover a required cell (drop all-don't-care loops)
     var reqSet = new Set(required);
     var useful = pis.filter(function (g) { return g.minterms.some(function (mm) { return reqSet.has(mm); }); });
 
@@ -539,101 +523,12 @@
     return out;
   };
 
-  // practice-mode checker 
-  // studentGroups: array of groups; each group is an array of MINTERMS (ints).
-  // "Correct" is strict: every 1 (or 0 for POS) covered, no opposite cell
-  // covered, every group a valid maximal (prime) rectangle, AND the number of
-  // groups equals the solver's minimum.
-  KMapSolver.prototype.checkGrouping = function (model, studentGroups, mode) {
-    var n = model.numVars;
-    var target = mode === "POS" ? "0" : "1";
-    var required = [];
-    for (var m = 0; m < (1 << n); m++) if (model.valueAtMinterm(m) === target) required.push(m);
-
-    var details = [], valid = true, infos = [];
-    for (var gi = 0; gi < studentGroups.length; gi++) {
-      var mins = studentGroups[gi];
-      if (!mins || !mins.length) continue;
-      var uniq = Array.from(new Set(mins));
-      if (!isPowerOfTwo(uniq.length)) {
-        valid = false;
-        details.push("Group " + (gi + 1) + " has " + uniq.length + " cells — a group must hold 1, 2, 4, 8, … cells.");
-        continue;
-      }
-      var span = spanningPattern(uniq, n);
-      var spanMin = patternMinterms(span, n);
-      if (spanMin.length !== uniq.length) {
-        valid = false;
-        details.push("Group " + (gi + 1) + " is not a rectangle — its cells don't form one K-map group.");
-        continue;
-      }
-      var bad = uniq.filter(function (mm) {
-        var v = model.valueAtMinterm(mm); return v !== target && v !== "X";
-      });
-      if (bad.length) {
-        valid = false;
-        details.push("Group " + (gi + 1) + " includes minterm(s) {" + bad.join(",") + "} which are " +
-          (target === "1" ? "0s" : "1s") + " — not allowed in " + mode + ".");
-        continue;
-      }
-      infos.push({ minterms: uniq, span: span, literal: mode === "POS" ? literalPOS(span, n) : literalSOP(span, n) });
-    }
-    if (!valid) {
-      return { ok: false, level: "wrong", headline: "Not yet — fix the group(s):", details: details };
-    }
-
-    var covered = new Set();
-    infos.forEach(function (g) { g.minterms.forEach(function (mm) { covered.add(mm); }); });
-    var missing = required.filter(function (mm) { return !covered.has(mm); });
-    if (missing.length) {
-      return {
-        ok: false, level: "wrong",
-        headline: "Not yet — some " + (target === "1" ? "1s" : "0s") + " aren't covered:",
-        details: ["Uncovered minterm(s): {" + missing.join(",") + "}."]
-      };
-    }
-
-    var solved = this.solve(model, mode);
-    var minGroups = solved.covers.length ? solved.covers[0].length : 0;
-
-    // strictness: every student group must be maximal (prime) — not enlargeable.
-    var allowed = new Set();
-    for (var mm2 = 0; mm2 < (1 << n); mm2++) { var v2 = model.valueAtMinterm(mm2); if (v2 === target || v2 === "X") allowed.add(mm2); }
-    var enlargeable = [];
-    infos.forEach(function (g) {
-      for (var i = 0; i < n; i++) {
-        if (g.span[i] === null) continue;
-        var relaxed = g.span.slice(); relaxed[i] = null;
-        var ms = patternMinterms(relaxed, n), ok = true;
-        for (var k = 0; k < ms.length; k++) if (!allowed.has(ms[k])) { ok = false; break; }
-        if (ok) { enlargeable.push(g.literal); break; }
-      }
-    });
-
-    var myExpr = this.expression(infos.map(function (g) { return { literal: g.literal }; }), mode);
-
-    if (infos.length === minGroups && enlargeable.length === 0) {
-      return { ok: true, level: "correct", headline: "✓ Correct!", details: ["Your answer: " + mode + " = " + myExpr] };
-    }
-    // strict: a valid cover that isn't a clean minimum
-    var d = [];
-    if (infos.length > minGroups) {
-      d.push("You used " + infos.length + " groups; the minimum is " + minGroups + ".");
-    } else if (enlargeable.length) {
-      d.push("Group" + (enlargeable.length > 1 ? "s" : "") + " " + enlargeable.join(", ") + " could be made larger.");
-    }
-    d.push("A minimal answer: " + mode + " = " + solved.expression);
-    return {
-      ok: false, level: "suboptimal",
-      headline: infos.length > minGroups ? "Correct logic — but not minimal." : "Almost — make every group as large as possible.",
-      details: d
-    };
-  };
-
+  // exports 
   var api = {
     KMapModel: KMapModel,
     ExpressionParser: ExpressionParser,
     KMapSolver: KMapSolver,
+    // helpers exposed for tests
     patternMinterms: patternMinterms,
     spanningPattern: spanningPattern,
     literalSOP: literalSOP,
@@ -650,14 +545,9 @@
     var VARS = 'ABCDEF';
     var COLORS = ['#e53935','#1e88e5','#43a047','#fb8c00','#8e24aa','#00897b','#6d4c41','#d81b60','#3949ab','#7cb342'];
     var solver = new KMapSolver();
-    var state = {
-      model: new KMapModel(4),
-      mode: 'solve', form: 'SOP',
-      lastSolve: null, selectedCover: 0,
-      pending: [],   // [minterm,...] current group (practice)
-      groups: []     // [{cells:[minterm,...], color}] committed (practice)
-    };
+    var state = { model: new KMapModel(4), form: 'SOP', lastSolve: null, selectedCover: 0 };
 
+    // layout
     function grayN(bits) { var out = [], n = 1 << bits; for (var i = 0; i < n; i++) { var g = i ^ (i >> 1); out.push(g.toString(2).padStart(bits, '0')); } return out; }
     function buildLayout(m) {
       var n = m.numVars;
@@ -668,8 +558,8 @@
           cell: function (sr, sc) { return m.getMintermIndex(sr, sc); }
         }], perRow: 1 };
       }
-      var selBits = n - 4;                 // 1 (n=5) or 2 (n=6)
-      var subVars = VARS.slice(n - 4, n);  // last 4 vars: BCDE / CDEF
+      var selBits = n - 4;
+      var subVars = VARS.slice(n - 4, n);
       var rowVarName = subVars.slice(0, 2), colVarName = subVars.slice(2, 4);
       var selVars = VARS.slice(0, selBits);
       var g2 = grayN(2);
@@ -684,61 +574,21 @@
       return { panels: panels, perRow: 2 };
     }
 
-    // setup / mode
-    function setVars(n) { state.model = new KMapModel(parseInt(n, 10)); resetTransient(); renderAll(); }
-    function setMode(m) {
-      state.mode = m;
-      document.querySelectorAll('#modeSeg button').forEach(function (b) { b.classList.toggle('active', b.dataset.mode === m); });
-      resetTransient(); renderAll();
-    }
+    // setup 
+    function setVars(n) { state.model = new KMapModel(parseInt(n, 10)); resetSolve(); renderAll(); }
     function setForm(f) {
       state.form = f;
       document.querySelectorAll('#formSeg button').forEach(function (b) { b.classList.toggle('active', b.dataset.form === f); });
       renderPrinciples();
-      if (state.mode === 'practice') { state.pending = []; state.groups = []; renderAll(); }
-      else { if (state.lastSolve) solve(); else renderAll(); }
+      if (state.lastSolve) solve(); else renderAll();
     }
-    function resetTransient() { state.lastSolve = null; state.selectedCover = 0; state.pending = []; state.groups = []; }
+    function resetSolve() { state.lastSolve = null; state.selectedCover = 0; }
 
     // interaction 
-    function cellClick(m) {
-      if (state.mode === 'solve') { state.model.toggleMinterm(m); state.lastSolve = null; renderAll(); }
-      else {
-        var target = state.form === 'POS' ? '0' : '1', v = state.model.valueAtMinterm(m);
-        if (v !== target && v !== 'X') { flashCell(m); return; }
-        var i = state.pending.indexOf(m);
-        if (i === -1) state.pending.push(m); else state.pending.splice(i, 1);
-        renderKmap(); renderPracticeBar();
-      }
-    }
-    function truthToggle(m) { if (state.mode !== 'solve') return; state.model.toggleMinterm(m); state.lastSolve = null; renderAll(); }
+    function cellClick(m) { state.model.toggleMinterm(m); resetSolve(); renderAll(); }
+    function truthToggle(m) { state.model.toggleMinterm(m); resetSolve(); renderAll(); }
 
-    // practice
-    function commitGroup() {
-      if (!state.pending.length) return;
-      var single = validateSingle(state.pending);
-      if (!single.ok) { showFeedback({ ok:false, level:'wrong', headline:"That group isn't valid:", details:[single.msg] }); return; }
-      state.groups.push({ cells: state.pending.slice(), color: COLORS[state.groups.length % COLORS.length] });
-      state.pending = []; clearFeedback(); renderAll();
-    }
-    function validateSingle(mins) {
-      var n = state.model.numVars, target = state.form === 'POS' ? '0' : '1';
-      var uniq = Array.from(new Set(mins));
-      if (uniq.length & (uniq.length - 1)) return { ok:false, msg:'A group must have 1, 2, 4, 8, … cells (you have ' + uniq.length + ').' };
-      var span = spanningPattern(uniq, n);
-      if (patternMinterms(span, n).length !== uniq.length) return { ok:false, msg:"Those cells don't form a rectangle / valid K-map group." };
-      var bad = uniq.filter(function (mm) { var v = state.model.valueAtMinterm(mm); return v !== target && v !== 'X'; });
-      if (bad.length) return { ok:false, msg:'Group includes ' + (target==='1'?'a 0':'a 1') + ' (minterm ' + bad.join(',') + ').' };
-      return { ok:true };
-    }
-    function removeGroup(i) { state.groups.splice(i, 1); renderAll(); }
-    function resetGroups() { state.pending = []; state.groups = []; clearFeedback(); renderAll(); }
-    function check() {
-      if (!state.groups.length) { showFeedback({ ok:false, level:'wrong', headline:'Make at least one group first.', details:[] }); return; }
-      showFeedback(solver.checkGrouping(state.model, state.groups.map(function (g) { return g.cells; }), state.form));
-    }
-
-    // solve 
+    // solve
     function solve() { state.lastSolve = solver.solve(state.model, state.form); state.selectedCover = 0; renderResults(); renderKmap(); }
     function selectCover(i) { state.selectedCover = i; renderResults(); renderKmap(); }
     function parseExpr() {
@@ -747,42 +597,24 @@
       try {
         var r = ExpressionParser.parse(input, state.model.numVars);
         for (var m = 0; m < (1 << state.model.numVars); m++) state.model.setMinterm(m, r.minterms.has(m) ? '1' : (r.dontCares.has(m) ? 'X' : '0'));
-        resetTransient(); renderAll();
+        resetSolve(); renderAll();
       } catch (e) { errEl.textContent = e.message; errEl.style.display = 'block'; }
     }
-    function clearAll() { state.model.clear(); resetTransient(); document.getElementById('exprInput').value = ''; renderAll(); }
+    function clearAll() { state.model.clear(); resetSolve(); document.getElementById('exprInput').value = ''; renderAll(); }
     function example() {
       var presets = { 2:"A'B + AB'", 3:"A'C + AB' + m(7)", 4:"m(0,1,2,5,6,7,8,9,10,14)",
         5:"m(0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30)", 6:"m(0,1,2,3,8,9,10,11,16,17,18,19)" };
       document.getElementById('exprInput').value = presets[state.model.numVars] || ''; parseExpr();
     }
 
-    // rendering 
+    // rendering
     function renderAll() {
-      renderPrinciples(); renderActionBar(); renderKmap(); renderTruth(); renderPracticeBar(); renderPgroups();
-      if (state.mode === 'solve') { if (state.lastSolve) renderResults(); else clearResults(); }
-      else renderPracticeResults();
+      renderPrinciples(); renderKmap(); renderTruth();
+      if (state.lastSolve) renderResults(); else clearResults();
     }
     function renderPrinciples() {
       var p = solver.principles(state.form), html = '<h3>Goal: minimal ' + state.form + ' — the rules</h3><ul>';
       p.forEach(function (l) { html += '<li>' + l + '</li>'; }); document.getElementById('principles').innerHTML = html + '</ul>';
-    }
-    function renderActionBar() {
-      var bar = document.getElementById('actionBar');
-      bar.innerHTML = state.mode === 'solve'
-        ? '<button class="act" onclick="App.solve()">Solve</button>'
-        : '<button class="act" onclick="App.commitGroup()">Done grouping ✓</button>' +
-          '<button class="act ghost" onclick="App.check()">Check</button>' +
-          '<button class="act ghost" onclick="App.resetGroups()">Reset groups</button>' +
-          '<button class="act ghost" onclick="App.solve()">Show me</button>';
-    }
-    function renderPracticeBar() {
-      var bar = document.getElementById('practiceBar');
-      if (state.mode !== 'practice') { bar.style.display = 'none'; return; }
-      bar.style.display = 'block';
-      bar.innerHTML = '<span class="muted">Practice: click the ' + (state.form === 'POS' ? '0s' : '1s') +
-        ' to build a group, press <b>Done grouping ✓</b>, repeat, then <b>Check</b>. ' +
-        (state.pending.length ? 'Current group: ' + state.pending.length + ' cell(s).' : '') + '</span>';
     }
     function renderKmap() {
       var m = state.model, L = buildLayout(m);
@@ -805,15 +637,13 @@
       html += '</div><div class="kmap-grid" style="' + colTmpl + '">';
       for (var rr = 0; rr < nr; rr++) for (var cc = 0; cc < nc; cc++) {
         var mm = panel.cell(rr, cc), v = m.valueAtMinterm(mm);
-        var pend = state.mode === 'practice' && state.pending.indexOf(mm) !== -1;
-        html += '<div class="kmap-cell minterm-tag v' + v + (pend ? ' pending' : '') + '" data-m="' + mm +
+        html += '<div class="kmap-cell minterm-tag v' + v + '" data-m="' + mm +
                 '" data-submap="' + pi + '" data-sr="' + rr + '" data-sc="' + cc + '" onclick="App.cellClick(' + mm + ')">' + v + '</div>';
       }
       return html + '</div></div></div></div>';
     }
 
     function currentLoopGroups() {
-      if (state.mode === 'practice') return state.groups.map(function (g) { return { minterms: g.cells, color: g.color, literal: '' }; });
       if (state.lastSolve && state.lastSolve.covers.length) {
         var cover = state.lastSolve.covers[state.selectedCover] || [];
         return cover.map(function (g, i) { return { minterms: g.minterms, color: COLORS[i % COLORS.length], literal: g.literal }; });
@@ -858,7 +688,7 @@
 
     function renderTruth() {
       var m = state.model, n = m.numVars, el = document.getElementById('truthTable');
-      var html = '<table class="truth' + (state.mode === 'practice' ? ' locked' : '') + '"><thead><tr><th>#</th>';
+      var html = '<table class="truth"><thead><tr><th>#</th>';
       for (var i = 0; i < n; i++) html += '<th>' + m.varNames[i] + '</th>';
       html += '<th>F</th></tr></thead><tbody>';
       for (var mm = 0; mm < (1 << n); mm++) {
@@ -868,15 +698,6 @@
         html += '<td class="out v' + v + '" onclick="App.truthToggle(' + mm + ')">' + v + '</td></tr>';
       }
       el.innerHTML = html + '</tbody></table>';
-    }
-    function renderPgroups() {
-      var el = document.getElementById('pgroups');
-      if (state.mode !== 'practice' || !state.groups.length) { el.innerHTML = ''; return; }
-      var html = '';
-      state.groups.forEach(function (g, i) {
-        html += '<span class="pg"><span class="swatch" style="border-color:' + g.color + ';background:' + hexA(g.color,.15) + '"></span>Group ' + (i + 1) + ' (' + g.cells.length + ')<button onclick="App.removeGroup(' + i + ')">✕</button></span>';
-      });
-      el.innerHTML = html;
     }
     function renderResults() {
       var res = state.lastSolve; if (!res) { clearResults(); return; }
@@ -897,29 +718,17 @@
       }
       el.innerHTML = html;
     }
-    function renderPracticeResults() {
-      document.getElementById('results').innerHTML = '<h3>Practice</h3><p class="muted">Build your groups on the map, then press <b>Check</b>. Press <b>Show me</b> to reveal the minimal answer.</p>';
-    }
-    function showFeedback(res) {
-      var cls = res.level || (res.ok ? 'correct' : 'wrong');
-      var html = '<h3>Practice</h3><div class="feedback ' + cls + '"><h4>' + res.headline + '</h4>';
-      if (res.details && res.details.length) { html += '<ul>'; res.details.forEach(function (d) { html += '<li>' + d + '</li>'; }); html += '</ul>'; }
-      document.getElementById('results').innerHTML = html + '</div>';
-    }
-    function clearFeedback() { if (state.mode === 'practice') renderPracticeResults(); }
-    function clearResults() { document.getElementById('results').innerHTML = '<h3>Results</h3><p class="muted">Press <b>Solve</b> for the minimal answer, or switch to <b>Practice</b>.</p>'; }
+    function clearResults() { document.getElementById('results').innerHTML = '<h3>Results</h3><p class="muted">Press <b>Solve</b> for the minimal answer.</p>'; }
 
-    // helpers 
+    // helpers
     function uniqSorted(a) { return Array.from(new Set(a)).sort(function (x, y) { return x - y; }); }
     function runs(sorted) { var out = [], cur = []; for (var i = 0; i < sorted.length; i++) { if (!cur.length || sorted[i] === cur[cur.length - 1] + 1) cur.push(sorted[i]); else { out.push(cur); cur = [sorted[i]]; } } if (cur.length) out.push(cur); return out; }
     function cellBy(sub, sr, sc) { return document.querySelector('.kmap-cell[data-submap="' + sub + '"][data-sr="' + sr + '"][data-sc="' + sc + '"]'); }
-    function flashCell(m) { var e = document.querySelector('.kmap-cell[data-m="' + m + '"]'); if (!e) return; var old = e.style.background; e.style.background = '#ffcdd2'; setTimeout(function () { e.style.background = old; }, 180); }
     function hexA(hex, a) { var n = parseInt(hex.replace('#', ''), 16); return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
 
     renderAll();
     window.addEventListener('resize', drawLoops);
-    return { setVars: setVars, setMode: setMode, setForm: setForm, cellClick: cellClick, truthToggle: truthToggle,
-             commitGroup: commitGroup, removeGroup: removeGroup, resetGroups: resetGroups, check: check,
+    return { setVars: setVars, setForm: setForm, cellClick: cellClick, truthToggle: truthToggle,
              solve: solve, selectCover: selectCover, parseExpr: parseExpr, clearAll: clearAll, example: example };
   })();
   </script>

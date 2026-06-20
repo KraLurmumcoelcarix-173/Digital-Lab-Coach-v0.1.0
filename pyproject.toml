@@ -23,3 +23,7 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: long-running Digital.jar integration tests; deselected by default, run with -m slow",
+]

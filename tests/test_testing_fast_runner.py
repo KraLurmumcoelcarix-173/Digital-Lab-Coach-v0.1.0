@@ -178,7 +178,7 @@ def test_loop_expanded_spec_is_fast_safe_and_maps_in_order():
 
 _JAR = os.environ.get("DIGITAL_JAR") or find_digital_jar()
 
-
+@pytest.mark.slow
 @pytest.mark.skipif(_JAR is None, reason="Digital.jar not available")
 def test_fast_equals_cumulative_on_30_bug_circuit():
     """Issue #11 acceptance: fast results == cumulative results."""
@@ -197,7 +197,7 @@ def test_fast_equals_cumulative_on_30_bug_circuit():
         assert [(r.row_index, r.status) for r in fast] == \
                [(r.row_index, r.status) for r in slow]
 
-
+@pytest.mark.slow
 @pytest.mark.skipif(_JAR is None, reason="Digital.jar not available")
 def test_per_row_run_auto_uses_fast_path_on_clean_spec():
     from dlc.testing.spec import extract_test_specs

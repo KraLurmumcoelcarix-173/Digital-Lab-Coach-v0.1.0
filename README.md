@@ -1,4 +1,4 @@
-# Digital Lab Coach (DLC)
+# Digital Lab Coach (DLC) [This is a temp readme]
 
 A hybrid deterministic-checker + LLM feedback tool for student debugging
 in Digital circuit simulator labs. Path 1 (external
@@ -28,7 +28,7 @@ Active development. No release yet.
 | `docs/` | Architecture notes, design decisions, dev log, dev debug guide. 
 | `tests/` | pytest unit tests, one file per source module. 
 
-## Temp Web testing
+## Temp Web testing (Please go over setup first)
 
 The Layer 1 + Layer 2 demo runs as a local web app (since May 2026).
 Open it in a browser, point it at one or more `.dig` files, and
