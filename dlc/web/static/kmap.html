@@ -39,7 +39,8 @@
   .err { color: #c62828; font-size: 13px; margin-top: 6px; display: none; }
 
   .layout { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
-  .col-map { flex: 1; min-width: 340px; }
+  .col-kmap { flex: 0 0 auto; max-width: 100%; overflow-x: auto; }
+  .col-results { flex: 1; min-width: 340px; }
   .col-truth { width: 250px; }
 
   .kmap-wrapper { display: inline-block; }
@@ -51,12 +52,12 @@
   .rowvar { display: flex; align-items: center; margin-right: 4px; margin-top: 22px; }
   .rowvar span { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; font-weight: 700; color: #5c6bc0; }
   .labels-col { display: grid; gap: 4px; margin-right: 6px; }
-  .labels-col span { display:flex; align-items:center; justify-content:center; height: 50px; font-size: 12px; font-weight: 600; color: #6b7280; }
+  .labels-col span { display:flex; align-items:center; justify-content:center; height: var(--cell,50px); font-size: 12px; font-weight: 600; color: #6b7280; }
   .labels-row { display: grid; gap: 4px; margin-bottom: 4px; }
   .labels-row span { display:flex; align-items:center; justify-content:center; height: 22px; font-size: 12px; font-weight: 600; color: #6b7280; }
   .kmap-grid { display: grid; gap: 4px; }
-  .kmap-cell { width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;
-               border: 1px solid #dfe3ec; border-radius: 7px; font-weight: 700; font-size: 17px;
+  .kmap-cell { width: var(--cell,50px); height: var(--cell,50px); display: flex; align-items: center; justify-content: center;
+               border: 1px solid #dfe3ec; border-radius: 7px; font-weight: 700; font-size: calc(var(--cell,50px) * 0.34);
                cursor: pointer; user-select: none; transition: transform .1s; background:#fff; position: relative; z-index: 1;}
   .kmap-cell:hover { transform: scale(1.06); }
   .kmap-cell.v0 { color: #b0b6c3; }
@@ -78,12 +79,13 @@
   .truth-scroll { max-height: 540px; overflow-y: auto; }
 
   #results h3 { margin: 0 0 10px; color: #1a237e; }
-  .answer { font-size: 20px; font-weight: 700; color: #1a237e; padding: 12px; background: #eef1f9; border-radius: 8px; text-align: center; word-break: break-word; }
+  .answer { font-size: 20px; font-weight: 700; color: #1a237e; padding: 12px; background: #eef1f9; border-radius: 8px; text-align: center; word-break: break-word; overflow-wrap: anywhere; }
   .explain { margin: 12px 0 0; padding-left: 0; list-style: none; }
-  .explain li { font-size: 13px; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; display:flex; gap:8px; align-items:center;}
-  .swatch { width: 14px; height: 14px; border-radius: 4px; border: 2px solid; flex: none; }
+  .explain li { font-size: 13px; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; display:flex; gap:8px; align-items:flex-start;}
+  .explain .etext { min-width: 0; overflow-wrap: anywhere; }
+  .swatch { width: 14px; height: 14px; border-radius: 4px; border: 2px solid; flex: none; margin-top: 2px; }
   .covers { margin-top: 12px; }
-  .covers .chip { display:inline-block; padding: 5px 10px; margin: 3px; border-radius: 7px; background:#f0f2f8; cursor:pointer; font-size: 13px; border: 1px solid transparent;}
+  .covers .chip { display:inline-block; max-width:100%; padding: 5px 10px; margin: 3px; border-radius: 7px; background:#f0f2f8; cursor:pointer; font-size: 13px; border: 1px solid transparent; overflow-wrap: anywhere; word-break: break-word; vertical-align: top;}
   .covers .chip.active { border-color:#1a237e; background:#e8eaf6; }
   .muted { color:#8a94a6; font-style: italic; }
 </style>
@@ -120,14 +122,14 @@
   </div>
 
   <div class="layout">
-    <div class="card col-map">
+    <div class="card col-kmap">
       <div class="kmap-wrapper" id="kmapWrapper"></div>
     </div>
     <div class="card col-truth">
       <h3 style="margin:0 0 8px; color:#1a237e; font-size:15px;">Truth table</h3>
       <div class="truth-scroll" id="truthTable"></div>
     </div>
-    <div class="card col-map" id="results" style="min-width:300px;">
+    <div class="card col-results" id="results">
       <h3>Results</h3>
       <p class="muted">Press <b>Solve</b> for the minimal answer.</p>
     </div>
@@ -205,7 +207,7 @@
     return lits.length === 0 ? "0" : "(" + lits.join("+") + ")";
   }
 
-  // model
+  // model 
 
   function KMapModel(numVars) {
     if (numVars < 2 || numVars > 6) {
@@ -277,7 +279,7 @@
   KMapModel.prototype.toggleMinterm = function (m) { var rc = this.mintermToCell(m); this.toggleCell(rc[0], rc[1]); };
   KMapModel.prototype.setMinterm = function (m, v) { var rc = this.mintermToCell(m); this.setCellValue(rc[0], rc[1], v); };
 
-  // expression parser (SOP text -> minterms) 
+  // -expression parser (SOP text -> minterms) 
 
   var ExpressionParser = {
     parse: function (expression, numVars) {
@@ -434,6 +436,7 @@
     }
     var self = this;
     var pis = this.primeImplicants(allowed, n).map(function (p) { return self._group(p.pattern, model, mode); });
+    // keep only PIs that actually cover a required cell (drop all-don't-care loops)
     var reqSet = new Set(required);
     var useful = pis.filter(function (g) { return g.minterms.some(function (mm) { return reqSet.has(mm); }); });
 
@@ -547,7 +550,7 @@
     var solver = new KMapSolver();
     var state = { model: new KMapModel(4), form: 'SOP', lastSolve: null, selectedCover: 0 };
 
-    // layout
+    // layout: single map for n<=4, stacked 4-var maps for n=5,6 
     function grayN(bits) { var out = [], n = 1 << bits; for (var i = 0; i < n; i++) { var g = i ^ (i >> 1); out.push(g.toString(2).padStart(bits, '0')); } return out; }
     function buildLayout(m) {
       var n = m.numVars;
@@ -571,7 +574,7 @@
           cell: function (sr, sc) { return (selVal << 4) | (parseInt(g2[sr], 2) << 2) | parseInt(g2[sc], 2); }
         };
       });
-      return { panels: panels, perRow: 2 };
+      return { panels: panels, perRow: 1 };
     }
 
     // setup 
@@ -588,7 +591,7 @@
     function cellClick(m) { state.model.toggleMinterm(m); resetSolve(); renderAll(); }
     function truthToggle(m) { state.model.toggleMinterm(m); resetSolve(); renderAll(); }
 
-    // solve
+    // solve 
     function solve() { state.lastSolve = solver.solve(state.model, state.form); state.selectedCover = 0; renderResults(); renderKmap(); }
     function selectCover(i) { state.selectedCover = i; renderResults(); renderKmap(); }
     function parseExpr() {
@@ -607,7 +610,7 @@
       document.getElementById('exprInput').value = presets[state.model.numVars] || ''; parseExpr();
     }
 
-    // rendering
+    // rendering 
     function renderAll() {
       renderPrinciples(); renderKmap(); renderTruth();
       if (state.lastSolve) renderResults(); else clearResults();
@@ -618,19 +621,20 @@
     }
     function renderKmap() {
       var m = state.model, L = buildLayout(m);
-      var html = '<div class="panels" id="panels" style="grid-template-columns:repeat(' + L.perRow + ',auto);">';
+      var cell = m.numVars >= 5 ? 40 : 50;   // shrink cells for the bigger 5/6-var maps
+      var html = '<div class="panels" id="panels" style="--cell:' + cell + 'px;grid-template-columns:repeat(' + L.perRow + ',auto);">';
       L.panels.forEach(function (panel, pi) { html += renderPanel(panel, pi, m); });
       html += '<div class="loop-layer" id="loopLayer"></div></div>';
       document.getElementById('kmapWrapper').innerHTML = html;
       drawLoops();
     }
     function renderPanel(panel, pi, m) {
-      var nr = panel.rowLabels.length, nc = panel.colLabels.length, colTmpl = 'grid-template-columns:repeat(' + nc + ',50px);';
+      var nr = panel.rowLabels.length, nc = panel.colLabels.length, colTmpl = 'grid-template-columns:repeat(' + nc + ',var(--cell,50px));';
       var html = '<div class="panel">';
       if (panel.title) html += '<div class="panel-title">' + panel.title + '</div>';
       html += '<div class="axis-top" style="margin-left:62px;">' + panel.colVarName + '</div>';
       html += '<div class="grid-with-labels"><div class="rowvar"><span>' + panel.rowVarName + '</span></div>';
-      html += '<div class="labels-col" style="grid-template-rows:repeat(' + nr + ',50px); margin-top:24px;">';
+      html += '<div class="labels-col" style="grid-template-rows:repeat(' + nr + ',var(--cell,50px)); margin-top:24px;">';
       for (var r = 0; r < nr; r++) html += '<span>' + panel.rowLabels[r] + '</span>';
       html += '</div><div><div class="labels-row" style="' + colTmpl + '">';
       for (var c = 0; c < nc; c++) html += '<span>' + panel.colLabels[c] + '</span>';
@@ -708,7 +712,8 @@
       cover.forEach(function (g, i) {
         var col = COLORS[i % COLORS.length];
         var varies = g.pattern.map(function (bb, k) { return bb === null ? state.model.varNames[k] : null; }).filter(Boolean);
-        html += '<li><span class="swatch" style="border-color:' + col + ';background:' + hexA(col,.15) + '"></span><span><b>' + g.literal + '</b> — covers {' + g.minterms.join(',') + '}, size ' + g.size + (varies.length ? ' (' + varies.join(',') + ' vary)' : '') + '</span></li>';
+        var ms = g.minterms, msStr = ms.length > 10 ? (ms.slice(0, 8).join(',') + ',…') : ms.join(',');
+        html += '<li><span class="swatch" style="border-color:' + col + ';background:' + hexA(col,.15) + '"></span><span class="etext"><b>' + g.literal + '</b> — covers {' + msStr + '}, size ' + g.size + (varies.length ? ' (' + varies.join(',') + ' vary)' : '') + '</span></li>';
       });
       html += '</ul>';
       if (res.covers.length > 1) {
