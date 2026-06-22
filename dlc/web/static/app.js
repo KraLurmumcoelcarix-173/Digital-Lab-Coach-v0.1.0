@@ -230,7 +230,7 @@ function resetDashboard() {
   libraryGridEl.innerHTML = `<div class="muted">Load a circuit on the Dashboard tab to populate the library.</div>`;
   l2LibraryFilename = null;
   goalTextarea.value = "";
-  goalCountEl.textContent = "0 words";
+  goalCountEl.textContent = "0 / 500 characters";
   l2LlmStatus.textContent = "";
   l2LlmOutput.innerHTML = "";
   l2LlmOutput.classList.add("empty");
@@ -1545,9 +1545,9 @@ function renderTruthTable(rows) {
 }
 
 goalTextarea.addEventListener("input", () => {
-  const words = (goalTextarea.value.trim().match(/\S+/g) || []).length;
-  goalCountEl.textContent = `${words} word${words === 1 ? "" : "s"}`;
-  goalCountEl.style.color = words > 200 ? "#b91c1c" : "";
+  const chars = goalTextarea.value.length;
+  goalCountEl.textContent = `${chars} / 500 characters`;
+  goalCountEl.style.color = chars >= 500 ? "#b91c1c" : "";
 });
 
 l2LlmBtn.addEventListener("click", async () => {
@@ -1564,9 +1564,8 @@ l2LlmBtn.addEventListener("click", async () => {
   }
 
   const goal = goalTextarea.value.trim();
-  const words = (goal.match(/\S+/g) || []).length;
-  if (words > 200) {
-    l2LlmStatus.textContent = "Goal too long (200 word max).";
+  if (goal.length > 500) {
+    l2LlmStatus.textContent = "Goal too long (500 character max).";
     l2LlmStatus.className = "l2-llm-status error";
     return;
   }
