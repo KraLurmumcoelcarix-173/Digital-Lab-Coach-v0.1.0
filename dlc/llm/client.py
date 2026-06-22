@@ -104,6 +104,17 @@ def model_provider(model: str) -> str | None:
     info = MODEL_CATALOG.get(model)
     return info["provider"] if info else None
 
+def _friendly_error(exc, provider: str) -> str:
+    """Network/connection failures get a clear message; everything else passes through."""
+    if exc is None:
+        return "Error"
+    blob = f"{type(exc).__name__} {exc}".lower()
+    if any(s in blob for s in ("connection", "timeout", "getaddrinfo", "network",
+                               "name resolution", "temporary failure", "ssl",
+                               "max retries", "failed to establish")):
+        return (f"Couldn't reach {provider} - check your internet connection "
+                f"(a firewall or proxy may also be blocking it).")
+    return f"{type(exc).__name__}: {exc}"
 
 def _call_anthropic(prompt, model, key, max_tokens, system) -> dict:
     if not _ANTHROPIC_AVAILABLE:
@@ -135,7 +146,7 @@ def _call_anthropic(prompt, model, key, max_tokens, system) -> dict:
                 continue
             break
     return {"ok": False, "text": None,
-            "error": f"{type(last_err).__name__ if last_err else 'Error'}: {last_err}",
+            "error": _friendly_error(last_err, "Anthropic"),
             "usage": None, "model": model}
 
 
@@ -189,7 +200,7 @@ def _call_openai(prompt, model, key, max_tokens, system) -> dict:
                 continue
             break
     return {"ok": False, "text": None,
-            "error": f"{type(last_err).__name__ if last_err else 'Error'}: {last_err}",
+            "error": _friendly_error(last_err, "OpenAI"),
             "usage": None, "model": model}
 
 
