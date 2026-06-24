@@ -1,5 +1,7 @@
 # Layer 2 evaluation harness
 
+> Notice that as long as the way layer 2 works does not change, evaluator does not need to be read through by developers or users
+
 Two scripts. **Neither runs on import** — Configure, then invoke explicitly.
 All outputs go to `config.OUTPUT_DIR` (default `~/dlc_benchmark_out`, overridable
 with `$DLC_BENCH_OUT`) — **outside the repo, IRB-safe**. 

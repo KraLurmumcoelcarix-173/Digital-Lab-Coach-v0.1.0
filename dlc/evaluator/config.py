@@ -20,7 +20,7 @@ BENCH_MODELS = [
     "gpt-5",
 ]
 
-BENCH_GRADER = "claude-opus-4-8"
+BENCH_GRADER = "claude-haiku-4-5-20251001"
 
 MODEL_PRICES = {
     "claude-haiku-4-5-20251001": (1.0, 5.0),
@@ -41,7 +41,7 @@ MODEL_PRICES = {
 # git); absolute paths are fine.
 BENCH_CIRCUITS = [
     ("data/sample_circuits/tier3_realistic/bool_unit.dig",
-     "A boolean logic unit: outputs the bitwise AND, OR, or XOR of A and B, chosen by an op-select input.",
+     "A boolean logic unit: outputs the bitwise AND, OR of A and B, chosen by an op-select input.",
      "A 4-bit ripple-carry adder: sums A and B and raises a carry-out flag on overflow.",),
     ("data/sample_circuits/tier3_realistic/pipelined_adder_correct.dig",
      "A two-stage pipelined adder: registers A and B on one clock edge and presents their sum on the next.",
