@@ -1,6 +1,6 @@
 # Digital Notes
 
-Last updated: 2026/5/23
+Last updated: 2026/6/25
 
 ---
 
@@ -220,12 +220,7 @@ verified empirically:
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 
-1. **Splitter bit-range parsing** — `"25-31, 24-20, …"` strings are stored as raw text. F3/F6 prerequisite. [done]
-2. **Cycle filtering for clocked feedback** — `simple_cycles(g)` finds all cycles, including legitimate Register feedback through Clock. F8 needs to subtract cycles passing through a clocked element.
-3. **Stable component IDs across edits** — currently `enumerate(components)` index; will need content-hash or position-hash for diff reports.
 
 ## Open Questions under investigation
 
-- How does Digital handle missing subcircuit files? (Investigating)
-- Does Digital's CLI mode produce structured output (JSON?) or only human-readable text? [done]
 - Where exactly does Java plugin API expose hooks for adding analysis panels? (Path 3 question, defer investigation)
