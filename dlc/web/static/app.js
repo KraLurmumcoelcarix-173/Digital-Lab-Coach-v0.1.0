@@ -1551,8 +1551,11 @@ function renderCardDetail(card) {
   const behaviour = extra.behavior_example
     ? `<h4>Example behavior</h4><div class="behavior">${escapeHtml(extra.behavior_example)}</div>`
     : "";
-  const note = card.transistor_note
+  const note = (card.transistor_note && !String(card.transistor_note).startsWith("N/A"))
     ? `<p class="muted" style="font-size:11.5px;">${escapeHtml(card.transistor_note)}</p>`
+    : "";
+  const tcount = (card.transistor_count && !String(card.transistor_count).startsWith("N/A"))
+    ? `<span>transistors: ${escapeHtml(card.transistor_count)}</span>`
     : "";
   return `
     <div class="cardflip">
