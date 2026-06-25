@@ -1514,7 +1514,7 @@ const REAL_CAPTIONS = {
   "adder.png": "Outputs the sum of two binary numbers",
   "and.png": "Two switches in series — on only when both are closed",
   "barrel_shifter.png": "Shifts bits left/right by a chosen amount at once (logical/arithmetic)",
-  "bit_extender.wpng": "Widens a value while keeping its sign",
+  "bit_extender.png": "Widens a value while keeping its sign",
   "clock.png": "Electronic logic signal (voltage or current) which oscillates between a high and a low state at a constant frequency",
   "comparator.png": "Says whether A is less than, equal to, or greater than B",
   "const.png": "A hard-wired number",
