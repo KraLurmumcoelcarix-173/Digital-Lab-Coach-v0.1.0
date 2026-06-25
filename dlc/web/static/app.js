@@ -1451,6 +1451,22 @@ function openCardDetail(card, { pinned = false } = {}) {
   cardDetail.innerHTML =
     `<button class="card-close" type="button" aria-label="Close">&times;</button>` +
     renderCardDetail(card);
+  const flip = cardDetail.querySelector(".cardflip");
+  if (flip) {
+    const real = flip.querySelector(".cf-realimg");
+    const noReal = () => flip.classList.add("no-real");
+    if (!real) {
+      noReal();
+    } else {
+      if (real.complete && real.naturalWidth === 0) noReal();
+      real.addEventListener("error", noReal);
+      real.addEventListener("load", () => { if (real.naturalWidth === 0) noReal(); });
+    }
+    flip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (!flip.classList.contains("no-real")) flip.classList.toggle("flipped");
+    });
+  }
   cardOverlay.classList.remove("hidden");
   cardOverlay.classList.toggle("preview", !pinned); 
   if (pinned) cardDetail.focus({ preventScroll: true });
@@ -1491,6 +1507,39 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// Real-world analog shown on the flipped (back) side of each component card.
+// Keyed by the Digital image filename. Edit the text freely; the real-world
+// photo must live at /static/images/components_real/<same filename>.
+const REAL_CAPTIONS = {
+  "adder.png": "Like a cash register tallying two amounts — outputs the sum of two binary numbers",
+  "and.png": "Two switches in series — on only when both are closed",
+  "barrel_shifter.png": "A conveyor that slides items N slots — shifts bits left/right by a chosen amount at once",
+  "bit_extender.wpng": "Padding a number like writing 7 as 007 — widens a value while keeping its sign.",
+  "clock.png": "A metronome / heartbeat — a steady tick that paces every synchronous part.",
+  "comparator.png": "A balance scale — says whether A is less than, equal to, or greater than B.",
+  "const.png": "A fixed dip-switch setting — always outputs the same hard-wired number.",
+  "decoder.png": "A mailbox row where one slot opens per address — turns a code into one active output.",
+  "ground.png": "The 0-volt rail / ground prong — the logic-0 reference.",
+  "in.png": "A toggle switch or sensor — a value supplied from outside the circuit.",
+  "mux.png": "A rotary selector / TV input switch — routes one of several inputs out, chosen by a dial.",
+  "nand.png": "The universal gate (a 7400 chip) — AND then NOT; any logic can be built from these.",
+  "nor.png": "OR then NOT (a 7402 chip) — on only when every input is off.",
+  "not.png": "A switch that flips the state — outputs the opposite of its input.",
+  "or.png": "Two switches in parallel (a stairway light) — on if either is closed.",
+  "out.png": "An LED or display pin — a value leaving the circuit.",
+  "priority_encoder.png": "A dispatch board reporting the top active line — outputs the index of the highest active input.",
+  "register.png": "A whiteboard that holds a value until overwritten (flip-flops) — stores data across clock cycles.",
+  "rom.png": "A printed lookup table / music-box drum — returns a fixed stored word for each address.",
+  "seven_seg.png": "A digital-clock digit — lights segments to display a number.",
+  "splitter.png": "A cable breakout / power-strip tap — splits a bus into bits or merges bits into a bus.",
+  "subcircuit.png": "A reusable IC you drop onto a board — a smaller circuit packaged as one block.",
+  "tunnel.png": "A labeled wire that teleports to the same label elsewhere — connects nets by name.",
+  "vdd.png": "The +V power rail / live prong — the logic-1 reference.",
+  "xnor.png": "An equality checker — on when both inputs match.",
+  "xor.png": "A staircase light where either switch toggles it — on when inputs differ.",
+};
+
+
 function renderCardDetail(card) {
   const extra = card.extra || {};
   const truth2 = (extra.truth_table_2 || []).length
@@ -1506,10 +1555,21 @@ function renderCardDetail(card) {
     ? `<p class="muted" style="font-size:11.5px;">${escapeHtml(card.transistor_note)}</p>`
     : "";
   return `
-    <div>
-      <img class="detail-img" src="/static/images/components/${escapeHtml(card.image)}"
-           alt="${escapeHtml(card.display_name)}"
-           onerror="this.onerror=null;this.src='/static/images/components/placeholder.png';" />
+    <div class="cardflip">
+      <div class="cardflip-inner">
+        <div class="cardflip-face cardflip-front">
+          <img class="detail-img" src="/static/images/components/${escapeHtml(card.image)}"
+               alt="${escapeHtml(card.display_name)}"
+               onerror="this.onerror=null;this.src='/static/images/components/placeholder.png';" />
+          <div class="cf-hint">hover or tap to see it in the real world</div>
+        </div>
+        <div class="cardflip-face cardflip-back">
+          <img class="detail-img cf-realimg"
+               src="/static/images/components_real/${escapeHtml(card.image)}"
+               alt="${escapeHtml(card.display_name)} in the real world" />
+          <div class="cf-callout"><span class="cf-dot"></span><span class="cf-line"></span><span class="cf-text">${escapeHtml(REAL_CAPTIONS[card.image] || "")}</span></div>
+        </div>
+      </div>
     </div>
     <div>
       <div class="detail-head">

@@ -746,8 +746,8 @@ main {
   transition: transform 0.12s, box-shadow 0.12s;
 }
 .library-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  transform: translateY(-4px) scale(1.04);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
   border-color: var(--accent);
 }
 .library-card img {
@@ -787,6 +787,32 @@ main {
   padding: 24px;
 }
 .card-overlay.hidden { display: none; }
+
+
+/* ---- L2 component flip card: Digital look <-> real-world ---- */
+.cardflip { perspective: 1100px; width: 240px; flex: none; }
+.cardflip-inner {
+  position: relative; width: 100%; min-height: 210px;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(.2, .7, .2, 1);
+}
+.cardflip:hover .cardflip-inner,
+.cardflip.flipped .cardflip-inner { transform: rotateY(180deg); }
+.cardflip.no-real:hover .cardflip-inner,
+.cardflip.no-real.flipped .cardflip-inner { transform: none; }
+.cardflip-face {
+  position: absolute; inset: 0;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+}
+.cardflip-back { transform: rotateY(180deg); }
+.cardflip-face img.detail-img { max-width: 210px; max-height: 140px; object-fit: contain; }
+.cardflip .cf-hint { font-size: 11px; color: var(--muted); font-style: italic; text-align: center; }
+.cardflip.no-real .cf-hint { visibility: hidden; }
+.cf-callout { display: flex; align-items: center; gap: 6px; max-width: 220px; }
+.cf-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
+.cf-line { width: 24px; border-top: 2px dashed var(--accent); flex: none; }
+.cf-text { font-size: 12px; line-height: 1.4; }
 
 .card-overlay.preview {
   background: transparent;
