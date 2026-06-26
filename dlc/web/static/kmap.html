@@ -42,7 +42,7 @@
   .col-kmap { flex: 0 0 auto; max-width: 100%; overflow-x: auto; }
   .col-rstack { flex: 1; min-width: 340px; display: flex; flex-direction: column; gap: 14px; align-self: flex-start; }
   .col-rstack .card { margin-bottom: 0; }
-  .col-truth { width: 250px; }
+  .col-truth { width: 250px; display: flex; flex-direction: column; }
 
   .kmap-wrapper { display: inline-block; }
   .panels { position: relative; display: grid; gap: 26px; justify-content: start; }
@@ -79,7 +79,7 @@
   table.truth td.out.v1 { background:#f1f8f1; color:#2e7d32; }
   table.truth td.out.vX { background:#fff7ec; color:#ef6c00; }
   table.truth td.out.v0 { color:#b0b6c3; }
-  .truth-scroll { max-height: 540px; overflow-y: auto; }
+  .truth-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
   #results h3 { margin: 0 0 10px; color: #1a237e; }
   .answer { font-size: 20px; font-weight: 700; color: #1a237e; padding: 12px; background: #eef1f9; border-radius: 8px; text-align: center; word-break: break-word; overflow-wrap: anywhere; }
