@@ -1257,6 +1257,7 @@ function populateModelSelect(defaultModel) {
 const GRADER_DEFAULT = "claude-sonnet-4-6";
 function populateGraderSelect() {
   if (!graderSelect) return;
+  const offered = modelCatalog.filter((m) => PRODUCTION_MODELS.includes(m.id));
   const byProvider = {};
   for (const m of modelCatalog) {
     (byProvider[m.provider] = byProvider[m.provider] || []).push(m);
@@ -1274,7 +1275,7 @@ function populateGraderSelect() {
     html += `</optgroup>`;
   }
   graderSelect.innerHTML = html;
-  const enabled = modelCatalog.filter((m) => m.key_configured).map((m) => m.id);
+  const enabled = offered.filter((m) => m.key_configured).map((m) => m.id);
   if (enabled.includes(previous)) graderSelect.value = previous;
   else if (enabled.includes(GRADER_DEFAULT)) graderSelect.value = GRADER_DEFAULT;
   else if (enabled.length > 0) graderSelect.value = enabled[0];
