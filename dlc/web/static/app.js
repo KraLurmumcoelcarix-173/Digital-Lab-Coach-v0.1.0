@@ -1507,30 +1507,28 @@ window.addEventListener("keydown", (e) => {
 // Real-world analog shown on the flipped (back) side of each component card.
 // Keyed by the Digital image filename. Edit the text freely; the real-world
 // photo must live at /static/images/components_real/<same filename>.
+// Components with no real-world analog: show only the Digital glyph —
+// no flip, no "try hover/tap", no back face.
+const NO_REAL_IMAGE = new Set([
+  "bit_extender.png", "decoder.png", "in.png", "out.png", "register.png",
+  "seven_seg.png", "splitter.png", "subcircuit.png", "tunnel.png",
+]);
+
 const REAL_CAPTIONS = {
   "adder.png": "Outputs the sum of two binary numbers",
   "and.png": "Two switches in series — on only when both are closed",
   "barrel_shifter.png": "Shifts bits left/right by a chosen amount at once (logical/arithmetic)",
-  "bit_extender.png": "Widens a value while keeping its sign",
   "clock.png": "Electronic logic signal (voltage or current) which oscillates between a high and a low state at a constant frequency",
   "comparator.png": "Says whether A is less than, equal to, or greater than B",
   "const.png": "A hard-wired number",
-  "decoder.png": "A combinational logic circuit that converts binary information from the n coded inputs to a maximum of 2^n unique outputs",
   "ground.png": "Logic-0 reference",
-  "in.png": "Value supplied from outside the circuit",
   "mux.png": "Routes one of several inputs out, chosen by a signal.",
   "nand.png": "(4049 CMOS)The universal gate — AND then NOT; any logic can be built from these",
   "nor.png": "(4049 CMOS) OR then NOT — on only when every input is off",
   "not.png": "Outputs the opposite of its input",
   "or.png": "Two switches in parallel, on if either is closed",
-  "out.png": "A value leaving the combinational circuit",
   "priority_encoder.png": "Outputs the index of the highest active input",
-  "register.png": "A whiteboard that holds a value until overwritten (flip-flops) — stores data across clock cycles",
   "rom.png": "A printed lookup table / Read-Only-Memory — returns a fixed stored word for each address",
-  "seven_seg.png": "lights segments to display a number",
-  "splitter.png": "Splits a bus into bits or merges bits into a bus",
-  "subcircuit.png": "A reusable IC you drop onto a board",
-  "tunnel.png": "A labeled wire that teleports to the same label elsewhere",
   "vdd.png": "The logic-1 reference",
   "xnor.png": "On when both inputs match (2)",
   "xor.png": "On when inputs differ (2)",
@@ -1554,13 +1552,20 @@ function renderCardDetail(card) {
   const tcount = (card.transistor_count && !String(card.transistor_count).startsWith("N/A"))
     ? `<span>transistors: ${escapeHtml(card.transistor_count)}</span>`
     : "";
-  return `
-    <div class="cardflip">
+
+  const frontImg =
+    `<img class="detail-img" src="/static/images/components/${escapeHtml(card.image)}"
+          alt="${escapeHtml(card.display_name)}"
+          onerror="this.onerror=null;this.src='/static/images/components/placeholder.png';" />`;
+
+  const imgBlock = NO_REAL_IMAGE.has(card.image)
+    ? `<div class="cardflip no-real"><div class="cardflip-inner">
+         <div class="cardflip-face cardflip-front">${frontImg}</div>
+       </div></div>`
+    : `<div class="cardflip">
       <div class="cardflip-inner">
         <div class="cardflip-face cardflip-front">
-          <img class="detail-img" src="/static/images/components/${escapeHtml(card.image)}"
-               alt="${escapeHtml(card.display_name)}"
-               onerror="this.onerror=null;this.src='/static/images/components/placeholder.png';" />
+          ${frontImg}
           <div class="cf-hint">Try hover or tap</div>
         </div>
         <div class="cardflip-face cardflip-back">
@@ -1570,7 +1575,10 @@ function renderCardDetail(card) {
           <div class="cf-callout"><span class="cf-dot"></span><span class="cf-line"></span><span class="cf-text">${escapeHtml(REAL_CAPTIONS[card.image] || "")}</span></div>
         </div>
       </div>
-    </div>
+    </div>`;
+
+  return `
+    ${imgBlock}
     <div>
       <div class="detail-head">
         <div class="detail-name">${escapeHtml(card.display_name)}</div>
