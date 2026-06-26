@@ -86,6 +86,12 @@ Digital's coordinate system: x increases rightward, y increases downward. Anchor
 - Gate multi-input attribute is `Inputs` (`<int>`), absent = 2.
 - Gate anchor = TOP input pin, not center.
 - For `wideShape=True` with even `N≥4`, the input column has a 40-unit gap in the middle (so the output sits centered between the halves).
+- **Negated inputs (`inverterConfig`)**: a gate may carry `<inverterConfig>`
+  listing input pin names (`In_1`, `In_2`, …) that are inverted (a bubble on
+  that specific input). It changes the gate's logic and its visual state — e.g.
+  `add-sub.dig` uses an `And` with `In_1`/`In_2` negated. Parsed and kept
+  in `attributes`; the future Layer-1 simulator must apply the per-input
+  negation.
 
 ### Wires
 
