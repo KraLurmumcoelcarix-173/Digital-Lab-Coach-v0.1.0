@@ -1254,7 +1254,7 @@ function populateGraderSelect() {
   if (!graderSelect) return;
   const offered = modelCatalog.filter((m) => PRODUCTION_MODELS.includes(m.id));
   const byProvider = {};
-  for (const m of modelCatalog) {
+  for (const m of offered) {
     (byProvider[m.provider] = byProvider[m.provider] || []).push(m);
   }
   const previous = graderSelect.value;
@@ -1701,8 +1701,8 @@ l2LlmBtn.addEventListener("click", async () => {
     if (err.name === "AbortError") {
       // Stopped during summarization -> grader was never triggered, so the
       // grade panel stays untouched; show a red "Stopped" on the summary.
-      l2LlmStatus.textContent = "Stopped.";
-      l2LlmStatus.className = "l2-llm-status error";
+      l2LlmStatus.textContent = "";
+      l2LlmStatus.className = "l2-llm-status";
       l2LlmOutput.classList.remove("empty");
       l2LlmOutput.innerHTML = `<div style="color:#dc2626;font-weight:600;">Stopped.</div>`;
       return;

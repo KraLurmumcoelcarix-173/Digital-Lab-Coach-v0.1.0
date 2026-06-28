@@ -149,6 +149,12 @@ def _compact_facts(facts: dict) -> dict:
              "rows_sample": (t.get("rows_sample") or [])[:20]}
             for t in facts.get("testcases", [])
         ],
+        "inverted_inputs": [
+            {"component": c.get("display_name") or c.get("element_name"),
+             "pins": c.get("inverted_inputs")}
+            for c in facts.get("components", [])
+            if c.get("inverted_inputs")
+        ],
         "selectors": _selector_facts(facts),
     }
 

@@ -47,6 +47,7 @@ from dlc.testing.runner import (
 )
 
 from dlc.web.component_kb import library_for_inventory
+from dlc.parser.pin_geometry import inverted_input_names
 
 from dlc.testing.spec import extract_test_specs
 from dlc.web.graph_export import circuit_summary, to_cytoscape
@@ -760,7 +761,13 @@ def get_library(session_id: str, filename: str) -> dict:
             status_code=400,
             detail=f"Could not load circuit: {type(exc).__name__}: {exc}",
         )
-    cards = library_for_inventory(summary.get("inventory", {}))
+    # Count each inverter bubble (a gate's inverterConfig input) as an inverter
+    # in the LIBRARY only, so the NOT card appears / its count includes bubbles.
+    inv = dict(summary.get("inventory", {}))
+    n_bubbles = sum(len(inverted_input_names(c)) for c in circuit.components)
+    if n_bubbles:
+        inv["Not"] = inv.get("Not", 0) + n_bubbles
+    cards = library_for_inventory(inv)
     return {"cards": cards, "filename": filename}
 
 @app.post("/api/llm/explain")
