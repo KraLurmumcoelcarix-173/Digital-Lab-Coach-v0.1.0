@@ -25,6 +25,7 @@ class PinSpec:
     offset_x: int
     offset_y: int
     direction: str  
+    inverted: bool = False   # gate input carrying an inverter bubble (inverterConfig)
 
 _NOT_PINS = [
     PinSpec("A", offset_x=0,  offset_y=0, direction="in"),
@@ -92,6 +93,28 @@ STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
     "Seven-Seg": _SEVEN_SEG_PINS,
 }
 
+_NARY_GATE_ELEMENTS = frozenset({"And", "Or", "XOr", "NAnd", "NOr", "XNOr"})
+
+def inverted_input_names(comp: Component) -> list[str]:
+    """Gate input pin names (in0, in1, …) that carry an inverter bubble.
+
+    Digital stores them 1-indexed in `inverterConfig` as In_1, In_2, …; we
+    return the 0-indexed pin names the rest of the pipeline uses. Empty for
+    non-gates or gates without the attribute.
+    """
+    if comp.element_name not in _NARY_GATE_ELEMENTS:
+        return []
+    names: list[str] = []
+    for raw in (comp.attributes.get("inverterConfig") or []):
+        if isinstance(raw, str) and raw.startswith("In_"):
+            try:
+                idx = int(raw[3:]) - 1
+            except ValueError:
+                continue
+            if idx >= 0:
+                names.append(f"in{idx}")
+    return names
+
 def _nary_gate_pins(comp: Component) -> list[PinSpec]:
     """
     Boolean gate (And/Or/XOr/NAnd/NOr/XNOr) with N inputs.
@@ -116,14 +139,7 @@ def _nary_gate_pins(comp: Component) -> list[PinSpec]:
     """
     n = int(comp.attributes.get("Inputs", 2))
     wide = bool(comp.attributes.get("wideShape", False))
-    inverter_list = comp.attributes.get("inverterConfig") or []
-    inverted_idxs = set()
-    for name in inverter_list:
-        if isinstance(name, str) and name.startswith("In_"):
-            try:
-                inverted_idxs.add(int(name[3:]) - 1)
-            except ValueError:
-                pass
+    inverted_idxs = {int(nm[2:]) for nm in inverted_input_names(comp)}
     pins: list[PinSpec] = []
 
     def _input_x(i: int) -> int:
@@ -133,7 +149,8 @@ def _nary_gate_pins(comp: Component) -> list[PinSpec]:
         half = n // 2
         for i in range(half):
             pins.append(
-                PinSpec(f"in{i}", offset_x=_input_x(i), offset_y=i * 20, direction="in")
+                PinSpec(f"in{i}", offset_x=_input_x(i), offset_y=i * 20,
+                        direction="in", inverted=(i in inverted_idxs))
             )
         bottom_start = (half - 1) * 20 + 40
         for i in range(half):
@@ -144,6 +161,7 @@ def _nary_gate_pins(comp: Component) -> list[PinSpec]:
                     offset_x=_input_x(idx),
                     offset_y=bottom_start + i * 20,
                     direction="in",
+                    inverted=(idx in inverted_idxs),
                 )
             )
         center_y = ((half - 1) * 20 + bottom_start) // 2
@@ -151,7 +169,8 @@ def _nary_gate_pins(comp: Component) -> list[PinSpec]:
     else:
         for i in range(n):
             pins.append(
-                PinSpec(f"in{i}", offset_x=_input_x(i), offset_y=i * 20, direction="in")
+                PinSpec(f"in{i}", offset_x=_input_x(i), offset_y=i * 20,
+                        direction="in", inverted=(i in inverted_idxs))
             )
         center_y = ((n - 1) * 20) // 2
     pins.append(PinSpec("Y", offset_x=80, offset_y=center_y, direction="out"))
