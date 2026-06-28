@@ -32,6 +32,7 @@ from dlc.parser.netlist import NetList, Net, Pin, build_netlist
 from dlc.parser.graph import build_signal_graph
 from dlc.facts.net_width import infer_net_widths, NetWidthInfo, WidthConflict
 from dlc.facts.width import pin_width
+from dlc.parser.pin_geometry import inverted_input_names
 
 
 _CLOCKED_ELEMENTS = frozenset({
@@ -63,6 +64,7 @@ class ComponentFact:
     bit_width: int | None
     predecessors: list[int]
     successors: list[int]
+    inverted_inputs: list[str] = field(default_factory=list)  # gate pins with an inverter bubble
 
 
 @dataclass
@@ -241,6 +243,7 @@ def _component_facts(circuit: Circuit, graph: nx.MultiDiGraph) -> list[Component
             bit_width=_component_bit_width(comp),
             predecessors=preds,
             successors=succs,
+            inverted_inputs=inverted_input_names(comp),
         ))
     return out
 
