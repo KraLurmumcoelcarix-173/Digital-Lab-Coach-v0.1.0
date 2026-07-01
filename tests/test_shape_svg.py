@@ -74,10 +74,27 @@ def test_splitter_comb_labels_bit_ranges():
     assert "0-3" in svg and "4-7" in svg   # per-group bit-range labels
 
 
-def test_undecorated_parts_fall_back_to_default():
-    assert shape_for(_c("In"), "io-in") is None
-    assert shape_for(_c("Const", Value=5), "const") is None
-    assert shape_for(_c("Register"), "storage") is None
+def test_subcircuit_falls_back_to_default_box():
+    # subcircuit references keep the plain round-rectangle (user's call)
+    assert shape_for(_c("alu.dig"), "subcircuit") is None
+
+
+def test_simple_fixed_parts_all_render_a_glyph():
+    for el, fam in [("In", "io-in"), ("Out", "io-out"), ("Const", "const"),
+                    ("Ground", "const"), ("VDD", "const"), ("Clock", "clock"),
+                    ("Register", "storage"), ("Add", "arith"),
+                    ("Comparator", "arith"), ("ROM", "storage"),
+                    ("BarrelShifter", "arith"), ("BitExtender", "arith")]:
+        res = shape_for(_c(el), fam)
+        assert res is not None and res["tier"] == "glyph", el
+        svg = _svg_text(res)
+        assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>"), el
+
+
+def test_register_marks_the_clock_pin_with_an_edge_triangle():
+    # the C input gets a small triangle; D/en do not -> exactly one extra path
+    reg = _svg_text(shape_for(_c("Register"), "storage"))
+    assert reg.count("<path") == 1  # the clock-edge triangle
 
 
 def test_not_and_seven_seg_render():

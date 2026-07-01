@@ -330,9 +330,121 @@ def _failed_box(label: str, fill: str) -> dict:
     parts = [f'<rect x="3" y="3" width="{w-6}" height="{h-6}" rx="3" '
              f'fill="#fee2e2" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="4 2"/>',
              f'<text x="{w/2}" y="16" font-size="8" text-anchor="middle" fill="#b91c1c">render failed</text>',
-             f'<text x="{w/2}" y="28" font-size="7.5" text-anchor="middle" fill="#b91c1c">{label}</text>']
+             f'<text x="{w/2}" y="28" font-size="7.5" text-anchor="middle" fill="#b91c1c">{_esc(label)}</text>']
     return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h,
             "tier": "failed"}
+
+# Simple / fixed-shape parts (I/O ports, constants, clock, register, arith)
+# --------------------------------------------------------------------------
+
+def _esc(s) -> str:
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _dot(cx, cy) -> str:
+    return f'<circle cx="{cx}" cy="{cy:.1f}" r="2.6" fill="{_STROKE}"/>'
+
+
+def _in_svg(comp, fill) -> dict:
+    # right-pointing tag: signal leaves toward the circuit
+    w, h = 60, 32
+    mid = h / 2
+    parts = [f'<path d="M4,5 L42,5 L54,{mid} L42,{h-5} L4,{h-5} Z" '
+             f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.5"/>',
+             _dot(54, mid), _stub(54, mid, w, mid)]
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _out_svg(comp, fill) -> dict:
+    # left-notched tag: signal arrives from the circuit
+    w, h = 60, 32
+    mid = h / 2
+    parts = [f'<path d="M18,5 L{w-5},5 L{w-5},{h-5} L18,{h-5} L6,{mid} Z" '
+             f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.5"/>',
+             _dot(6, mid), _stub(0, mid, 6, mid)]
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _const_svg(comp, fill) -> dict:
+    # small box with a driving dot on the right (the value shows in the label)
+    w, h = 54, 30
+    mid = h / 2
+    parts = [f'<rect x="6" y="5" width="34" height="{h-10}" rx="2" '
+             f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.5"/>',
+             _dot(44, mid), _stub(44, mid, w, mid)]
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _ground_svg(comp, fill) -> dict:
+    w, h = 40, 40
+    cx = w / 2
+    parts = [_stub(cx, 4, cx, 20), _dot(cx, 4)]
+    for i, half in enumerate((11, 7, 3)):
+        y = 22 + i * 5
+        parts.append(f'<line x1="{cx-half}" y1="{y}" x2="{cx+half}" y2="{y}" '
+                     f'stroke="{_STROKE}" stroke-width="1.8"/>')
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _vdd_svg(comp, fill) -> dict:
+    w, h = 40, 40
+    cx = w / 2
+    parts = [f'<line x1="{cx-11}" y1="8" x2="{cx+11}" y2="8" stroke="{_STROKE}" stroke-width="1.8"/>',
+             _stub(cx, 8, cx, h - 6), _dot(cx, h - 6)]
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _clock_svg(comp, fill) -> dict:
+    w, h = 58, 34
+    mid = h / 2
+    parts = [f'<rect x="6" y="5" width="34" height="{h-10}" rx="2" '
+             f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.5"/>',
+             f'<path d="M11,{mid+6} V{mid-5} H19 V{mid+6} H27 V{mid-5} H34" '
+             f'fill="none" stroke="{_STROKE}" stroke-width="1.4"/>',
+             _dot(44, mid), _stub(40, mid, w, mid)]
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _box_with_pins(comp, fill, *, label="", symbol="", clock_pin=None) -> dict:
+    """Rectangle sized to the component's real in/out pins, with an optional
+    centre symbol and a clock-edge triangle on `clock_pin`."""
+    pins = get_pin_specs(comp)
+    ins = [p for p in pins if p.direction == "in"]
+    outs = [p for p in pins if p.direction == "out"]
+    rows = max(len(ins), len(outs), 1)
+    pad = 12
+    span = max(1, rows - 1) * 14
+    h = span + pad * 2
+    top = pad
+    lx, rx, w = 14, 52, 66
+    cx = (lx + rx) / 2
+    mid = top + span / 2
+    parts = [f'<rect x="{lx}" y="{top-8}" width="{rx-lx}" height="{span+16}" rx="3" '
+             f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.6"/>']
+    if symbol:
+        parts.append(f'<text x="{cx}" y="{mid+5:.1f}" font-size="15" font-weight="bold" '
+                     f'text-anchor="middle" fill="{_STROKE}">{_esc(symbol)}</text>')
+    elif label:
+        parts.append(f'<text x="{cx}" y="{mid+3:.1f}" font-size="8" '
+                     f'text-anchor="middle" fill="{_STROKE}">{_esc(label)}</text>')
+    in_ys = _even_ys(len(ins), top, top + span)
+    for i, y in enumerate(in_ys):
+        parts.append(_stub(0, y, lx, y))
+        if clock_pin is not None and i < len(ins) and ins[i].name == clock_pin:
+            parts.append(f'<path d="M{lx},{y-4:.1f} L{lx+6},{y:.1f} L{lx},{y+4:.1f} Z" '
+                         f'fill="none" stroke="{_STROKE}" stroke-width="1.2"/>')
+    for y in _even_ys(len(outs), top, top + span):
+        parts.append(_stub(rx, y, w, y))
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
+
+
+def _bitextender_svg(comp, fill) -> dict:
+    # narrow (in) -> wide (out) trapezoid, showing the width growth
+    w, h = 60, 40
+    parts = [f'<path d="M16,16 L46,6 L46,{h-6} L16,{h-16} Z" '
+             f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.6"/>',
+             _stub(0, h / 2, 16, h / 2), _stub(46, h / 2, w, h / 2)]
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
 
 
 # --------------------------------------------------------------------------
@@ -359,6 +471,30 @@ def shape_for(comp: Component, family: str) -> dict | None:
             return _splitter_svg(comp, fill)
         if name == "Seven-Seg":
             return _seven_seg_svg(comp, fill)
+        if name == "In":
+            return _in_svg(comp, fill)
+        if name == "Out":
+            return _out_svg(comp, fill)
+        if name == "Const":
+            return _const_svg(comp, fill)
+        if name == "Ground":
+            return _ground_svg(comp, fill)
+        if name == "VDD":
+            return _vdd_svg(comp, fill)
+        if name == "Clock":
+            return _clock_svg(comp, fill)
+        if name == "Register":
+            return _box_with_pins(comp, fill, label="reg", clock_pin="C")
+        if name == "Add":
+            return _box_with_pins(comp, fill, symbol="+")
+        if name == "Comparator":
+            return _box_with_pins(comp, fill, symbol="⋛")   # ⋛
+        if name == "BarrelShifter":
+            return _box_with_pins(comp, fill, symbol="≪")   # ≪
+        if name == "ROM":
+            return _box_with_pins(comp, fill, label="ROM")
+        if name == "BitExtender":
+            return _bitextender_svg(comp, fill)
     except Exception:
         return None
     return None
