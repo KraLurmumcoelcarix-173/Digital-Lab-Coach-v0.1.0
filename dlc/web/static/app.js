@@ -1046,8 +1046,7 @@ function renderTestResults(payload) {
       const idxCell = `<td class="row-idx">${row.index}</td>`;
       if (row.error_message) {
         const span = headers.length + 1;
-      // Clicking the row lights up the signal-flow graph for that vector.
-      return `<tr class="${escapeHtml(row.status)} sig-clickable" data-sig-row="1" data-spec="${specIdx}" data-row="${row.index}" title="Click to show signal flow for this row">
+        return `<tr class="${escapeHtml(row.status)}">
           ${idxCell}
           <td class="row-err" colspan="${span}">${escapeHtml(row.error_message)}</td>
         </tr>`;
@@ -1066,7 +1065,8 @@ function renderTestResults(payload) {
           <td colspan="${headers.length + 1}">${parts.join(" &middot; ")}</td>
         </tr>`;
       }
-      return `<tr class="${escapeHtml(row.status)}">
+      // Clicking the row lights up the signal-flow graph for that vector.
+      return `<tr class="${escapeHtml(row.status)} sig-clickable" data-sig-row="1" data-spec="${specIdx}" data-row="${row.index}" title="Click to show signal flow for this row">
         ${idxCell}
         ${tokenCells}
         <td class="row-status">${escapeHtml(row.status)}</td>
