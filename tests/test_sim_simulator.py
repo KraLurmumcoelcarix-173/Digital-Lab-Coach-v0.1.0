@@ -189,3 +189,25 @@ def test_buggy_circuit_is_faithfully_reproduced_for_red_mismatch():
         "data/sample_circuits/30_bug_benchmark/bug3_wrong_cin/Wrong_cin.dig"
     )
     assert mism, "evaluator should reproduce the bug (found != expected)"
+
+def test_rom_reads_the_word_at_the_address():
+    r = _c("ROM", Data="0A, 14, FF", Bits=8, AddrBits=4)   # hex tokens
+    assert sim._rom_words(r) == [0x0A, 0x14, 0xFF]
+    assert sim._eval_rom(r, {"A": 0}) == {"D": 0x0A}
+    assert sim._eval_rom(r, {"A": 2}) == {"D": 0xFF}
+    assert sim._eval_rom(r, {"A": 9}) == {"D": 0}         # out of range -> 0
+    assert sim._eval_rom(r, {"A": 2, "sel": 0}) == {"D": 0}  # chip-select low
+    assert sim._eval_rom(_c("ROM", Data="1FF", Bits=8), {"A": 0}) == {"D": 0xFF}  # masked
+
+
+def test_rom_lookup_fixture_resolves_every_row():
+    c, nl, g = _load(f"{_T1}/rom_lookup.dig")
+    spec = extract_test_specs(c)[0]
+    col = {h: i for i, h in enumerate(spec.headers)}
+    for row in spec.rows:
+        if row.is_malformed:
+            continue
+        res = simulate_sequential(c, nl, g, spec, row.line_index)
+        assert res.output_values.get("D") == row.values[col["D"]].value, row.raw
+        assert not res.unresolved_nets, row.raw
+

@@ -32,7 +32,7 @@ from dlc.parser.pin_geometry import inverted_input_names
 # Components whose exact behaviour we do not model yet. Their outputs stay
 # unresolved so the UI shows no value rather than a wrong one.
 _UNMODELED = frozenset({
-    "Register", "ROM", "BarrelShifter", "BitExtender", "Counter", "Memory",
+    "Register", "BarrelShifter", "BitExtender", "Counter", "Memory",
     "RAMDualPort", "RAMSinglePort", "D_FF", "T_FF", "JK_FF", "FlipflopD",
 })
 
@@ -234,6 +234,43 @@ def _eval_comparator(comp, in_vals):
         "eq": 1 if a == b else 0,
         "le": 1 if a < b else 0,
     }
+
+def _rom_words(comp) -> list[int]:
+    """Parse a ROM's Data field into the word stored at each address.
+
+    Digital keeps Data as a comma/space/newline-separated token string;
+    `intFormat` (default hex) selects the base. Matches dlc.facts.extractor.
+    """
+    raw = comp.attributes.get("Data", "")
+    if not isinstance(raw, str):
+        raw = "" if raw is None else str(raw)
+    tokens = [t for t in raw.replace(",", " ").split() if t]
+    fmt = str(comp.attributes.get("intFormat", "hex") or "hex").lower()
+    base = {"hex": 16, "bin": 2, "oct": 8, "dec": 10, "def": 10}.get(fmt, 16)
+    words: list[int] = []
+    for t in tokens:
+        try:
+            words.append(int(t, base))
+        except ValueError:
+            try:
+                words.append(int(t, 16))   # last-ditch: treat as hex
+            except ValueError:
+                words.append(0)
+    return words
+
+
+def _eval_rom(comp, in_vals):
+    """ROM read: D = Data[A]. `sel` (chip-select), when wired low, disables the
+    output (0). Out-of-range addresses read 0."""
+    if "A" not in in_vals:
+        return None
+    if in_vals.get("sel", 1) == 0:      # present-and-low -> output disabled
+        return {"D": 0}
+    words = _rom_words(comp)
+    addr = in_vals["A"]
+    val = words[addr] if 0 <= addr < len(words) else 0
+    return {"D": val & _mask(_gate_bits(comp))}
+
 
 
 _RULES = {
