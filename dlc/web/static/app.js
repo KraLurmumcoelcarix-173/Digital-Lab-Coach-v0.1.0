@@ -287,31 +287,30 @@ clearBtn.addEventListener("click", () => {
   resetDashboard();
 });
 
-// Full-screen right-to-left "digital garble" wipe, purely decorative, played
-// when Clear all returns the user to the Layer-1 dashboard.
+// Decorative ~1s "digital snow storm" blowing right-to-left when Clear all
+// returns the user to the Layer-1 dashboard: big/small green snowflakes mixed
+// with digital glyphs, plus a few wind streaks. Purely cosmetic.
 function playClearWipe() {
   const el = document.createElement("div");
-  el.className = "wipe-overlay";
-  const sheet = document.createElement("pre");
-  sheet.className = "wipe-sheet";
-  el.appendChild(sheet);
-  const chars = "01<>/\\|=+*#$%&ABCDEF011001010110111010101001";
-  const garble = () => {
-    const cols = Math.ceil(window.innerWidth / 9);
-    const rows = Math.ceil(window.innerHeight / 16);
-    let s = "";
-    for (let r = 0; r < rows; r++) {
-      let line = "";
-      for (let c = 0; c < cols; c++) line += chars[(Math.random() * chars.length) | 0];
-      s += line + "\n";
-    }
-    sheet.textContent = s;
-  };
-  garble();
+  el.className = "snow-overlay";
+  const glyphs = ["❄", "❅", "❆", "✳", "❄", "❄", "0", "1", "0", "＊", "＊"];
+  const rand = (a, b) => a + Math.random() * (b - a);
+  let html = "";
+  for (let k = 0; k < 90; k++) {                    // snowflakes
+    const ch = glyphs[(Math.random() * glyphs.length) | 0];
+    html += `<span class="flake" style="top:${rand(-8, 100)}vh;` +
+      `font-size:${rand(10, 34) | 0}px;animation-duration:${rand(0.7, 1.25).toFixed(2)}s;` +
+      `animation-delay:${rand(0, 0.4).toFixed(2)}s;` +
+      `--drift:${(rand(-24, 24)) | 0}px;--rot:${(rand(-540, 540)) | 0}deg">${ch}</span>`;
+  }
+  for (let k = 0; k < 7; k++) {                      // wind streaks
+    html += `<span class="wind" style="top:${rand(0, 100)}vh;` +
+      `animation-duration:${rand(0.55, 0.95).toFixed(2)}s;` +
+      `animation-delay:${rand(0, 0.3).toFixed(2)}s"></span>`;
+  }
+  el.innerHTML = html;
   document.body.appendChild(el);
-  const flick = setInterval(garble, 90);
-  requestAnimationFrame(() => el.classList.add("go"));
-  setTimeout(() => { clearInterval(flick); el.remove(); }, 1500);
+  setTimeout(() => el.remove(), 1500);
 }
 
 

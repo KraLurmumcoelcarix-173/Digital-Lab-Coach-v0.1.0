@@ -557,37 +557,55 @@ main {
 .clock-hud.running { background: #fef3c7; font-weight: 600; }
 .clock-hud.restart { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; font-weight: 600; }
 
-/* Decorative "digital garble" wipe when Clear all returns you to Layer 1. */
-.wipe-overlay {
+/* Decorative "digital snow storm" (green) blowing right-to-left when Clear all
+   returns you to Layer 1 — big/small snowflakes + digital glyphs + wind. */
+.snow-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
   overflow: hidden;
+    background: radial-gradient(ellipse at center,
+              rgba(6, 17, 10, 0.10), rgba(6, 17, 10, 0.30));
+  animation: snow-fade 1.5s ease-out forwards;
 }
 .wipe-sheet {
+  @keyframes snow-fade { 0% { opacity: 1; } 82% { opacity: 1; } 100% { opacity: 0; } }
+
+.snow-overlay .flake {
   position: absolute;
-  inset: 0;
-  margin: 0;
-  font-family: "Courier New", monospace;
-  font-size: 13px;
-  line-height: 16px;
-  letter-spacing: 1px;
+  right: -6vw;
   color: #22c55e;
-  background: #06110a;
-  white-space: pre;
-  overflow: hidden;
-  transform: translateX(100%);
-  text-shadow: 0 0 4px rgba(34, 197, 94, 0.55);
+  text-shadow: 0 0 6px rgba(34, 197, 94, 0.85);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation-name: snow-blow;
+  animation-timing-function: ease-in;
+  animation-fill-mode: forwards;
 }
-.wipe-overlay.go .wipe-sheet {
-  animation: wipe-sweep 1.4s cubic-bezier(0.6, 0, 0.3, 1) forwards;
+@keyframes snow-blow {
+  0%   { transform: translateX(0) translateY(0) rotate(0deg); opacity: 0; }
+  12%  { opacity: 0.95; }
+  100% { transform: translateX(-114vw) translateY(var(--drift)) rotate(var(--rot));
+         opacity: 0.9; }
 }
-@keyframes wipe-sweep {
-  0%   { transform: translateX(100%); }   /* off-screen right */
-  40%  { transform: translateX(0); }      /* cover everything */
-  60%  { transform: translateX(0); }      /* hold */
-  100% { transform: translateX(-102%); }  /* sweep off to the left */
+.snow-overlay .wind {
+  position: absolute;
+  right: -22vw;
+  width: 20vw;
+  height: 2px;
+  background: linear-gradient(90deg, transparent,
+              rgba(34, 197, 94, 0.55), transparent);
+  filter: blur(1px);
+  opacity: 0;
+  animation-name: wind-blow;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes wind-blow {
+  0%   { transform: translateX(0); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: translateX(-150vw); opacity: 0; }
 }
 
 /* A test row you can click to light up the signal-flow graph. */
@@ -1319,4 +1337,6 @@ main {
   border-top: none;
   padding-top: 0;
   font-style: italic;
+}
+
 }

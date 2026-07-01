@@ -32,7 +32,7 @@ from dlc.parser.pin_geometry import inverted_input_names
 # Components whose exact behaviour we do not model yet. Their outputs stay
 # unresolved so the UI shows no value rather than a wrong one.
 _UNMODELED = frozenset({
-    "Register", "BarrelShifter", "BitExtender", "Counter", "Memory",
+    "Register", "Counter", "Memory",
     "RAMDualPort", "RAMSinglePort", "D_FF", "T_FF", "JK_FF", "FlipflopD",
 })
 
@@ -271,6 +271,46 @@ def _eval_rom(comp, in_vals):
     val = words[addr] if 0 <= addr < len(words) else 0
     return {"D": val & _mask(_gate_bits(comp))}
 
+def _eval_barrel_shifter(comp, in_vals):
+    """Shift `in` by `sh`. `direction` = left (default) / right;
+    `barrelShifterMode` = logical (default) / arithmetic / rotate."""
+    if "in" not in in_vals or "sh" not in in_vals:
+        return None
+    bits = _gate_bits(comp)
+    mask = _mask(bits)
+    x = in_vals["in"] & mask
+    sh = in_vals["sh"]
+    direction = str(comp.attributes.get("direction", "left") or "left").lower()
+    mode = str(comp.attributes.get("barrelShifterMode", "logical") or "logical").lower()
+    if mode == "rotate" and bits:
+        s = sh % bits
+        if direction == "right":
+            out = ((x >> s) | (x << (bits - s))) & mask
+        else:
+            out = ((x << s) | (x >> (bits - s))) & mask
+    elif direction == "right":
+        if mode == "arithmetic":
+            sx = x - (1 << bits) if (x >> (bits - 1)) & 1 else x   # to signed
+            out = (sx >> min(sh, bits)) & mask
+        else:
+            out = (x >> sh) & mask if sh < bits else 0
+    else:  # left, logical
+        out = (x << sh) & mask if sh < bits else 0
+    return {"out": out}
+
+
+def _eval_bitextender(comp, in_vals):
+    """Sign-extend `in` (inputBits) to `out` (outputBits) — Digital replicates
+    the input's MSB across the added width."""
+    if "in" not in in_vals:
+        return None
+    in_bits = max(1, _as_int(comp.attributes.get("inputBits", 1), 1))
+    out_bits = max(in_bits, _as_int(comp.attributes.get("outputBits", in_bits), in_bits))
+    x = in_vals["in"] & _mask(in_bits)
+    if (x >> (in_bits - 1)) & 1:                # sign bit set -> extend ones
+        x |= (~_mask(in_bits)) & _mask(out_bits)
+    return {"out": x & _mask(out_bits)}
+
 
 
 _RULES = {
@@ -285,6 +325,8 @@ _RULES = {
     "Add": _eval_add,
     "Comparator": _eval_comparator,
     "ROM": _eval_rom,
+    "BarrelShifter": _eval_barrel_shifter,
+    "BitExtender": _eval_bitextender,
 }
 
 
@@ -375,6 +417,7 @@ def simulate(
     # Worklist fixpoint. A hard iteration cap (component count + slack) bounds
     # runtime and guarantees termination on cyclic / stateful topologies.
     max_iters = len(circuit.components) + 4
+    sub_cache: dict[int, tuple] = {}   # subcircuit idx -> (input-sig, outs)
     for _ in range(max_iters):
         changed = False
         for idx, comp in enumerate(circuit.components):
@@ -393,12 +436,28 @@ def simulate(
                         in_vals[name] = net_values[nid]
                     else:
                         unresolved_input = True
-            if unresolved_input:
+            # A subcircuit may resolve some outputs from a subset of its inputs
+            # (e.g. a register file's ReadData doesn't depend on WriteData), so
+            # evaluate it with whatever inputs are ready — the outer fixpoint
+            # re-runs it as more resolve. Plain gates still need every input.
+            is_subcircuit = comp.element_name.endswith(".dig")
+            if unresolved_input and not is_subcircuit:
                 continue
 
-            outs = _eval_node(
-                comp, idx, in_vals, child_by_index, _depth, _max_depth,
-            )
+            if is_subcircuit:
+                # Skip the (expensive) recursion when this subcircuit's resolved
+                # inputs haven't changed since we last evaluated it.
+                sig = frozenset(in_vals.items())
+                cached = sub_cache.get(idx)
+                if cached is not None and cached[0] == sig:
+                    outs = cached[1]
+                else:
+                    outs = _eval_node(comp, idx, in_vals, child_by_index,
+                                      _depth, _max_depth)
+                    sub_cache[idx] = (sig, outs)
+            else:
+                outs = _eval_node(comp, idx, in_vals, child_by_index,
+                                  _depth, _max_depth)
             if outs is None:
                 if comp.element_name in _UNMODELED or comp.element_name.endswith(".dig"):
                     have_unmodeled.add(comp.element_name)
@@ -526,9 +585,16 @@ def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth):
     if child is None:
         return None
     try:
-        child_nl = build_netlist(child)
-        from dlc.parser.graph import build_signal_graph
-        child_g = build_signal_graph(child, child_nl)
+        # Memoize the child's netlist/graph on the circuit object: it never
+        # changes, and rebuilding a 200+ component subcircuit on every fixpoint
+        # iteration is what makes a full CPU intractable.
+        child_nl = getattr(child, "_sim_nl", None)
+        if child_nl is None:
+            from dlc.parser.graph import build_signal_graph
+            child_nl = build_netlist(child)
+            child._sim_nl = child_nl
+            child._sim_g = build_signal_graph(child, child_nl)
+        child_g = child._sim_g
         sub = simulate(
             child, child_nl, child_g, dict(in_vals),
             _depth=depth + 1, _max_depth=max_depth,

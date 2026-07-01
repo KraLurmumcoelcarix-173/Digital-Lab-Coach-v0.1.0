@@ -92,6 +92,27 @@ def test_comparator():
     assert sim._eval_comparator(cmp, {"A": 5, "B": 3}) == {"gr": 1, "eq": 0, "le": 0}
     assert sim._eval_comparator(cmp, {"A": 3, "B": 3}) == {"gr": 0, "eq": 1, "le": 0}
 
+def test_barrel_shifter_left_right_arith_rotate():
+    ls = _c("BarrelShifter", Bits=8)                       # left, logical (default)
+    assert sim._eval_barrel_shifter(ls, {"in": 0x01, "sh": 4}) == {"out": 0x10}
+    rsl = _c("BarrelShifter", Bits=8, direction="right")   # right, logical
+    assert sim._eval_barrel_shifter(rsl, {"in": 0xF0, "sh": 4}) == {"out": 0x0F}
+    rsa = _c("BarrelShifter", Bits=8, direction="right", barrelShifterMode="arithmetic")
+    assert sim._eval_barrel_shifter(rsa, {"in": 0x80, "sh": 2}) == {"out": 0xE0}  # sign
+    rot = _c("BarrelShifter", Bits=8, barrelShifterMode="rotate")   # rotate left
+    assert sim._eval_barrel_shifter(rot, {"in": 0x81, "sh": 1}) == {"out": 0x03}
+
+
+def test_bitextender_sign_extends():
+    be = _c("BitExtender", inputBits=1, outputBits=32)
+    assert sim._eval_bitextender(be, {"in": 1}) == {"out": 0xFFFFFFFF}   # add-sub invert
+    assert sim._eval_bitextender(be, {"in": 0}) == {"out": 0}
+    be4 = _c("BitExtender", inputBits=4, outputBits=8)
+    assert sim._eval_bitextender(be4, {"in": 0x8}) == {"out": 0xF8}      # neg nibble
+    assert sim._eval_bitextender(be4, {"in": 0x7}) == {"out": 0x07}      # pos nibble
+
+
+
 
 # ---- end-to-end over fixtures ---------------------------------------------
 
