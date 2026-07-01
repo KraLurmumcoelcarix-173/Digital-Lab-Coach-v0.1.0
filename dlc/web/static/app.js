@@ -118,6 +118,20 @@ const CY_STYLE = [
       "background-color": "#fee2e2", "label": "data(label)",
     },
   },
+  // --- wire-hover focus: isolate one wire + its value ---------------------
+  // Defined LAST so it wins over the signal-flow opacities above. Hovering a
+  // wire fades everything else so an overlapping value stays readable.
+  { selector: "edge.hover-dim", style: { "opacity": 0.06 } },
+  { selector: "node.hover-dim", style: { "opacity": 0.18 } },
+  {
+    selector: "edge.wire-focus",
+    style: {
+      "opacity": 1, "width": 4, "z-index": 9999,
+      "font-size": 12, "color": "#0f172a", "font-weight": "bold",
+      "text-background-color": "#ffffff", "text-background-opacity": 1,
+      "text-background-padding": 3,
+    },
+  },
 ];
 
 //DOM 
@@ -432,11 +446,16 @@ function renderGraph(graph) {
 
   cy.on("mouseover", "edge", (evt) => {
     const edge = evt.target;
-    edge.addClass("highlight");
+    // Isolate this wire: fade everything except it and its two endpoints, so
+    // its value stays readable even where wires (and their labels) overlap.
+    const keep = edge.union(edge.connectedNodes());
+    cy.elements().not(keep).addClass("hover-dim");
+    edge.addClass("wire-focus");
     showEdgePopup(edge);
   });
   cy.on("mouseout", "edge", (evt) => {
-    evt.target.removeClass("highlight");
+    cy.elements().removeClass("hover-dim");
+    evt.target.removeClass("wire-focus");
     hidePopup();
   });
   cy.on("tap", (evt) => {
