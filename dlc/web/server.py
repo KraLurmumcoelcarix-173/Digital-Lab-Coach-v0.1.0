@@ -735,6 +735,32 @@ def _node_reactions(circuit, netlist, res) -> dict:
     return out
 
 
+def _output_ok(found, exp_val, width) -> bool | None:
+    """Compare an evaluated output against a testcase's expected value by BIT
+    PATTERN, so a signed expected (e.g. -60) matches the evaluator's unsigned
+    two's-complement value (0xFFFFFFC4 = 4294967236) at the port's width."""
+    if found is None:
+        return None
+    if width:
+        m = (1 << width) - 1
+        return (found & m) == (exp_val & m)
+    return found == exp_val
+
+
+def _fmt_output(v, width, signed_hint) -> str:
+    """Render an output value: signed decimal when the expected value was
+    negative (so it reads like the testcase, e.g. -60), else hex for buses."""
+    if v is None:
+        return ""
+    if not width or width <= 1:
+        return str(v)
+    m = (1 << width) - 1
+    u = v & m
+    if signed_hint and (u >> (width - 1)) & 1:
+        return str(u - (1 << width))
+    return f"0x{u:X}"
+
+
 
 @app.post("/api/simulate")
 def simulate_row(req: SimulateRequest) -> dict:
@@ -782,7 +808,7 @@ def simulate_row(req: SimulateRequest) -> dict:
         (r for r in spec.rows if r.line_index == req.row_index and not r.is_malformed),
         None,
     )
-    expected: dict[str, int] = {}
+    expected: dict[str, dict] = {}
     if row is not None:
         from dlc.testing.spec import match_variables_to_io
         bindings = match_variables_to_io(spec.headers, circuit)
@@ -791,16 +817,23 @@ def simulate_row(req: SimulateRequest) -> dict:
             if b and b.role == "output" and col < len(row.values):
                 tok = row.values[col]
                 if tok.kind == "int" and tok.value is not None:
-                    expected[header] = tok.value
+                    expected[header] = {
+                        "val": tok.value, "raw": tok.raw, "width": b.bit_width,
+                    }
 
     outputs = []
-    for label, exp in expected.items():
+    for label, e in expected.items():
         found = res.output_values.get(label)
+        width, exp_val = e["width"], e["val"]
+        signed = exp_val < 0
         outputs.append({
             "label": label,
-            "expected": exp,
-            "found": found,
-            "ok": (found == exp) if found is not None else None,
+            # format expected the same way as found (signed decimal for a
+            # negative value, hex for a bus), so Digital's "(-60)" reads as a
+            # clean "-60" and both sides of the chip are consistent.
+            "expected": _fmt_output(exp_val, width, signed),
+            "found": _fmt_output(found, width, signed) if found is not None else None,
+            "ok": _output_ok(found, exp_val, width),
         })
 
     return {
