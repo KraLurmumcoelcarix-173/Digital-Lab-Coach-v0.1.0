@@ -284,6 +284,7 @@ _RULES = {
     "Splitter": _eval_splitter,
     "Add": _eval_add,
     "Comparator": _eval_comparator,
+    "ROM": _eval_rom,
 }
 
 
