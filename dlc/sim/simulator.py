@@ -636,6 +636,7 @@ def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
             child._sim_g = build_signal_graph(child, child_nl)
         child_g = child._sim_g
         sub = simulate(
+            child, child_nl, child_g, dict(in_vals),
             state_store=state_store, path=path + (idx,),
             _depth=depth + 1, _max_depth=max_depth,
         )
