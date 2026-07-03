@@ -358,6 +358,8 @@ def simulate(
     state: dict[int, int] | None = None,
     state_store: dict[tuple[int, ...], int] | None = None,
     path: tuple[int, ...] = (),
+    capture_path: tuple[int, ...] | None = None,
+    capture_box: dict | None = None,
     _depth: int = 0,
     _max_depth: int = 16,
 ) -> SimResult:
@@ -370,6 +372,12 @@ def simulate(
     that store. The caller (`simulate_sequential`) advances the store across
     clock edges. `state` is the legacy top-level-only form ({comp_index -> Q});
     it is folded into `state_store` for backward compatibility.
+
+    `capture_path` (a full path of component indices from the top circuit down
+    to a subcircuit instance) requests the internal `SimResult` of that nested
+    subcircuit as evaluated for this same row; when reached it is stored in
+    `capture_box["result"]`. This powers the drill-in view, which colors a
+    subcircuit's own wires for the master circuit's selected row.
     """
     result = SimResult()
     if state_store is None:
@@ -473,12 +481,20 @@ def simulate(
                 # inputs haven't changed since we last evaluated it.
                 sig = frozenset(in_vals.items())
                 cached = sub_cache.get(idx)
-                if cached is not None and cached[0] == sig:
+                # When this subcircuit (or one it contains) is the drill-in
+                # target, always re-evaluate so the captured internal result
+                # reflects the fully-resolved inputs; otherwise use the cache.
+                child_path = path + (idx,)
+                on_capture_route = (
+                    capture_path is not None
+                    and capture_path[:len(child_path)] == child_path)
+                if (cached is not None and cached[0] == sig
+                        and not on_capture_route):
                     outs, child_rn = cached[1], cached[2]
                 else:
                     outs, child_rn = _eval_subcircuit(
                         comp, idx, in_vals, child_by_index, _depth, _max_depth,
-                        state_store, path)
+                        state_store, path, capture_path, capture_box)
                     sub_cache[idx] = (sig, outs, child_rn)
                 # Bubble the subcircuit's (path-keyed) register next-states up so
                 # simulate_sequential can latch them on the shared clock edge.
@@ -539,6 +555,9 @@ def simulate_sequential(
     graph,
     spec,
     row_index: int,
+    *,
+    capture_path: tuple[int, ...] | None = None,
+    capture_box: dict | None = None,
 ) -> SimResult:
     """Evaluate a clocked circuit *as of* one test row.
 
@@ -547,6 +566,11 @@ def simulate_sequential(
     pulse (a `C` token in a clock column — the common single-clock-domain lab
     case). The returned SimResult is the settled, post-edge view for that row,
     so its net values match what Digital displays when you step there.
+
+    
+    `capture_path`/`capture_box` request a nested subcircuit's internal
+    SimResult for `row_index` (see `simulate`), captured on that row's final
+    settled pass so it reflects the same state the top-level view shows.
     """
     rows = [r for r in spec.rows if not r.is_malformed]
     target = None
@@ -561,23 +585,32 @@ def simulate_sequential(
     # nested inside subcircuits so a register file's contents persist row to row.
     reg_state: dict[tuple[int, ...], int] = {}
 
-    def apply_row(row) -> SimResult:
+    def apply_row(row, cap_path=None, cap_box=None) -> SimResult:
         nonlocal reg_state
         inp = inputs_for_row(circuit, spec.headers, row)
-        res = simulate(circuit, netlist, graph, inp, state_store=dict(reg_state))
-        if _row_has_clock_edge(circuit, spec.headers, row):
+        clocked = _row_has_clock_edge(circuit, spec.headers, row)
+        # Capture only on the final (settled) pass so the drill-in view matches
+        # the post-edge state the top-level graph shows for this row.
+        res = simulate(circuit, netlist, graph, inp, state_store=dict(reg_state),
+                       capture_path=None if clocked else cap_path,
+                       capture_box=None if clocked else cap_box)
+        if clocked:
             new_state = dict(reg_state)
             new_state.update(res.reg_next)
             reg_state = new_state
             # Re-settle so downstream-of-register nets show the post-edge value.
             res = simulate(circuit, netlist, graph, inp,
-                           state_store=dict(reg_state))
+                           state_store=dict(reg_state),
+                           capture_path=cap_path, capture_box=cap_box)
         return res
 
     result = SimResult()
     for row in rows:
-        result = apply_row(row)
-        if row.line_index == row_index:
+        is_target = row.line_index == row_index
+        result = apply_row(row,
+                           capture_path if is_target else None,
+                           capture_box if is_target else None)
+        if is_target:
             break
     return result
 
@@ -609,7 +642,7 @@ def _eval_node(comp, idx, in_vals, child_by_index, depth, max_depth):
 
 
 def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
-                     state_store, path):
+                     state_store, path, capture_path=None, capture_box=None):
     """Recurse into a resolved subcircuit.
 
     Parent input pins are named for the child's In labels (see
@@ -620,10 +653,16 @@ def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
     Returns ``(output_values | None, reg_next)`` where ``reg_next`` is the
     child's path-keyed register next-states (already prefixed with this
     subcircuit's path) so the caller can latch them on the shared clock edge.
+    When `capture_path` points at (or through) this instance, the child's full
+    `SimResult` for the matching path is stored in `capture_box["result"]`.
     """
     child = child_by_index.get(idx)
     if child is None or depth >= max_depth:
         return None, {}
+    child_path = path + (idx,)
+    # Only carry the capture request down the branch that leads to the target.
+    want = (capture_path is not None
+            and capture_path[:len(child_path)] == child_path)
     try:
         # Memoize the child's netlist/graph on the circuit object: it never
         # changes, and rebuilding a 200+ component subcircuit on every fixpoint
@@ -637,10 +676,14 @@ def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
         child_g = child._sim_g
         sub = simulate(
             child, child_nl, child_g, dict(in_vals),
-            state_store=state_store, path=path + (idx,),
+            state_store=state_store, path=child_path,
+            capture_path=capture_path if want else None,
+            capture_box=capture_box if want else None,
             _depth=depth + 1, _max_depth=max_depth,
         )
     except Exception:
         return None, {}
+    if want and capture_box is not None and child_path == capture_path:
+        capture_box["result"] = sub          # settled internal view for drill-in
     outs = dict(sub.output_values) if sub.output_values else None
     return outs, dict(sub.reg_next)

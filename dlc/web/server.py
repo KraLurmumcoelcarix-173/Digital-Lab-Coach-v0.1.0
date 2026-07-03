@@ -82,6 +82,14 @@ class SimulateRequest(BaseModel):
     spec_index: int = 0
     row_index: int = 0
 
+class SubcircuitRequest(BaseModel):
+    session_id: str
+    filename: str
+    spec_index: int = 0
+    row_index: int = 0
+    # component indices from the top circuit down to the subcircuit instance to
+    # drill into (e.g. [14] for a top-level register file, [11, 7] one deeper).
+    path: list[int] = []
 
 
 class ApiKeyRequest(BaseModel):
@@ -859,6 +867,95 @@ def simulate_row(req: SimulateRequest) -> dict:
         "notes": res.notes,
         # determined per-node reactions (7-seg lighting, mux/decoder rings)
         "node_svgs": _node_reactions(circuit, netlist, res),
+    }
+
+def _child_at(circuit, comp_idx: int):
+    """The child Circuit wired under component `comp_idx`, or None if that
+    component isn't a resolvable subcircuit."""
+    if comp_idx < 0 or comp_idx >= len(circuit.components):
+        return None
+    comp = circuit.components[comp_idx]
+    for sub in circuit.subcircuits:
+        if sub.parent_component is comp:
+            return sub.child_circuit
+    return None
+
+
+@app.post("/api/subcircuit")
+def subcircuit_row(req: SubcircuitRequest) -> dict:
+    """Signal flow *inside* a subcircuit instance for the clicked row.
+
+    Drill-in view: evaluates the whole master circuit as of `row_index`, then
+    returns the internal graph + per-net values of the subcircuit named by
+    `path` (component indices top -> down), so the front end can colour that
+    subcircuit's own wires with the master row's signals. Recursive: a deeper
+    `path` drills through nested subcircuits, all showing the same row.
+    """
+    target = _resolve_target(req.session_id, req.filename)
+    try:
+        circuit = parse_dig_file(target["path"])
+        netlist = build_netlist(circuit)
+        graph = build_signal_graph(circuit, netlist)
+    except Exception as exc:
+        return {"ok": False, "warning": f"Could not parse circuit: {exc}"}
+
+    if not req.path:
+        return {"ok": False, "warning": "No subcircuit path given."}
+
+    # Walk the path, collecting breadcrumb labels and validating each hop.
+    node = circuit
+    crumbs: list[str] = []
+    for comp_idx in req.path:
+        child = _child_at(node, comp_idx)
+        if child is None:
+            return {"ok": False,
+                    "warning": "That component is not a resolvable subcircuit."}
+        comp = node.components[comp_idx]
+        crumbs.append(comp.label or comp.element_name)
+        node = child
+    child_circuit = node
+
+    specs = extract_test_specs(circuit)
+    if not specs or req.spec_index >= len(specs):
+        return {"ok": False, "warning": "No such testcase in this circuit."}
+    spec = specs[req.spec_index]
+
+    box: dict = {}
+    try:
+        simulate_sequential(circuit, netlist, graph, spec, req.row_index,
+                            capture_path=tuple(req.path), capture_box=box)
+    except Exception as exc:
+        return {"ok": False,
+                "warning": f"Evaluator error: {type(exc).__name__}: {exc}"}
+
+    res = box.get("result")
+    # Use the SAME netlist/graph the simulator memoized so net ids line up with
+    # the captured values; fall back to a fresh build if the subcircuit wasn't
+    # reached (no live values this row).
+    child_nl = getattr(child_circuit, "_sim_nl", None) or build_netlist(child_circuit)
+    child_g = (getattr(child_circuit, "_sim_g", None)
+               or build_signal_graph(child_circuit, child_nl))
+    graph_json = to_cytoscape(child_circuit, child_nl, child_g)
+
+    if res is None:
+        return {"ok": True, "graph": graph_json, "net_values": {},
+                "unresolved_nets": [], "node_svgs": {},
+                "breadcrumb": crumbs, "depth": len(req.path),
+                "note": "No live values reached this subcircuit for this row."}
+
+    net_values = {
+        str(nid): {"value": val, "bits": res.net_bits.get(nid, 1),
+                   "hex": format(val, "X")}
+        for nid, val in res.net_values.items()
+    }
+    return {
+        "ok": True,
+        "graph": graph_json,
+        "net_values": net_values,
+        "unresolved_nets": sorted(res.unresolved_nets),
+        "node_svgs": _node_reactions(child_circuit, child_nl, res),
+        "breadcrumb": crumbs,
+        "depth": len(req.path),
     }
 
 

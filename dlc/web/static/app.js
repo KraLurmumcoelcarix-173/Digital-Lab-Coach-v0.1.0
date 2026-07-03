@@ -252,6 +252,8 @@ let cy          = null;
 let sigActive   = null;   // {specIdx, rowIdx} of the row driving the overlay
 let clockTimer  = null;   // set while the clock is ticking through rows
 let clockDone   = false;  // true once ticking reached the last row (offer restart)
+let drillCy     = null;   // Cytoscape instance inside the drill-in overlay
+let drillPath   = [];     // component indices from the top circuit to the view
 
 
 fileInput.addEventListener("change", async () => {
@@ -502,12 +504,19 @@ function renderGraph(graph) {
     const nb = node.closedNeighborhood();
     nb.removeClass("faded");
     nb.edges().addClass("highlight");
-    showNodePopup(node);
+    // Subcircuits get a one-line "click to view inside" affordance instead of
+    // the detail popup, and only while a test row is selected.
+    if (isSubNode(node)) {
+      if (sigActive) showSubHint(node, cy);
+    } else {
+      showNodePopup(node);
+    }
   });
   cy.on("mouseout", "node", () => {
     cy.elements().removeClass("faded");
     cy.edges().removeClass("highlight");
     hidePopup();
+    hideSubHint();
   });
 
   cy.on("mouseover", "edge", (evt) => {
@@ -524,12 +533,172 @@ function renderGraph(graph) {
     evt.target.removeClass("wire-focus");
     hidePopup();
   });
-  // Click the Clock glyph to tick the signal flow through the rest of the rows.
+  // Click the Clock glyph to tick the signal flow through the rest of the rows;
+  // click a subcircuit (row selected, clock stopped) to view its inner flow.
   cy.on("tap", "node", (evt) => {
-    if (evt.target.data("element_name") !== "Clock") return;
-    toggleClock();
+    const node = evt.target;
+    if (node.data("element_name") === "Clock") { toggleClock(); return; }
+    if (isSubNode(node)) tryOpenDrill(node, [nodeIndex(node)]);
   });
 }
+
+// --- subcircuit drill-in: view a subcircuit's inner signal flow for the row --
+
+function isSubNode(node) {
+  const en = node && node.data && node.data("element_name");
+  return typeof en === "string" && en.endsWith(".dig");
+}
+
+function nodeIndex(node) {
+  return parseInt(node.id(), 10);
+}
+
+// The single hint element is fixed-positioned, so it serves both the main graph
+// and the drill-in graph. Place it just above the hovered subcircuit rectangle.
+function showSubHint(node, inst) {
+  const hint = document.getElementById("sub-hint");
+  if (!hint) return;
+  const ticking = !!clockTimer;
+  hint.textContent = ticking
+    ? "⏸ stop the clock to view inside"
+    : "▸ click to view this row inside";
+  hint.classList.toggle("blocked", ticking);
+  const rect = inst.container().getBoundingClientRect();
+  const bb = node.renderedBoundingBox();
+  hint.style.left = (rect.left + (bb.x1 + bb.x2) / 2) + "px";
+  hint.style.top = (rect.top + bb.y1 - 6) + "px";
+  hint.classList.remove("hidden");
+}
+
+function hideSubHint() {
+  const hint = document.getElementById("sub-hint");
+  if (hint) hint.classList.add("hidden");
+}
+
+// Guarded entry: only drill when a row is selected and the clock is stopped.
+function tryOpenDrill(node, path) {
+  if (!sigActive) return;                 // no row -> nothing to show
+  if (clockTimer) { showSubHint(node, node.cy()); return; }  // stop clock first
+  openDrill(path);
+}
+
+function openDrill(path) {
+  drillPath = path.slice();
+  hideSubHint();
+  hidePopup();
+  if (cy) { cy.elements().removeClass("faded"); cy.edges().removeClass("highlight"); }
+  const overlay = document.getElementById("drill-overlay");
+  if (overlay) overlay.classList.remove("hidden");
+  loadDrill();
+}
+
+async function loadDrill() {
+  if (!sessionId || !loaded[currentIdx] || !sigActive || !drillPath.length) return;
+  const filename = loaded[currentIdx].filename;
+  const noteEl = document.getElementById("drill-note");
+  if (noteEl) noteEl.textContent = "loading…";
+  let data;
+  try {
+    const res = await fetch("/api/subcircuit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId, filename,
+        spec_index: sigActive.specIdx, row_index: sigActive.rowIdx,
+        path: drillPath,
+      }),
+    });
+    data = await res.json();
+  } catch (err) {
+    if (noteEl) noteEl.textContent = "could not load subcircuit";
+    return;
+  }
+  if (!data || data.ok === false) {
+    if (noteEl) noteEl.textContent = (data && data.warning) || "unavailable";
+    return;
+  }
+  renderDrillGraph(data);
+}
+
+function renderDrillGraph(data) {
+  const box = document.getElementById("drill-cy");
+  if (!box) return;
+  if (drillCy) { try { drillCy.destroy(); } catch {} drillCy = null; }
+
+  drillCy = cytoscape({
+    container: box,
+    elements: { nodes: data.graph.nodes, edges: data.graph.edges },
+    style: CY_STYLE,
+    layout: {
+      name: "dagre", rankDir: "LR",
+      nodeSep: 30, rankSep: 60, edgeSep: 10, animate: false,
+    },
+    wheelSensitivity: 0.2,
+    minZoom: 0.1, maxZoom: 3,
+    // View-only: no dragging, no selection — the only controls are the deeper
+    // drill (on a nested subcircuit) and Go back.
+    autoungrabify: true,
+    boxSelectionEnabled: false,
+    autounselectify: true,
+  });
+
+  const inst = drillCy;
+  inst.once("layoutstop", () => {
+    setTimeout(() => { try { inst.resize(); inst.fit(undefined, 40); } catch {} }, 0);
+  });
+
+  // Nested subcircuits are themselves drillable; everything else is inert.
+  inst.on("mouseover", "node", (evt) => {
+    if (isSubNode(evt.target)) showSubHint(evt.target, inst);
+  });
+  inst.on("mouseout", "node", hideSubHint);
+  inst.on("tap", "node", (evt) => {
+    const node = evt.target;
+    if (isSubNode(node)) {
+      hideSubHint();
+      openDrill(drillPath.concat(nodeIndex(node)));
+    }
+  });
+
+  applySignalFlow(data, inst);
+  renderDrillCrumb(data);
+}
+
+function renderDrillCrumb(data) {
+  const crumbEl = document.getElementById("drill-crumb");
+  const noteEl = document.getElementById("drill-note");
+  if (crumbEl) {
+    const master = (loaded[currentIdx] && loaded[currentIdx].filename) || "circuit";
+    const parts = [master].concat(data.breadcrumb || []);
+    crumbEl.innerHTML =
+      parts.map((p) => escapeHtml(p)).join('<span class="crumb-sep">&#9656;</span>') +
+      `<span class="crumb-row">row ${sigActive ? sigActive.rowIdx : "?"}</span>`;
+  }
+  if (noteEl) noteEl.textContent = data.note || "";
+  const back = document.getElementById("drill-back");
+  if (back) back.textContent = drillPath.length > 1 ? "◂ Go back" : "◂ Close";
+}
+
+function drillBack() {
+  drillPath.pop();
+  hideSubHint();
+  if (!drillPath.length) { closeDrill(); return; }
+  loadDrill();
+}
+
+function closeDrill() {
+  drillPath = [];
+  hideSubHint();
+  if (drillCy) { try { drillCy.destroy(); } catch {} drillCy = null; }
+  const overlay = document.getElementById("drill-overlay");
+  if (overlay) overlay.classList.add("hidden");
+}
+
+(function wireDrillControls() {
+  const back = document.getElementById("drill-back");
+  if (back) back.addEventListener("click", drillBack);
+})();
+
 
 function showNodePopup(node) {
   const d = node.data();
@@ -1311,13 +1480,13 @@ function startClockTick() {
   step();
 }
 
-function clearSignalFlow() {
-  if (!cy) return;
-  cy.edges().removeClass("sig-hi sig-lo sig-bus sig-none sig-dim");
-  cy.nodes().removeClass("sig-mismatch sig-dim");
-  cy.batch(() => {
-    cy.edges().forEach((e) => e.data("sigLabel", ""));
-    cy.nodes().forEach((n) => {
+function clearSignalFlow(inst = cy) {
+  if (!inst) return;
+  inst.edges().removeClass("sig-hi sig-lo sig-bus sig-none sig-dim");
+  inst.nodes().removeClass("sig-mismatch sig-dim");
+  inst.batch(() => {
+    inst.edges().forEach((e) => e.data("sigLabel", ""));
+    inst.nodes().forEach((n) => {
       const base = n.data("baseLabel");
       if (base != null) n.data("label", base);
       const baseShape = n.data("baseShape");   // restore reacted glyph
@@ -1328,13 +1497,14 @@ function clearSignalFlow() {
 
 // Paint every edge by the value its net carries this row: 1-bit -> green
 // (bright 1 / dark 0), multi-bit -> blue + hex on the wire, unresolved ->
-// gray. Failed-row outputs get a red ring + expected/found chip.
-function applySignalFlow(sim) {
-  if (!cy) return;
-  clearSignalFlow();
+// gray. Failed-row outputs get a red ring + expected/found chip. Works on any
+// Cytoscape instance so the drill-in graph reuses the exact same coloring.
+function applySignalFlow(sim, inst = cy) {
+  if (!inst) return;
+  clearSignalFlow(inst);
   const nv = sim.net_values || {};
-  cy.batch(() => {
-    cy.edges().forEach((e) => {
+  inst.batch(() => {
+    inst.edges().forEach((e) => {
       const nid = e.data("net_id");
       const info = (nid !== null && nid !== undefined) ? nv[String(nid)] : null;
       if (!info) { e.addClass("sig-none"); return; }
@@ -1348,7 +1518,7 @@ function applySignalFlow(sim) {
     });
     (sim.outputs || []).forEach((o) => {
       if (o.ok !== false) return;
-      cy.nodes().forEach((n) => {
+       inst.nodes().forEach((n) => {
         if (n.data("element_name") !== "Out") return;
         if (n.data("comp_label") !== o.label) return;
         if (n.data("baseLabel") == null) n.data("baseLabel", n.data("label"));
@@ -1360,7 +1530,7 @@ function applySignalFlow(sim) {
     // (7-seg lit segments, mux/decoder selected-port ring).
     const svgs = sim.node_svgs || {};
     Object.keys(svgs).forEach((id) => {
-      const n = cy.getElementById(id);
+      const n = inst.getElementById(id);
       if (!n || n.empty()) return;
       if (n.data("baseShape") == null) n.data("baseShape", n.data("shape_svg"));
       n.data("shape_svg", svgs[id]);

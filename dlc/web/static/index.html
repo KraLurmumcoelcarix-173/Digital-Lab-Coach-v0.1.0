@@ -62,6 +62,9 @@
             <div class="hover-popup-title" id="hover-popup-title">&nbsp;</div>
             <div class="hover-popup-body" id="hover-popup-body"></div>
           </div>
+          <!-- one-line affordance shown over a subcircuit rectangle when a
+               test row is selected: click to drill into its signal flow -->
+          <div id="sub-hint" class="sub-hint hidden"></div>
         </section>
 
         <aside id="summary-pane">
@@ -252,6 +255,23 @@
             <button id="jar-save-btn" class="btn">Save</button>
           </div>
           <div id="jar-modal-msg" class="modal-msg"></div>
+        </div>
+      </div>
+
+      <!-- Subcircuit drill-in: blurs the rest of the page and shows the
+           selected row's signal flow *inside* a subcircuit. View-only; the
+           only control is Go back (one level up, or close at the top). -->
+      <div id="drill-overlay" class="drill-overlay hidden">
+        <div class="drill-backdrop"></div>
+        <div class="drill-panel">
+          <header class="drill-head">
+            <button id="drill-back" class="drill-back" type="button">
+              &#9666; Go back
+            </button>
+            <div id="drill-crumb" class="drill-crumb"></div>
+            <div id="drill-note" class="drill-note"></div>
+          </header>
+          <div id="drill-cy" class="drill-cy"></div>
         </div>
       </div>
     </main>
