@@ -1,6 +1,6 @@
 # Digital Notes
 
-Last updated: 2026/6/25
+Last updated: 2026/7/03
 
 ---
 
@@ -90,8 +90,8 @@ Digital's coordinate system: x increases rightward, y increases downward. Anchor
   listing input pin names (`In_1`, `In_2`, …) that are inverted (a bubble on
   that specific input). It changes the gate's logic and its visual state — e.g.
   `add-sub.dig` uses an `And` with `In_1`/`In_2` negated. Parsed and kept
-  in `attributes`; the future Layer-1 simulator must apply the per-input
-  negation.
+  in `attributes`; the Layer-1 value evaluator (`dlc/sim/simulator.py`)
+  applies the per-input negation via the gate's inverter bubbles.
 
 ### Wires
 

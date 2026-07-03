@@ -1,9 +1,11 @@
 # Layer 1 Test Notes
 
 Manual test snippets for Layer 1 deterministic checkers (F5-F9).
-Run from repo root.
+Run from repo root. The Layer-1 value evaluator (`dlc/sim/simulator.py`,
+exposed via `/api/simulate`) is a newer Layer-1 surface not yet covered
+here — add snippets once its manual-test flow stabilizes.
 
-Last updated: 2026/5/25
+Last updated: 2026/7/03
 
 ---
 

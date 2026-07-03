@@ -36,13 +36,13 @@
 |---|---|:-:|
 | F14 | Failed-test interpreter | **L3 Mode A** (debug, when tests fail): hypothesis cards + animated wrong-signal-flow. Data side done (per-row runner: failing rows + expected-vs-found; **plus the `dlc/sim` value evaluator + `/api/simulate` now compute and drive the wrong-signal-flow**); LLM side TBD (`/api/llm/debug`) |
 | F15 | Test-writing coach | **L3 Mode B** (coverage): test-coverage analysis -> non-redundant new tests; gated on L1 clean + all tests pass; ROM/RISC-V -> more program + instruction-memory hints. TBD |
-| F16 | Signal-flow narrator | The failing-row animation; consumes the Layer-1 signal-flow-on-click output (`signal_path_components` / `animation_script`). TBD |
+| F16 | Signal-flow narrator | The failing-row animation. Its Layer-1 signal-flow-on-click substrate is now **Done** (`/api/simulate` returns per-net values + expected-vs-found outputs + node reactions, which the row-click renderer animates; `/api/subcircuit` drives nested flow). The v3 field names `signal_path_components`/`animation_script` were never built; `animation_script` becomes an L3-agent output. LLM narration layer TBD. |
 
 ## Research infrastructure
 
 | # | Name | Status |
 |---|---|:-:|
-| F17 | UI design | Ongoing — incl. **Layer 1 signal-flow-on-row-click** (real component shapes + per-component visual states + bus/split-merge coloring) |
+| F17 | UI design | Ongoing. **Layer 1 signal-flow-on-row-click — Done**: clicking a test row colors every wire by value (1-bit green bright/dark, multi-bit blue + hex label, unresolved gray), real Digital component SVG glyphs, per-component reactions (7-seg lighting, mux/decoder selected-port ring, register value), a user-triggered clock-tick that steps signal flow through the remaining rows, a recursive subcircuit **drill-in** overlay, and a "snow storm" clear-page animation |
 | F18 | Ablation condition controller | TBD |
 | F19 | Telemetry logger & Proxy Server | TBD (frontend event log exists; SQLite sink TBD) |
 | F20 | Digital source-code dig (Path-3 plugin viability) | TBD |

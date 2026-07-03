@@ -18,6 +18,8 @@ Active development. No release yet.
 | `dlc/facts/` | Extracts a JSON-serializable bundle of facts the LLM and deterministic checkers consume: inventory, per-net widths, per-component topology, structural bug list.
 | `dlc/testing/` | Reads each Testcase's embedded test rows out of the `.dig`, parses Digital's CLI output, and pinpoints which specific rows fail — one fast `CLI test -verbose` call per file (with expected-vs-found cells per failing row), falling back to cumulative one-row-at-a-time runs when the fast mapping can't be trusted. 
 | `dlc/analyzer/` | Deterministic checkers — wire completeness, bit widths, combinational loops, interface conformance, sequential timing. Shallow (top circuit) and deep (whole subcircuit tree) variants. 
+| `dlc/sim/` | Deterministic value evaluator — combinational + sequential simulator (`simulator.py`) that computes the value on every net for a given test row, with hierarchical (path-keyed) register state for clocked designs and recursive subcircuit evaluation. Powers the signal-flow-on-row-click UI and the subcircuit drill-in. 
+| `dlc/web/` | FastAPI server (`server.py`) + browser front-end (`static/app.js`) for the Layer 1/2 web app: interactive graph, structural-issue overlay, per-row test runner, signal-flow-on-row-click, subcircuit drill-in, and the Layer 2 coach. 
 | `dlc/llm/` | LLM client wrapper and versioned prompts for conceptual explanation + credibility grading (Layer 2) and strategic debugging (Layer 3). 
 | `dlc/evaluator/` | Layer-2 research harness: model-competition benchmark (generate + grade per cell), grader selection, and Pareto/cost plots. All outputs write outside the repo. 
 | `dlc/telemetry/` | Per-interaction logging to a local SQLite database. 
@@ -35,7 +37,12 @@ Open it in a browser, point it at one or more `.dig` files, and
 you get the interactive graph, structural-issue overlay (including
 issues nested inside subcircuits), per-row test runner, a one-click
 "Test all" sweep across every uploaded file, component library, and
-the Layer 2 conceptual coach.
+the Layer 2 conceptual coach. Clicking a test row also runs the built-in
+value evaluator to color every wire by its computed value (real Digital
+component glyphs, per-component reactions like 7-seg lighting and register
+values), lets you tick a clock to step the signal flow through the remaining
+rows, and lets you drill into a subcircuit to watch its inner signal flow
+for the same row.
 
 Try the early web version by going over developer setup and running 
 the command below:
