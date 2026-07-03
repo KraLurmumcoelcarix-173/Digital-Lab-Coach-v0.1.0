@@ -1,4 +1,4 @@
-# Function Plan (F1 – F21)
+# Function Plan (F1 – F22)
 
 ## Core analyzer (no LLM)
 
@@ -18,6 +18,7 @@
 | F7 | Combinational-loop checker | Done |
 | F8 | Interface conformance checker | Done |
 | F9 | Timing / sequential checker (register-clock-Q) | Done |
+| F9.5 | Value evaluator (combinational + sequential simulator) | Done — `dlc/sim/simulator.py`: gates (inverter bubbles), Const/Ground/VDD, mux, decoder, priority-encoder, splitter (bit-range), adder (carry), comparator, ROM, barrel-shifter, bit-extender, recursive subcircuits; worklist fixpoint; **hierarchical path-keyed sequential register state** so nested registers persist across clock-edge rows; honest unresolved-net reporting. Exposed via `/api/simulate` + `/api/subcircuit`. |
 | F10 | K-map / Boolean simplification PRO | Done |
 | F10.2 | Gate-minimization practice (Layer 5.2) | TBD — joins the K-map tab in the Practice surface |
 
@@ -33,7 +34,7 @@
 
 | # | Name | Status |
 |---|---|:-:|
-| F14 | Failed-test interpreter | **L3 Mode A** (debug, when tests fail): hypothesis cards + animated wrong-signal-flow. Data side done (per-row runner: failing rows + expected-vs-found); LLM side TBD (`/api/llm/debug`) |
+| F14 | Failed-test interpreter | **L3 Mode A** (debug, when tests fail): hypothesis cards + animated wrong-signal-flow. Data side done (per-row runner: failing rows + expected-vs-found; **plus the `dlc/sim` value evaluator + `/api/simulate` now compute and drive the wrong-signal-flow**); LLM side TBD (`/api/llm/debug`) |
 | F15 | Test-writing coach | **L3 Mode B** (coverage): test-coverage analysis -> non-redundant new tests; gated on L1 clean + all tests pass; ROM/RISC-V -> more program + instruction-memory hints. TBD |
 | F16 | Signal-flow narrator | The failing-row animation; consumes the Layer-1 signal-flow-on-click output (`signal_path_components` / `animation_script`). TBD |
 
