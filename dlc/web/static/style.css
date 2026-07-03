@@ -1338,3 +1338,107 @@ main {
   font-style: italic;
 }
 
+/* === Subcircuit drill-in ================================================= */
+
+/* One-line affordance shown over a subcircuit rectangle when a test row is
+   selected. Fixed-positioned so the same element serves the main graph and the
+   drill-in graph; JS places it from the node's rendered position. */
+.sub-hint {
+  position: fixed;
+  z-index: 60;
+  transform: translate(-50%, -100%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--accent-hover);
+  background: var(--accent);
+  color: #fff;
+}
+.sub-hint.blocked {            /* clock ticking: must stop it first */
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fed7aa;
+}
+.sub-hint.hidden { display: none; }
+
+/* Overlay blurs the rest of the page; the panel is view-only. */
+.drill-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.drill-overlay.hidden { display: none; }
+
+.drill-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.30);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.drill-panel {
+  position: relative;
+  width: min(1100px, 92vw);
+  height: min(760px, 88vh);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.drill-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fafc;
+}
+
+.drill-back {
+  flex: none;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--ghost);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.drill-back:hover { background: var(--ghost-hover); }
+
+.drill-crumb {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drill-crumb .crumb-sep { color: var(--muted); margin: 0 6px; font-weight: 400; }
+.drill-crumb .crumb-row { color: var(--accent); margin-left: 8px; font-size: 12px; }
+
+.drill-note {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.drill-cy {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--panel);
+}

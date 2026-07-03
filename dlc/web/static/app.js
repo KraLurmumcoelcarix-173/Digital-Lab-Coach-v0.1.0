@@ -324,6 +324,13 @@ function resetDashboard() {
   activeIssueIdx = null;
   sessionId = null;
   for (const k of Object.keys(testState)) delete testState[k];
+  // Tear down the signal-flow session UI too: the "click the Clock to tick"
+  // HUD and any open subcircuit drill-in would otherwise linger after a clear.
+  sigActive = null;
+  clockDone = false;
+  stopClockTick();
+  hideClockHud();
+  closeDrill();
   if (cy) { cy.destroy(); cy = null; }
   fileSelect.innerHTML = "<option>(no file)</option>";
   fileSelect.disabled = true;
@@ -674,10 +681,40 @@ function renderDrillCrumb(data) {
       parts.map((p) => escapeHtml(p)).join('<span class="crumb-sep">&#9656;</span>') +
       `<span class="crumb-row">row ${sigActive ? sigActive.rowIdx : "?"}</span>`;
   }
-  if (noteEl) noteEl.textContent = data.note || "";
+  // Convey what this subcircuit *produced* for the row at a glance: its output
+  // pin values (the inner wires show the rest of the flow). Falls back to the
+  // server note when nothing resolved.
+  if (noteEl) {
+    const outs = drillOutputSummary(data);
+    const shown = outs.slice(0, 6);
+    if (outs.length > 6) shown.push(`+${outs.length - 6} more`);
+    noteEl.textContent = outs.length
+      ? "produces  " + shown.join("   ")
+      : (data.note || "");
+  }
   const back = document.getElementById("drill-back");
   if (back) back.textContent = drillPath.length > 1 ? "◂ Go back" : "◂ Close";
 }
+
+// Read each Out node's incoming wire value from the captured row so the header
+// can show "produces  Out=0xEDD  Sign=0". Bus values in hex, 1-bit in decimal.
+function drillOutputSummary(data) {
+  const nv = data.net_values || {};
+  const edges = (data.graph && data.graph.edges) || [];
+  const nodes = (data.graph && data.graph.nodes) || [];
+  const out = [];
+  nodes.forEach((n) => {
+    const d = n.data;
+    if (d.element_name !== "Out") return;
+    const e = edges.find((e) => e.data.target === d.id);
+    const info = e ? nv[String(e.data.net_id)] : null;
+    if (!info) return;
+    const val = (info.bits || 1) > 1 ? "0x" + (info.hex || "0") : String(info.value);
+    out.push(`${d.comp_label || "out"}=${val}`);
+  });
+  return out;
+}
+
 
 function drillBack() {
   drillPath.pop();
