@@ -1,6 +1,6 @@
 # Testing Notes
 
-Last updated: 2026/7/3
+Last updated: 2026/7/5
 
 ---
 
@@ -483,6 +483,15 @@ Mode C (per-spec fallback to Mode B happens automatically).
 | `test_prompt_for_jar_path_saves_when_user_picks_file` | First-run tkinter dialog → config-save flow broken; students would re-prompt every run. | `tests/test_testing_config.py` |
 | `test_set_digital_jar_path_writes_config` | The "set once via Python" path doesn't persist. | `tests/test_testing_config.py` |
 
+#### Layer 3 — oracle (temp-inject + rerun)
+
+| Test | If it fails… | File |
+|---|---|---|
+| `test_injected_temp_differs_only_inside_datastring` | Row injection is no longer byte-preserving; a temp circuit may differ structurally from the student's original. | `tests/test_l3_oracle.py` |
+| `test_injection_targets_named_testcase_only` | Multi-testcase targeting broke; injecting into one testcase corrupts another. | `tests/test_l3_oracle.py` |
+| `test_validate_rejects_*` | Bad coach/student rows reach the temp file instead of being rejected up front. | `tests/test_l3_oracle.py` |
+| `test_rerun_flags_wrong_added_row_and_keeps_originals_green` | The Mode-B accept-flow's core signal (added-row pass/fail + expected-vs-found) regressed. | `tests/test_l3_oracle.py` |
+| `test_rerun_all_added_pass_sets_mode_b_lock_signal` | `added_all_passed` (Mode B's "you're all set" / daily-lock signal) or temp-file cleanup regressed. | `tests/test_l3_oracle.py` |
 
 ## When you add a new test
 

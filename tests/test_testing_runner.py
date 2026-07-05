@@ -49,11 +49,15 @@ def test_find_digital_jar_uses_env_var(tmp_path):
 
 
 def test_find_digital_jar_returns_none_when_nothing_found():
+    # Isolate ALL three discovery sources: env var, the saved
+    # ~/.dlc/config.json (leaks in from the developer's real machine
+    # otherwise), and the common install-path probe.
     with patch.dict(os.environ, {}, clear=True):
-        with patch("dlc.testing.runner.Path") as mock_path:
-            instance = mock_path.return_value
-            instance.exists.return_value = False
-            assert find_digital_jar() is None
+        with patch("dlc.testing.config.get_configured_jar", return_value=None):
+            with patch("dlc.testing.runner.Path") as mock_path:
+                instance = mock_path.return_value
+                instance.exists.return_value = False
+                assert find_digital_jar() is None
 
 
 # Jar missing path
