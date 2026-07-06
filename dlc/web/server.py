@@ -18,7 +18,10 @@ Endpoints:
   POST /api/llm/grade          Layer 2 summary credibility grade
 """
 from pathlib import Path
+import os
+import shutil
 import tempfile
+import time
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -51,6 +54,7 @@ from dlc.parser.pin_geometry import inverted_input_names
 
 from dlc.testing.spec import extract_test_specs
 from dlc.sim.simulator import simulate_sequential
+from dlc.telemetry.sink import log_events
 from dlc.web.graph_export import circuit_summary, to_cytoscape
 
 
@@ -60,6 +64,41 @@ app = FastAPI(title="Digital Lab Coach", version="0.3.1")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _SESSIONS: dict[str, dict] = {}
+
+# Idle sessions (and their uploaded temp dirs) are garbage-collected on the
+# next upload; finished/stale jobs likewise. Long TTLs on purpose — a student
+# leaving the tab open through a lab session must never lose their circuit.
+SESSION_TTL_SECONDS = float(os.environ.get("DLC_SESSION_TTL", 12 * 3600))
+JOB_TTL_SECONDS = float(os.environ.get("DLC_JOB_TTL", 24 * 3600))
+
+
+def _gc_sessions(now: float | None = None) -> int:
+    """Drop sessions idle for longer than SESSION_TTL_SECONDS and remove
+    their upload temp dirs. Returns how many sessions were collected."""
+    now = time.time() if now is None else now
+    dead = [
+        sid for sid, s in _SESSIONS.items()
+        if now - s.get("last_used", now) > SESSION_TTL_SECONDS
+    ]
+    for sid in dead:
+        tmp_dir = _SESSIONS[sid].get("tmp_dir")
+        del _SESSIONS[sid]
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    return len(dead)
+
+
+def _gc_jobs(now: float | None = None) -> int:
+    """Drop per-row job records older than JOB_TTL_SECONDS."""
+    now = time.time() if now is None else now
+    with _JOBS_LOCK:
+        dead = [
+            jid for jid, j in _JOBS.items()
+            if now - j.get("created_at", now) > JOB_TTL_SECONDS
+        ]
+        for jid in dead:
+            del _JOBS[jid]
+    return len(dead)
 
 
 class JarRequest(BaseModel):
@@ -96,6 +135,10 @@ class ApiKeyRequest(BaseModel):
     provider: str = "anthropic"
     key: str
 
+
+class TelemetryRequest(BaseModel):
+    session_id: str | None = None
+    events: list[dict] = []
 
 class LlmExplainRequest(BaseModel):
     session_id: str
@@ -177,11 +220,17 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
         raise HTTPException(
             status_code=400, detail="Please upload at least one .dig file."
         )
+    
+    # Housekeeping rides on uploads: cheap, and guarantees a fresh session
+    # never competes with long-dead ones for memory/disk.
+    _gc_sessions()
+    _gc_jobs()
 
     session_id = uuid.uuid4().hex
     _SESSIONS[session_id] = {
         "tmp_dir": str(tmp_dir),
         "files": [{"name": n, "path": str(p)} for n, p in saved],
+        "last_used": time.time(),
     }
 
     results: list[dict] = []
@@ -222,6 +271,7 @@ def _resolve_target(session_id: str, filename: str) -> dict:
     session = _SESSIONS.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    session["last_used"] = time.time()   # any activity defers the GC TTL
     target = next(
         (f for f in session["files"] if f["name"] == filename), None
     )
@@ -581,6 +631,7 @@ def tests_start(req: TestsRequest) -> dict:
             "warning": None, "all_passed": None,
             "done_rows": 0, "total_rows": 0,
             "specs": [], "mode": "per_row",
+            "created_at": time.time(),
         }
     threading.Thread(
         target=_run_per_row_job,
@@ -957,6 +1008,19 @@ def subcircuit_row(req: SubcircuitRequest) -> dict:
         "breadcrumb": crumbs,
         "depth": len(req.path),
     }
+
+@app.post("/api/telemetry")
+def telemetry(req: TelemetryRequest) -> dict:
+    """Batch-store frontend events (window.dlcEventLog) into the local
+    SQLite sink (~/.dlc/telemetry.db). Telemetry must never break the app:
+    malformed events are skipped, and storage failures return ok=False
+    instead of raising."""
+    try:
+        stored = log_events(req.session_id, req.events)
+    except Exception as exc:
+        return {"ok": False, "stored": 0,
+                "warning": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "stored": stored}
 
 
 
