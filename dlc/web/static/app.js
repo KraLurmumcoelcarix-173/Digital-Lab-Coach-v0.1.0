@@ -239,6 +239,37 @@ function logEvent(kind, details = {}) {
 }
 window.dlcEventLog = eventLog;
 
+// --- telemetry sink flush -----------------------------------------------
+// Batch-persist dlcEventLog to /api/telemetry (local SQLite; see
+// dlc/telemetry/sink.py) every 15s and on page hide. Fire-and-forget:
+// telemetry must never affect the app, so failures are swallowed and a
+// batch is marked sent when handed off (at-most-once, no duplicates).
+let telemetrySentIdx = 0;
+function flushTelemetry(useBeacon = false) {
+  if (telemetrySentIdx >= eventLog.length) return;
+  const payload = JSON.stringify({
+    session_id: sessionId,
+    events: eventLog.slice(telemetrySentIdx),
+  });
+  telemetrySentIdx = eventLog.length;
+  try {
+    if (useBeacon && navigator.sendBeacon) {
+      navigator.sendBeacon(
+        "/api/telemetry", new Blob([payload], { type: "application/json" }),
+      );
+    } else {
+      fetch("/api/telemetry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: useBeacon,
+      }).catch(() => {});
+    }
+  } catch { /* never let telemetry break the app */ }
+}
+setInterval(flushTelemetry, 15000);
+window.addEventListener("pagehide", () => flushTelemetry(true));
+
 const MUTE_THRESHOLD = 3;
 let mutedByUser = new Set();   
 let activeIssueIdx = null;     
@@ -691,6 +722,7 @@ function renderDrillCrumb(data) {
     noteEl.textContent = outs.length
       ? "produces  " + shown.join("   ")
       : (data.note || "");
+    noteEl.title = outs.length ? "produces  " + outs.join("   ") : "";
   }
   const back = document.getElementById("drill-back");
   if (back) back.textContent = drillPath.length > 1 ? "◂ Go back" : "◂ Close";

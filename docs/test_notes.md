@@ -1,6 +1,6 @@
 # Testing Notes
 
-Last updated: 2026/7/5
+Last updated: 2026/7/6
 
 ---
 
@@ -492,6 +492,17 @@ Mode C (per-spec fallback to Mode B happens automatically).
 | `test_validate_rejects_*` | Bad coach/student rows reach the temp file instead of being rejected up front. | `tests/test_l3_oracle.py` |
 | `test_rerun_flags_wrong_added_row_and_keeps_originals_green` | The Mode-B accept-flow's core signal (added-row pass/fail + expected-vs-found) regressed. | `tests/test_l3_oracle.py` |
 | `test_rerun_all_added_pass_sets_mode_b_lock_signal` | `added_all_passed` (Mode B's "you're all set" / daily-lock signal) or temp-file cleanup regressed. | `tests/test_l3_oracle.py` |
+
+#### Telemetry sink + session GC
+
+| Test | If it fails… | File |
+|---|---|---|
+| `test_log_events_stores_kind_ts_and_details` | The SQLite sink drops or mangles events; the IRB telemetry pairs stop recording. | `tests/test_telemetry_sink.py` |
+| `test_log_events_skips_malformed_entries_without_failing_the_batch` | One bad frontend event can now kill a whole telemetry batch. | `tests/test_telemetry_sink.py` |
+| `test_telemetry_endpoint_stores_batch` | `/api/telemetry` broke; `window.dlcEventLog` flushes go nowhere. | `tests/test_telemetry_sink.py` |
+| `test_gc_sessions_removes_idle_sessions_and_their_tmp_dirs` | Idle sessions / upload temp dirs accumulate forever (pre-cohort leak). | `tests/test_telemetry_sink.py` |
+| `test_activity_defers_the_session_ttl` | Active students can lose their session mid-lab to the GC. | `tests/test_telemetry_sink.py` |
+| `test_upload_runs_the_gc_sweep` | The GC no longer rides on uploads; nothing ever gets collected. | `tests/test_telemetry_sink.py` |
 
 ## When you add a new test
 
