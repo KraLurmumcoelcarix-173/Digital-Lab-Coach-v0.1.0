@@ -301,3 +301,113 @@ def test_bug1_rewire_mux_in3_to_bool_unit_makes_all_rows_pass():
     ])
     assert out.ok, out.warning
     assert out.all_passed is True, out.specs
+
+# ---------------------------------------------------------------------------
+# add_component / delete_component
+# ---------------------------------------------------------------------------
+
+def test_add_component_wired_via_add_wire(tmp_path):
+    # Insert a NOT between In B and Comparator.B: add the component, cut the
+    # old wire, wire B -> Not.A and Not.Y -> Comparator.B at its pin offsets
+    # (Not: A@anchor, Y@anchor+40).
+    src = tmp_path / "mini.dig"
+    src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
+    temp, report = apply_patch(str(src), [
+        {"op": "add_component", "element_name": "Not",
+         "position": [100, 60], "attributes": {"Bits": 1}},
+        {"op": "delete_wire", "p1": [0, 20], "p2": [200, 20]},
+        {"op": "add_wire", "p1": [0, 20], "p2": [100, 60]},
+        {"op": "add_wire", "p1": [140, 60], "p2": [200, 20]},
+    ])
+    assert report.ok, report.warning
+    try:
+        patched = parse_dig_file(temp)
+        assert patched.components[-1].element_name == "Not"   # appended at END
+        assert patched.components[-1].attributes["Bits"] == 1
+        after = _edges(temp)
+        assert ("B", "out", "Not", "A") in after
+        assert ("Not", "Y", "Comparator", "B") in after
+    finally:
+        os.unlink(temp)
+
+
+def test_delete_component_removes_element_and_deadend_wire(tmp_path):
+    src = tmp_path / "mini.dig"
+    src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
+    temp, report = apply_patch(str(src), [
+        {"op": "delete_component", "component_index": 3},     # the Out G
+    ])
+    assert report.ok, report.warning
+    try:
+        patched = parse_dig_file(temp)
+        assert len(patched.components) == 3
+        assert not any(c.element_name == "Out" for c in patched.components)
+        assert len(patched.wires) == 2                        # gr->G wire gone
+    finally:
+        os.unlink(temp)
+
+
+def test_delete_component_keeps_junction_wires(tmp_path):
+    # Out G's pin coordinate is a junction (a second segment continues from
+    # it): deleting G must not remove the shared routing.
+    wires = _SIMPLE_WIRES + """
+    <wire><p1 x="300" y="0"/><p2 x="300" y="100"/></wire>"""
+    src = tmp_path / "mini.dig"
+    src.write_text(_mini_circuit(wires), encoding="utf-8")
+    temp, report = apply_patch(str(src), [
+        {"op": "delete_component", "component_index": 3},
+    ])
+    assert report.ok, report.warning
+    try:
+        patched = parse_dig_file(temp)
+        assert len(patched.wires) == 4                        # nothing removed
+        assert not any(c.element_name == "Out" for c in patched.components)
+    finally:
+        os.unlink(temp)
+
+
+def test_delete_component_breaking_the_circuit_is_rejected(tmp_path):
+    # Deleting In A orphans Comparator.A -> NEW dangling_input -> guard trips.
+    src = tmp_path / "mini.dig"
+    src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
+    temp, report = apply_patch(str(src), [
+        {"op": "delete_component", "component_index": 0},
+    ])
+    assert temp is None and not report.ok
+    assert "new Layer-1" in report.warning
+    assert "dangling_input" in report.new_l1_error_kinds
+
+
+def test_deletes_apply_last_so_indices_stay_original(tmp_path):
+    # Two isolated Consts [4] and [5]; delete [4] while changing [5]'s Value.
+    # If deletion ran first, index 5 would shift and the change would miss.
+    extra = """
+    <visualElement>
+      <elementName>Const</elementName>
+      <elementAttributes>
+        <entry><string>Value</string><long>1</long></entry>
+      </elementAttributes>
+      <pos x="0" y="200"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Const</elementName>
+      <elementAttributes>
+        <entry><string>Value</string><long>2</long></entry>
+      </elementAttributes>
+      <pos x="0" y="240"/>
+    </visualElement>"""
+    src = tmp_path / "mini.dig"
+    src.write_text(_mini_circuit(_SIMPLE_WIRES, extra), encoding="utf-8")
+    temp, report = apply_patch(str(src), [
+        {"op": "delete_component", "component_index": 4},
+        {"op": "change_attribute", "component_index": 5,
+         "name": "Value", "value": 7},
+    ])
+    assert report.ok, report.warning
+    try:
+        patched = parse_dig_file(temp)
+        consts = [c for c in patched.components if c.element_name == "Const"]
+        assert len(consts) == 1
+        assert consts[0].attributes["Value"] == 7
+    finally:
+        os.unlink(temp)

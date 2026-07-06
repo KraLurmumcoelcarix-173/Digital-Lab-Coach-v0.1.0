@@ -33,6 +33,25 @@ The vocabulary, mapped to the L3 bug classes:
       Raw escape hatches when the pin-level ops don't fit (e.g. pins
       meeting at shared junctions, which swap/rewire refuse to touch).
 
+  {"op": "add_component", "element_name": "Not", "position": [x, y],
+   "attributes": {"Bits": 4}}
+      Place a NEW component (missing inverter, missing extender, ...).
+      It is appended at the END of the element list, so existing
+      component indices never shift. Wire it with add_wire at its pin
+      offsets — pin-level ops cannot target a component added in the
+      same patch (coordinates are indexed from the ORIGINAL circuit).
+
+  {"op": "delete_component", "component_index": i}
+      Remove a stray/duplicated component, along with wire segments that
+      dead-end at its pins (segments passing through shared junctions
+      are kept — they route other signals).
+
+Op ordering rule: every component_index refers to the ORIGINAL circuit.
+delete_component ops are therefore applied LAST (multiple deletes in
+descending index order), so deletions never shift the indices other ops
+in the same patch rely on.
+
+
 Safety:
   * swap_pins / rewire_pin refuse pins sitting on a junction
     (>1 wire endpoint at that coordinate) — silently splitting a shared
@@ -69,7 +88,7 @@ _TEMP_PREFIX = "dlc_row_l3fix_"   # rides the dlc_row_*.dig gitignore glob
 
 KNOWN_OPS = frozenset({
     "change_attribute", "replace_element", "swap_pins", "rewire_pin",
-    "add_wire", "delete_wire",
+    "add_wire", "delete_wire", "add_component", "delete_component",
 })
 
 # XML value tag for NEW attribute entries (existing entries keep their tag).
@@ -147,6 +166,26 @@ def _format_value(tag: str, value) -> tuple[str, str | None, dict]:
         return tag, None, {"rotation": str(int(value))}
     return tag, str(value), {}
 
+def _append_entry(attrs_el, name: str, value) -> None:
+    """Append one typed <entry> to an elementAttributes block."""
+    if name in _NEW_ENTRY_TAG:
+        tag = _NEW_ENTRY_TAG[name]
+    elif isinstance(value, bool):
+        tag = "boolean"
+    elif isinstance(value, int):
+        tag = "int"
+    else:
+        tag = "string"
+    entry = etree.SubElement(attrs_el, "entry")
+    key_el = etree.SubElement(entry, "string")
+    key_el.text = name
+    tag, text, xattr = _format_value(tag, value)
+    val_el = etree.SubElement(entry, tag)
+    val_el.text = text
+    for k, v in xattr.items():
+        val_el.set(k, v)
+
+
 
 def _apply_change_attribute(root, op) -> str:
     ve = _ve_for_index(root, op["component_index"])
@@ -170,22 +209,7 @@ def _apply_change_attribute(root, op) -> str:
             return f"change_attribute[{op['component_index']}].{name} -> {value!r}"
 
     # No existing entry: create one with the known (or inferred) tag.
-    if name in _NEW_ENTRY_TAG:
-        tag = _NEW_ENTRY_TAG[name]
-    elif isinstance(value, bool):
-        tag = "boolean"
-    elif isinstance(value, int):
-        tag = "int"
-    else:
-        tag = "string"
-    entry = etree.SubElement(attrs, "entry")
-    key_el = etree.SubElement(entry, "string")
-    key_el.text = name
-    tag, text, xattr = _format_value(tag, value)
-    val_el = etree.SubElement(entry, tag)
-    val_el.text = text
-    for k, v in xattr.items():
-        val_el.set(k, v)
+    _append_entry(attrs, name, value)
     return f"change_attribute[{op['component_index']}].{name} -> {value!r} (new entry)"
 
 
@@ -339,6 +363,53 @@ def _apply_rewire_pin(root, op, pins: _PinIndex) -> str:
             f"[{to['component_index']}].{to['pin']}@{dst} "
             f"(detached {removed} segment(s))")
 
+def _apply_add_component(root, op) -> str:
+    """Append a new visualElement (existing indices never shift)."""
+    block = root.find("visualElements")
+    if block is None:
+        raise ValueError("Circuit has no <visualElements> block.")
+    element_name = str(op["element_name"])
+    x, y = tuple(op["position"])
+    ve = etree.SubElement(block, "visualElement")
+    name_el = etree.SubElement(ve, "elementName")
+    name_el.text = element_name
+    attrs_el = etree.SubElement(ve, "elementAttributes")
+    for name, value in (op.get("attributes") or {}).items():
+        _append_entry(attrs_el, name, value)
+    etree.SubElement(ve, "pos", x=str(int(x)), y=str(int(y)))
+    return f"add_component {element_name} @ ({x},{y})"
+
+
+def _apply_delete_component(root, op, pins: _PinIndex) -> str:
+    """Remove a component plus wire segments that dead-end at its pins.
+
+    Segments whose endpoint at the pin coordinate is a shared junction
+    (degree > 1) are kept — they route other signals; the L1 guard
+    catches anything a deletion structurally breaks.
+    """
+    idx = op["component_index"]
+    ve = _ve_for_index(root, idx)
+    pin_coords = {
+        (p.x, p.y)
+        for net in pins.netlist.nets
+        for p in net.pins
+        if p.component_index == idx
+    }
+    removed_wires = 0
+    wires = root.find("wires")
+    if wires is not None:
+        for wire in list(wires.findall("wire")):
+            a, b = _wire_endpoints(wire)
+            if ((a in pin_coords and pins.degree.get(a, 0) == 1)
+                    or (b in pin_coords and pins.degree.get(b, 0) == 1)):
+                wires.remove(wire)
+                removed_wires += 1
+    name = pins.circuit.components[idx].element_name
+    ve.getparent().remove(ve)
+    return (f"delete_component[{idx}] {name} "
+            f"(removed {removed_wires} dead-end wire segment(s))")
+
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -376,8 +447,16 @@ def apply_patch(dig_path: str, ops: list[dict]) -> tuple[str | None, PatchReport
     root = tree.getroot()
     pins = _PinIndex(str(src_path))
 
+    # component_index always refers to the ORIGINAL circuit: deletions are
+    # applied last (descending index) so they never shift what other ops
+    # in the same patch point at.
+    deletes = [op for op in ops if op["op"] == "delete_component"]
+    deletes.sort(key=lambda op: -op.get("component_index", 0))
+    ordered = [op for op in ops if op["op"] != "delete_component"] + deletes
+
+
     try:
-        for op in ops:
+        for op in ordered:
             kind = op["op"]
             if kind == "change_attribute":
                 report.applied.append(_apply_change_attribute(root, op))
@@ -391,6 +470,10 @@ def apply_patch(dig_path: str, ops: list[dict]) -> tuple[str | None, PatchReport
                 report.applied.append(_apply_add_wire(root, op))
             elif kind == "delete_wire":
                 report.applied.append(_apply_delete_wire(root, op))
+            elif kind == "add_component":
+                report.applied.append(_apply_add_component(root, op))
+            elif kind == "delete_component":
+                report.applied.append(_apply_delete_component(root, op, pins))
     except (ValueError, KeyError, TypeError) as exc:
         report.warning = f"Patch failed: {exc}"
         return None, report
