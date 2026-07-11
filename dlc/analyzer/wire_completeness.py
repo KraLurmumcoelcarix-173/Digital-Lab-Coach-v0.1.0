@@ -554,10 +554,11 @@ def _cascade_group_issue(
             f"the missing '{ref}'"
         ),
         message=(
-            f"{', '.join(shown)} sit on wires that '{ref}' would drive, so "
-            f"they read as undriven. This is very likely ONE root cause — "
-            f"the missing file — not {n} separate wiring mistake"
-            f"{'s' if n != 1 else ''}."
+            f"{', '.join(shown)} {'sits' if len(names) == 1 else 'sit'} on "
+            f"wires that '{ref}' would drive, so "
+            f"{'it reads' if len(names) == 1 else 'they read'} as undriven. "
+            f"This is very likely ONE root cause — the missing file — not "
+            f"{n} separate wiring mistake{'s' if n != 1 else ''}."
         ),
         component_indices=[inst_idx] + victims,
         location=(comp.position.x, comp.position.y),
