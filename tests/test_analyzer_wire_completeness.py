@@ -240,7 +240,7 @@ def _write_cascade_parent(tmp_path):
 
 def test_cascade_dangling_input_folds_into_missing_subcircuit_note(tmp_path):
     c = parse_dig_file(str(_write_cascade_parent(tmp_path)))
-    issues = check_wire_completeness(c)
+    issues = check_all_l1(c)
 
     cascades = issues.by_kind("missing_subcircuit_cascade")
     assert len(cascades) == 1
@@ -262,7 +262,7 @@ def test_cascade_dangling_input_folds_into_missing_subcircuit_note(tmp_path):
 
 def test_cascade_note_sits_directly_after_its_root_cause(tmp_path):
     c = parse_dig_file(str(_write_cascade_parent(tmp_path)))
-    kinds = [i.kind for i in check_wire_completeness(c).issues]
+    kinds = [i.kind for i in check_all_l1(c).issues]
     i = kinds.index("missing_subcircuit")
     assert kinds[i + 1] == "missing_subcircuit_cascade"
 
@@ -273,7 +273,7 @@ def test_cascade_absorbs_unused_top_output_on_real_fixture():
     c = parse_dig_file(
         str(SAMPLES / "tier2_bug" / "missing_top_subcircuit.dig")
     )
-    issues = check_wire_completeness(c)
+    issues = check_all_l1(c)
     assert len(issues.by_kind("missing_subcircuit")) == 1   # root unchanged
     assert issues.by_kind("unused_top_output") == []        # absorbed
     cascades = issues.by_kind("missing_subcircuit_cascade")
@@ -284,7 +284,7 @@ def test_cascade_absorbs_unused_top_output_on_real_fixture():
 
 def test_no_cascade_linking_without_missing_subcircuit():
     c = parse_dig_file(str(SAMPLES / "tier1_bug" / "dangling_input.dig"))
-    issues = check_wire_completeness(c)
+    issues = check_all_l1(c)
     assert issues.by_kind("missing_subcircuit_cascade") == []
     assert len(issues.by_kind("dangling_input")) == 1       # untouched
 
