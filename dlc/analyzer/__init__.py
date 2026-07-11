@@ -1,5 +1,6 @@
 from dlc.analyzer.wire_completeness import (
     Issue, IssueSeverity, IssueCollection, check_wire_completeness,
+        _link_cascades_to_missing,
 )
 from dlc.analyzer.bit_widths import check_bit_widths
 from dlc.analyzer.combinational_loops import check_combinational_loops
@@ -34,7 +35,10 @@ def check_all_l1(circuit):
         circuit, netlist=netlist, facts=facts,
     ))
     out.extend(check_sequential(circuit, netlist=netlist))
-    return out
+    # fold undriven errors caused by a missing child file into one
+    # follow-up note under their missing_subcircuit root cause. Runs here
+    # (not in a single checker) so it sees every checker's issues.
+    return _link_cascades_to_missing(circuit, netlist, out)
 
 def check_all_l1_deep(circuit, _chain=None, _top_instance_idx=None):
     """Run every L1 checker on `circuit` AND every resolved subcircuit.

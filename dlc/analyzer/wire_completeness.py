@@ -11,7 +11,9 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 
 from dlc.parser.models import Circuit
-from dlc.parser.netlist import NetList, build_netlist
+from dlc.parser.netlist import (
+    NetList, build_netlist, _wire_endpoint_degree, IMPLICIT_PIN_RADIUS,
+)
 from dlc.parser.graph import build_signal_graph
 from dlc.facts.extractor import CircuitFacts, extract_facts
 
@@ -416,6 +418,202 @@ def _check_empty_tunnels(
                 ),
             ))
     return out
+
+# --- cascade linking ---------------------------------------------------
+# One missing child file makes every net its outputs would drive read as
+# "undriven", so a student sees a pile of unrelated-looking dangling_input /
+# unused_top_output / dangling_subcircuit_input ERRORS whose real cause is a
+# single missing .dig. Fold each missing instance's cascade into ONE follow-up
+# note placed right after its missing_subcircuit error. The root cause stays
+# an ERROR; the cascade group is a WARNING so it never moves the L1 gate by
+# itself. Invoked from check_all_l1 (dlc/analyzer/__init__.py) so it sees
+# every checker's issues, not just this module's.
+
+_CASCADE_LINKED_KINDS = (
+    "dangling_input", "unused_top_output", "dangling_subcircuit_input",
+)
+
+
+
+def _unresolved_subcircuit_instances(circuit: Circuit) -> dict[int, str]:
+    """component index -> reference name for every DIRECT (this-level)
+    subcircuit instance whose file could not be resolved."""
+    unresolved: dict[int, str] = {}
+    for sub_ref in circuit.subcircuits:
+        if sub_ref.child_circuit is not None:
+            continue
+        for idx, comp in enumerate(circuit.components):
+            if comp is sub_ref.parent_component:
+                unresolved[idx] = sub_ref.reference
+                break
+    return unresolved
+
+
+def _net_for_issue(issue: Issue, netlist: NetList):
+    if issue.net_id is not None:
+        if 0 <= issue.net_id < len(netlist.nets):
+            return netlist.nets[issue.net_id]
+        return None
+    # unused_top_output / dangling_subcircuit_input carry no net_id; the
+    # undriven flavors set `location` to the pin coordinate. Only accept a
+    # location-recovered net the issue's component actually sits on.
+    members = set(issue.component_indices)
+    if issue.location is not None:
+        nid = netlist.by_coord.get(tuple(issue.location))
+        if nid is not None:
+            net = netlist.nets[nid]
+            if any(p.component_index in members for p in net.pins):
+                return net
+    if issue.component_indices:
+        target = issue.component_indices[0]
+        for net in netlist.nets:
+            if net.drivers():
+                continue
+            if any(p.component_index == target for p in net.pins):
+                return net
+    return None
+
+
+def _cascade_attribution(
+    net, circuit: Circuit, unresolved: dict[int, str], endpoint_degree: dict
+) -> int | None:
+    """Which missing instance (component index) explains this undriven net,
+    or None if it looks like an independent mistake."""
+    if net.drivers():
+        return None      # driven nets are never a missing-child cascade
+    # Direct evidence: the netlist claimed one of the net's wire ends as an
+    # implicit pin of a missing instance (direction stays "unknown", so the
+    # net has no driver even though the student wired it correctly).
+    for p in net.pins:
+        if p.component_index in unresolved:
+            return p.component_index
+
+    # Indirect evidence — coordinates of this net the missing part would
+    # explain. Tunnel pins don't count as claims: a tunnel never drives, and
+    # a bidir tunnel pin can even snap onto the wire end the missing child
+    # was supposed to drive (seen on lab5 cpu.dig).
+    hard_pin_coords = {
+        (p.x, p.y) for p in net.pins if p.element_name != "Tunnel"
+    }
+    candidates: list[tuple[int, int]] = [
+        c for c in net.coords
+        if endpoint_degree.get(c, 0) == 1 and c not in hard_pin_coords
+    ]
+    # Tunnels placed directly ON a missing instance's pin have wire-degree 0,
+    # so the loop above can't see them; treat a net tunnel anchor near a
+    # missing instance as evidence too (radius = the netlist's own
+    # implicit-pin envelope).
+    near_tunnel_anchors: list[tuple[int, int]] = []
+    for comp in circuit.components:
+        if comp.element_name != "Tunnel":
+            continue
+        anchor = (comp.position.x, comp.position.y)
+        if anchor not in net.coords:
+            continue
+        for idx in unresolved:
+            inst = circuit.components[idx]
+            d = abs(inst.position.x - anchor[0]) + abs(inst.position.y - anchor[1])
+            if d <= IMPLICIT_PIN_RADIUS:
+                near_tunnel_anchors.append(anchor)
+                break
+    candidates.extend(near_tunnel_anchors)
+    if not candidates:
+        return None
+    best_idx = None
+    best_dist = None
+    for idx in sorted(unresolved):
+        comp = circuit.components[idx]
+        for (ex, ey) in candidates:
+            d = abs(comp.position.x - ex) + abs(comp.position.y - ey)
+            if best_dist is None or d < best_dist:
+                best_idx, best_dist = idx, d
+    return best_idx
+
+
+def _cascade_group_issue(
+    circuit: Circuit, inst_idx: int, ref: str, members: list[Issue]
+) -> Issue:
+    victims: list[int] = []
+    for iss in members:
+        for c_idx in iss.component_indices:
+            if c_idx != inst_idx and c_idx not in victims:
+                victims.append(c_idx)
+    names = [
+        _component_display_name(circuit.components[i], i) for i in victims
+    ]
+    shown = names[:6]
+    if len(names) > 6:
+        shown.append(f"+{len(names) - 6} more")
+    n = len(members)
+    comp = circuit.components[inst_idx]
+    return Issue(
+        kind="missing_subcircuit_cascade",
+        severity=IssueSeverity.WARNING,
+        title=(
+            f"{n} undriven signal{'s' if n != 1 else ''} — all caused by "
+            f"the missing '{ref}'"
+        ),
+        message=(
+            f"{', '.join(shown)} sit on wires that '{ref}' would drive, so "
+            f"they read as undriven. This is very likely ONE root cause — "
+            f"the missing file — not {n} separate wiring mistake"
+            f"{'s' if n != 1 else ''}."
+        ),
+        component_indices=[inst_idx] + victims,
+        location=(comp.position.x, comp.position.y),
+        suggested_fix=(
+            f"Don't rewire these. Put '{ref}' next to this .dig file and "
+            f"re-upload — these signals should come back on their own."
+        ),
+    )
+
+
+def _link_cascades_to_missing(
+    circuit: Circuit, netlist: NetList, issues: IssueCollection
+) -> IssueCollection:
+    unresolved = _unresolved_subcircuit_instances(circuit)
+    if not unresolved:
+        return issues
+
+    endpoint_degree = _wire_endpoint_degree(circuit)
+    kept: list[Issue] = []
+    grouped: dict[int, list[Issue]] = {}
+    for iss in issues.issues:
+        if iss.kind in _CASCADE_LINKED_KINDS and iss.scope is None:
+            net = _net_for_issue(iss, netlist)
+            inst = (
+                _cascade_attribution(net, circuit, unresolved, endpoint_degree)
+                if net is not None else None
+            )
+            if inst is not None:
+                grouped.setdefault(inst, []).append(iss)
+                continue
+        kept.append(iss)
+
+    if not grouped:
+        return issues
+
+    # Re-emit with each cascade group directly after its root-cause error.
+    out = IssueCollection()
+    emitted: set[int] = set()
+    for iss in kept:
+        out.add(iss)
+        if iss.kind != "missing_subcircuit" or not iss.component_indices:
+            continue
+        anchor = iss.component_indices[0]
+        if anchor in grouped and anchor not in emitted:
+            out.add(_cascade_group_issue(
+                circuit, anchor, unresolved[anchor], grouped[anchor],
+            ))
+            emitted.add(anchor)
+    for inst in sorted(grouped):
+        if inst not in emitted:
+            out.add(_cascade_group_issue(
+                circuit, inst, unresolved[inst], grouped[inst],
+            ))
+    return out
+
+
 
 # Public API
 
