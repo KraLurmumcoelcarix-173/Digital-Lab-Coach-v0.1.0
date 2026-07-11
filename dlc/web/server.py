@@ -63,6 +63,13 @@ STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Digital Lab Coach", version="0.3.1")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Layer-3 endpoints live in their own router module (dlc/web/l3_routes.py) so
+# L3 work never has to edit this file again. The import sits here, after
+# `app` exists; the router reaches session helpers through this module at
+# request time, so the circular import is harmless.
+from dlc.web import l3_routes                                    
+app.include_router(l3_routes.router)
+
 _SESSIONS: dict[str, dict] = {}
 
 # Idle sessions (and their uploaded temp dirs) are garbage-collected on the
