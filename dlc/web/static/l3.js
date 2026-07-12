@@ -211,8 +211,10 @@ function renderL3Boards(file) {
   const mbA = saved.modeB;
   const coachHint = (mbA && mbA.injectFailing > 0)
     ? ` ALSO: ${mbA.injectFailing} coach row${mbA.injectFailing === 1 ? "" : "s"} ` +
-      `fail on the temp circuit '${mbA.tempName || "coach copy"}' — Mode A ` +
-      `will debug the temp file (engine lands in Phase 3).`
+      `disagree with the temp circuit '${mbA.tempName || "coach copy"}' — ` +
+      `either the row is wrong (discard it on the lower board) or your ` +
+      `circuit has a bug there (Mode A debugs the temp file; engine lands ` +
+      `in Phase 3).`
     : "";
   if (!file.summary || !file.summary.has_testcases) {
     _l3PaintBoard("a", {
@@ -333,6 +335,15 @@ function _l3CircuitChips(c) {
   if (flags) {
     chips.push(`<span class="l3-chip l3-chip-bad">${flags} disagreement${flags === 1 ? "" : "s"}</span>`);
   }
+  if (c.categories_total) {
+    const done = (c.categories_missing || []).length === 0;
+    chips.push(done
+      ? `<span class="l3-chip l3-chip-good" title="Every manifest category is exercised — raw vector % is informational only.">categories ✓ ${c.categories_total}/${c.categories_total}</span>`
+      : `<span class="l3-chip l3-chip-warn">categories ${(c.categories_touched || []).length}/${c.categories_total}</span>`);
+  }
+  if (c.official_test === "official") {
+    chips.push(`<span class="l3-chip" title="This testcase matches the instructor's fingerprint.">official test</span>`);
+  }
   const unresolved = (c.specs || [])
     .reduce((n, s) => n + (s.unresolved_cells || 0), 0);
   if (unresolved) {
@@ -343,9 +354,18 @@ function _l3CircuitChips(c) {
 }
 
 function _l3FlagCardHtml(f) {
+  const vals = `This row expects <b>${escapeHtml(f.column)} = ${escapeHtml(f.asserted_fmt)}</b>, but the circuit as built computes <b>${escapeHtml(f.computed_fmt)}</b>. `;
+  const body = f.classification === "official"
+    ? vals + `This is the OFFICIAL course testcase (fingerprint verified) — ` +
+      `the row is right, so your circuit is wrong at this output. Run ` +
+      `per-row tests, then the Failed-test analysis above.`
+    : vals + `One of them is wrong — or both: the row's expected value may ` +
+      `be a typo (fix the testcase), the circuit may have a bug at this ` +
+      `output (run per-row tests, then the Failed-test analysis above), ` +
+      `or both drifted together.`;
   return `<div class="l3-flag">
     <div class="l3-flag-title">'${escapeHtml(f.spec_name)}' row ${f.row_index} &middot; ${escapeHtml(f.column)} — test and circuit disagree</div>
-    <div class="l3-flag-body">This row expects <b>${escapeHtml(f.column)} = ${escapeHtml(f.asserted_fmt)}</b>, but the circuit as built computes <b>${escapeHtml(f.computed_fmt)}</b>. One of them is wrong: either the row's expected value is a typo — fix the testcase — or the circuit has a bug at this output (run per-row tests, then the Failed-test analysis above).</div>
+    <div class="l3-flag-body">${body}</div>
   </div>`;
 }
 
@@ -444,6 +464,10 @@ function l3InjectHtml(mb) {
       ${clickable
         ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left — exactly like Layer 1. ＋ marks coach rows.</div>`
         : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow (auto-drill lands with 2.8).</div>`}
+      ${out.outcome !== "all_set"
+        ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard failing coach rows &amp; re-verify</button>
+           <span class="l3-prop-hint">A failing coach row can itself be wrong — discarding keeps only the rows your circuit and the coach agree on.</span></div>`
+        : ""}
     </div>`;
   }
   return html;
@@ -580,6 +604,63 @@ async function l3SimTempRow(tr) {
   logEvent("l3_modeB_temp_row_viewed", { filename, row: rowIdx });
 }
 
+// Drop the failing coach rows for one file and re-verify the survivors on
+// a fresh temp copy; with no survivors the section just clears.
+async function l3DiscardFail(file) {
+  const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!cur || !sessionId) return;
+  const mb = l3Slot(cur.filename).modeB;
+  const out = mb && mb.inject && mb.inject[file];
+  if (!out || !out.ok || mb.accepting) return;
+  const keep = (out.rows || [])
+    .filter((r) => r.added && r.status === "passed")
+    .map((r) => r.raw);
+  logEvent("l3_modeB_discard_failing", { file, kept: keep.length });
+  if (!keep.length) {
+    delete mb.inject[file];
+    if (!Object.keys(mb.inject).length) mb.inject = null;
+  } else {
+    mb.accepting = true;
+    l3RunState.b = true;
+    renderL3Boards(cur);
+    let body;
+    try {
+      const res = await fetch("/api/l3/inject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId, filename: file,
+          spec_name: out.spec_name, rows: keep,
+        }),
+      });
+      body = res.ok ? await res.json()
+                    : { ok: false, warning: `Server error ${res.status}` };
+    } catch (err) {
+      body = { ok: false, warning: `Network error: ${err}` };
+    }
+    if (body.ok) body._spec_index = out._spec_index;
+    mb.inject[file] = body;
+    mb.accepting = false;
+    l3RunState.b = false;
+  }
+  // recompute the fail count + the all-set lock from what remains
+  mb.injectFailing = 0;
+  let allSet = mb.inject ? true : false;
+  for (const o of Object.values(mb.inject || {})) {
+    if (!o.ok || o.outcome !== "all_set") allSet = false;
+    mb.injectFailing += (o.rows || [])
+      .filter((r) => r.added && r.status === "failed").length;
+  }
+  if (allSet && mb.injectFailing === 0 && mb.inject) {
+    mb.locked = true;
+    logEvent("l3_modeB_all_set", { filename: cur.filename });
+  }
+  if (l3PageVisible() && loaded[currentIdx]
+      && loaded[currentIdx].filename === cur.filename) {
+    renderL3Boards(loaded[currentIdx]);
+  }
+}
+
 // One delegated listener serves every dynamically rendered control.
 (function wireL3BoardB() {
   const body = document.getElementById("l3-b-body");
@@ -589,6 +670,7 @@ async function l3SimTempRow(tr) {
     if (btn) {
       if (btn.dataset.l3Act === "propose") l3ProposeClick();
       if (btn.dataset.l3Act === "accept") l3AcceptClick();
+      if (btn.dataset.l3Act === "discardfail") l3DiscardFail(btn.dataset.l3File);
       return;
     }
     const tr = evt.target.closest("tr[data-l3-simfile]");

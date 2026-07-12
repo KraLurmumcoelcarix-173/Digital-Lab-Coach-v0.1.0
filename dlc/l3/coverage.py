@@ -61,6 +61,9 @@ class WrongTestFlag:
     computed: int
     asserted_fmt: str
     computed_fmt: str
+    # 2.9: "official" when this file's testcase matches the lab manifest's
+    # instructor fingerprint — the row is right, the circuit is wrong.
+    classification: str | None = None
 
     def describe(self) -> str:
         return (
@@ -129,6 +132,12 @@ class CircuitCoverage:
     mux_branches: list[MuxBranchCoverage] = field(default_factory=list)
     clock_edge_rows: int = 0
     notes: list[str] = field(default_factory=list)
+    # 2.9 category-graded coverage (populated only when a lab manifest
+    # binds categories to this file; GREEN iff categories_missing is empty)
+    categories_total: int = 0
+    categories_touched: list[str] = field(default_factory=list)
+    categories_missing: list[str] = field(default_factory=list)
+    official_test: str | None = None    # "official" | "modified" | None
 
 
 @dataclass
@@ -476,4 +485,52 @@ def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
         )
 
     report.total_flags = sum(len(c.flags) for c in report.circuits)
+    _apply_manifest(report)
     return report
+
+
+def _apply_manifest(report: TreeCoverageReport) -> None:
+    """2.9: when a lab manifest covers this tree, add category-graded
+    coverage and classify official-test disagreements. No manifest =>
+    the report is untouched."""
+    from dlc.l3 import manifest as mf
+    m = mf.find_manifest({c.file for c in report.circuits})
+    if not m:
+        return
+    report.notes.append(f"lab manifest '{m.get('lab', '?')}' applied.")
+    for cov in report.circuits:
+        if not cov.has_testcases or not cov.path:
+            continue
+        try:
+            spec = extract_test_specs(parse_dig_file(cov.path))[0]
+        except Exception:
+            continue
+        cov.official_test = mf.official_status(
+            m, cov.file, spec.raw_data_string,
+        )
+        if cov.official_test == "official" and cov.flags:
+            for f in cov.flags:
+                f.classification = "official"
+            cov.notes.insert(0, (
+                "this testcase matches the official lab fingerprint — the "
+                "rows are right; the disagreements below mean the CIRCUIT "
+                "is wrong."
+            ))
+        cc = mf.category_coverage(m, cov.file, spec)
+        if cc is None:
+            continue
+        cov.categories_total = cc["total"]
+        cov.categories_touched = cc["touched"]
+        cov.categories_missing = cc["missing"]
+        if cc["missing"]:
+            cov.notes.insert(0, (
+                f"category gap: {', '.join(cc['missing'])} never exercised "
+                f"by any row ({len(cc['touched'])}/{cc['total']} categories "
+                f"touched)."
+            ))
+        else:
+            cov.notes.insert(0, (
+                f"all {cc['total']} instruction categories touched — "
+                f"category coverage is GREEN (raw vector % is informational "
+                f"only)."
+            ))

@@ -34,6 +34,16 @@ def _fake(text):
     return call
 
 
+def _fake_two(first, second):
+    """First call (proposals), second call (self-check derivation)."""
+    n = {"v": 0}
+    def call(prompt, **kw):
+        n["v"] += 1
+        return {"ok": True, "text": first if n["v"] == 1 else second,
+                "error": None, "usage": None, "model": kw.get("model")}
+    return call
+
+
 # ---------------------------------------------------------------------------
 # Grounding + prompt build
 # ---------------------------------------------------------------------------
@@ -120,17 +130,83 @@ def test_total_row_cap_applies_across_groups():
 # propose_rows end to end (fake model)
 # ---------------------------------------------------------------------------
 
-def test_propose_rows_happy_path_with_fake_model():
-    report_spec = proposer.build_targets(scan_tree_coverage(_AND))[0]
+def _two_row_and(tmp_path):
+    """single_and with only 2 of 4 vectors tested — leaves correct new
+    rows free to propose (the full fixture has all four, so every correct
+    row would be a duplicate)."""
+    import re as _re
+    xml = open(_AND).read()
+    m = _re.search(r"<dataString>.*?</dataString>", xml, _re.S)
+    xml2 = xml.replace(m.group(0),
+                       "<dataString>A B Y\n0 0 0\n1 1 1</dataString>")
+    p = tmp_path / "single_and.dig"
+    p.write_text(xml2)
+    return p
+
+
+def test_propose_rows_happy_path_with_fake_model(tmp_path):
+    student = _two_row_and(tmp_path)
+    spec_name = proposer.build_targets(
+        scan_tree_coverage(str(student)))[0]["spec_name"]
     text = json.dumps({"proposals": [
-        {"file": "single_and.dig", "spec_name": report_spec["spec_name"],
-         "rows": ["1 0 1"], "why": "closes the A=1,B=0 gap"},
+        {"file": "single_and.dig", "spec_name": spec_name,
+         "rows": ["1 0 0"], "why": "boundary case A=1,B=0"},
     ]})
-    out = proposer.propose_rows(_AND, call=_fake(text))
+    selfcheck = json.dumps({"rows": [{"index": 0, "outputs": {"Y": "0"}}]})
+    out = proposer.propose_rows(str(student), call=_fake_two(text, selfcheck))
     assert out["ok"] is True
     assert len(out["proposals"]) == 1
-    assert out["proposals"][0]["rows"] == ["1 0 1"]
+    assert out["proposals"][0]["rows"] == ["1 0 0"]
+    assert any("self-check confirmed" in n for n in out["notes"])
     assert out["error"] is None
+
+
+def test_selfcheck_drops_a_row_it_cannot_reproduce(tmp_path):
+    # DELIBERATELY WRONG row (1 AND 0 is NOT 1) — this test PROVES the
+    # self-check gate kills hallucinated expectations before display.
+    student = _two_row_and(tmp_path)
+    spec_name = proposer.build_targets(
+        scan_tree_coverage(str(student)))[0]["spec_name"]
+    text = json.dumps({"proposals": [
+        {"file": "single_and.dig", "spec_name": spec_name,
+         "rows": ["1 0 1"], "why": "gap"},
+    ]})
+    selfcheck = json.dumps({"rows": [{"index": 0, "outputs": {"Y": "0"}}]})
+    out = proposer.propose_rows(str(student), call=_fake_two(text, selfcheck))
+    assert out["ok"] is True
+    assert out["proposals"] == []
+    assert any("self-check" in r["reason"] for r in out["rejected"])
+
+
+def test_reference_gate_drops_rows_the_reference_refutes(tmp_path, monkeypatch):
+    student = _two_row_and(tmp_path)
+    # Reference: the correct full circuit, under the manifest's applies_to
+    # name, in a dir DLC_REFERENCE_DIR points at.
+    refdir = tmp_path / "refs"
+    refdir.mkdir()
+    (refdir / "single_and.dig").write_text(open(_AND).read())
+    monkeypatch.setenv("DLC_REFERENCE_DIR", str(refdir))
+    mdir = tmp_path / "manifests"
+    mdir.mkdir()
+    (mdir / "t.json").write_text(json.dumps({
+        "lab": "t", "applies_to": ["single_and.dig"],
+        "categories": {}, "official_tests": {}, "reference_dir": None,
+    }))
+    monkeypatch.setenv("DLC_MANIFEST_DIR", str(mdir))
+
+    spec_name = proposer.build_targets(scan_tree_coverage(str(student)))[0]["spec_name"]
+    text = json.dumps({"proposals": [
+        {"file": "single_and.dig", "spec_name": spec_name,
+         # "1 0 1" is DELIBERATELY WRONG (proves the reference kills it);
+         # "0 1 0" is correct and must survive.
+         "rows": ["1 0 1", "0 1 0"], "why": "gaps"},
+    ]})
+    selfcheck = json.dumps({"rows": [{"index": 0, "outputs": {"Y": "0"}}]})
+    out = proposer.propose_rows(str(student), call=_fake_two(text, selfcheck))
+    assert out["ok"] is True
+    assert len(out["proposals"]) == 1
+    assert out["proposals"][0]["rows"] == ["0 1 0"]
+    assert any("lab reference" in r["reason"] for r in out["rejected"])
 
 
 def test_propose_rows_refuses_when_scan_has_flags():

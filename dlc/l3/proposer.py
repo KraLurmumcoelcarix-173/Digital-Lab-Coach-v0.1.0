@@ -24,7 +24,7 @@ from dlc.l3.coverage import TreeCoverageReport, scan_tree_coverage
 from dlc.l3.oracle import InjectedRow, validate_rows
 from dlc.llm.client import DEFAULT_MODEL, call_llm
 from dlc.parser.dig_parser import parse_dig_file
-from dlc.testing.spec import _tokenize, extract_test_specs
+from dlc.testing.spec import _tokenize, extract_test_specs, match_variables_to_io
 
 _PROMPT_DIR = Path(__file__).parent.parent.parent / "prompts"
 _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
@@ -69,6 +69,10 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
                         for c in circuit.outputs() if c.label],
             "existing_rows": shown,
             "existing_rows_omitted": max(0, len(existing) - len(shown)),
+            "has_clock": any(
+                b and b.role == "clock"
+                for b in match_variables_to_io(spec.headers, circuit).values()
+            ),
         })
     return targets
 
@@ -245,9 +249,164 @@ def propose_rows(
                 "notes": ["The model proposed nothing usable this time — "
                           "run it again or add rows by hand."]}
     valid, rejected = validate_and_dedupe(proposals, targets)
-    notes = []
+    notes: list[str] = []
+
+    # HARDENING, strongest gate first:
+    # 1) deterministic reference check — a row the lab reference disagrees
+    #    with is WRONG and is dropped before the student ever sees it;
+    # 2) model self-check — for un-referenced combinational targets, the
+    #    model must independently re-derive its own rows' outputs; any
+    #    mismatch drops the row.
+    valid, rejected, notes = _reference_gate(valid, rejected, notes, targets)
+    valid, rejected, notes = _selfcheck_gate(
+        valid, rejected, notes, targets, call, used_model,
+    )
+
     if rejected:
         notes.append(f"{sum(len(r['rows']) for r in rejected)} proposed "
-                     f"row(s) were dropped by the validator.")
+                     f"row(s) were dropped before display.")
     return {"ok": True, "proposals": valid, "rejected": rejected,
             "model": used_model, "error": None, "notes": notes}
+
+
+def _reference_gate(valid, rejected, notes, targets):
+    """2.9: judge every surviving row against the lab reference circuit,
+    when one is configured. Deterministic; 'unresolved' rows pass through
+    to the normal inject verification."""
+    from dlc.l3 import manifest as mf
+    m = mf.find_manifest({t["file"] for t in targets})
+    ref_dir = mf.reference_dir(m)
+    if not ref_dir or not ref_dir.is_dir():
+        return valid, rejected, notes
+    by_file = {t["file"]: t for t in targets}
+    kept: list[dict] = []
+    checked = False
+    for g in valid:
+        ref_file = ref_dir / g["file"]
+        t = by_file.get(g["file"])
+        if not ref_file.is_file() or t is None:
+            kept.append(g)
+            continue
+        try:
+            verdicts = mf.reference_row_verdicts(
+                ref_file, t["headers"], g["rows"],
+            )
+        except Exception:
+            kept.append(g)               # a broken reference never blocks
+            continue
+        checked = True
+        good = [v["row"] for v in verdicts if v["verdict"] != "disagrees"]
+        for v in verdicts:
+            if v["verdict"] == "disagrees":
+                rejected.append({"file": g["file"], "spec_name": g["spec_name"],
+                                 "rows": [v["row"]], "why": g.get("why", ""),
+                                 "reason": f"disagrees with the lab reference "
+                                           f"({v['detail']})"})
+        if good:
+            kept.append({**g, "rows": good})
+    if checked:
+        notes.append("rows were checked against the lab reference circuit.")
+    return kept, rejected, notes
+
+
+_SELFCHECK_PROMPT = "l3_row_selfcheck_v1.txt"
+
+
+def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
+    """Second model pass: re-derive outputs for the surviving rows with the
+    output cells hidden; keep only rows whose asserted outputs the model
+    reproduces (null = unsure = drop). Skipped for clocked targets (a lone
+    row has no replay context) — those rely on the reference/inject."""
+    by_file = {t["file"]: t for t in targets}
+    candidates = []                       # (group_idx, row_idx_in_group)
+    payload_rows = []
+    for gi, g in enumerate(valid):
+        t = by_file.get(g["file"])
+        if t is None or t.get("has_clock"):
+            continue
+        out_cols = [o["label"] for o in t["outputs"]]
+        if not out_cols:
+            continue
+        for ri, raw in enumerate(g["rows"]):
+            cells = raw.split("#", 1)[0].split()
+            masked = [
+                "?" if h in out_cols else (cells[i] if i < len(cells) else "?")
+                for i, h in enumerate(t["headers"])
+            ]
+            payload_rows.append({
+                "index": len(payload_rows),
+                "file": g["file"],
+                "inputs": " ".join(masked),
+            })
+            candidates.append((gi, ri, t))
+    if not candidates:
+        return valid, rejected, notes
+
+    t0 = by_file[valid[candidates[0][0]]["file"]]
+    template = (_PROMPT_DIR / _SELFCHECK_PROMPT).read_text(encoding="utf-8")
+    prompt = (template
+              .replace("<<HEADERS_JSON>>", json.dumps(
+                  {c[2]["file"]: c[2]["headers"] for c in candidates}))
+              .replace("<<OUTPUT_COLS_JSON>>", json.dumps(
+                  {c[2]["file"]: [o["label"] for o in c[2]["outputs"]]
+                   for c in candidates}))
+              .replace("<<ROWS_JSON>>", json.dumps(payload_rows, indent=1)))
+    resp = call(prompt, model=used_model, max_tokens=1200)
+    if not resp.get("ok"):
+        notes.append("self-check call failed — rows pass through to the "
+                     "inject verification unchecked.")
+        return valid, rejected, notes
+
+    m = re.search(r"\{.*\}", resp.get("text") or "", re.S)
+    derived: dict[int, dict] = {}
+    if m:
+        try:
+            for r in json.loads(m.group(0)).get("rows", []):
+                if isinstance(r, dict) and isinstance(r.get("outputs"), dict):
+                    derived[int(r.get("index", -1))] = r["outputs"]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    drop: set[tuple[int, int]] = set()
+    for pi, (gi, ri, t) in enumerate(candidates):
+        outs = derived.get(pi)
+        raw = valid[gi]["rows"][ri]
+        cells = raw.split("#", 1)[0].split()
+        by_col = dict(zip(t["headers"], cells))
+        ok = outs is not None
+        if outs is not None:
+            for col in (o["label"] for o in t["outputs"]):
+                want = _row_cell_value(by_col.get(col))
+                got = _row_cell_value(outs.get(col))
+                if want is None:
+                    continue              # don't-care in the proposal
+                if got is None or got != want:
+                    ok = False
+                    break
+        if not ok:
+            drop.add((gi, ri))
+    if not drop:
+        notes.append("self-check confirmed every proposed row.")
+        return valid, rejected, notes
+
+    kept: list[dict] = []
+    for gi, g in enumerate(valid):
+        rows = [r for ri, r in enumerate(g["rows"]) if (gi, ri) not in drop]
+        for ri, r in enumerate(g["rows"]):
+            if (gi, ri) in drop:
+                rejected.append({"file": g["file"], "spec_name": g["spec_name"],
+                                 "rows": [r], "why": g.get("why", ""),
+                                 "reason": "failed the coach's self-check "
+                                           "(could not re-derive the same "
+                                           "expected outputs)"})
+        if rows:
+            kept.append({**g, "rows": rows})
+    notes.append(f"self-check dropped {len(drop)} row(s).")
+    return kept, rejected, notes
+
+
+def _row_cell_value(cell) -> int | None:
+    if cell is None:
+        return None
+    tok = _tokenize(str(cell).strip())
+    return tok.value if tok.kind == "int" else None

@@ -222,3 +222,6 @@
 .l3-row-click { cursor: pointer; }
 .l3-row-click:hover td { background: #eef2ff; }
 .l3-row-sel td { box-shadow: inset 2px 0 0 #2563eb; background: #dbeafe; }
+
+/* 2.9 category chip: GREEN when every manifest category is exercised */
+.l3-chip-good { background: #dcfce7; color: #166534; }
