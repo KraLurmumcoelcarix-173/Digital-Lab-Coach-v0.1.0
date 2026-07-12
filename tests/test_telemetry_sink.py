@@ -39,6 +39,7 @@ def test_log_events_stores_kind_ts_and_details():
     assert newest["session_id"] == "sess1"
     assert newest["details"] == {"tab": "l3"}
     assert abs(newest["client_ts"] - 1751800001.0) < 1e-6   # ms -> seconds
+    assert "2025" in newest["when"]          # human-readable, local time
 
 
 def test_log_events_skips_malformed_entries_without_failing_the_batch():

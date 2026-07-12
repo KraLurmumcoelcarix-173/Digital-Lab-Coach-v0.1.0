@@ -19,6 +19,7 @@ import json
 import os
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 
 _SCHEMA = """
@@ -95,7 +96,11 @@ def log_events(session_id: str | None, events: list[dict]) -> int:
 
 
 def recent_events(limit: int = 50, kind: str | None = None) -> list[dict]:
-    """Latest stored events, newest first — a dev/debug convenience."""
+    """Latest stored events, newest first — a dev/debug convenience.
+
+    Each entry carries `when`: the browser's click time (client_ts, falling
+    back to stored_at) rendered as a local human-readable string, so a
+    plain recent_events() printout needs no epoch math."""
     if not db_path().exists():
         return []
     conn = _connect()
@@ -114,7 +119,10 @@ def recent_events(limit: int = 50, kind: str | None = None) -> list[dict]:
                 d = json.loads(details)
             except json.JSONDecodeError:
                 d = {}
-            out.append({"stored_at": stored_at, "client_ts": client_ts,
+            ts = client_ts if client_ts is not None else stored_at
+            when = datetime.fromtimestamp(ts).strftime("%a %d %b %Y %H:%M:%S")
+            out.append({"when": when,
+                        "stored_at": stored_at, "client_ts": client_ts,
                         "session_id": session_id, "kind": k, "details": d})
         return out
     finally:

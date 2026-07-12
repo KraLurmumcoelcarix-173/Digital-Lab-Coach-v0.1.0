@@ -204,11 +204,19 @@ function renderL3Boards(file) {
     return;
   }
 
-  // Mode A (upper): needs failing rows from a finished per-row run.
+  // Mode A (upper): needs failing rows from a finished per-row run. When
+  // Mode B's accepted rows fail on the temp circuit, say so here — that is
+  // the ratified hand-off hint (NO auto-run; the engine lands in Phase 3).
   const failing = l3FailingRowCount(file.filename);
+  const mbA = saved.modeB;
+  const coachHint = (mbA && mbA.injectFailing > 0)
+    ? ` ALSO: ${mbA.injectFailing} coach row${mbA.injectFailing === 1 ? "" : "s"} ` +
+      `fail on the temp circuit '${mbA.tempName || "coach copy"}' — Mode A ` +
+      `will debug the temp file (engine lands in Phase 3).`
+    : "";
   if (!file.summary || !file.summary.has_testcases) {
     _l3PaintBoard("a", {
-      status: "This file has no testcases, so there are no failing rows to analyze.",
+      status: "This file has no testcases, so there are no failing rows to analyze." + coachHint,
       cls: "muted",
       bodyHtml: savedCard(saved.modeA),
     });
@@ -216,23 +224,23 @@ function renderL3Boards(file) {
     _l3PaintBoard("a", {
       status:
         `Run tests in per-row mode on the Dashboard first — Mode A picks ` +
-        `up the failing rows from there.`,
-      cls: "muted",
+        `up the failing rows from there.` + coachHint,
+      cls: coachHint ? "blocked" : "muted",
       bodyHtml: savedCard(saved.modeA),
     });
   } else if (failing === 0) {
     _l3PaintBoard("a", {
       status:
         "All rows pass — nothing to debug here. Try the Coverage Coach " +
-        "below for gaps your tests might be missing.",
-      cls: "ready",
+        "below for gaps your tests might be missing." + coachHint,
+      cls: coachHint ? "blocked" : "ready",
       bodyHtml: savedCard(saved.modeA),
     });
   } else {
     _l3PaintBoard("a", {
       status:
         `${failing} failing row${failing === 1 ? "" : "s"} detected — ` +
-        `ready to analyze.`,
+        `ready to analyze.` + coachHint,
       cls: "ready",
       enabled: true,
       bodyHtml: savedCard(saved.modeA),
@@ -248,16 +256,28 @@ function renderL3Boards(file) {
       bodyHtml: l3ModeBBodyHtml(saved.modeB),
     });
   } else if (saved.modeB && saved.modeB.report) {
-    const rep = saved.modeB.report;
+    const mb = saved.modeB;
+    const rep = mb.report;
     const n = rep.total_flags || 0;
+    let status, cls;
+    if (mb.locked) {
+      status = "You're all set — every row (old and coach) passes. " +
+               "Coverage Coach is done for today on this circuit.";
+      cls = "ready";
+    } else if (n > 0) {
+      status = `Scan done: ${n} cell${n === 1 ? "" : "s"} where a test row ` +
+               `and the circuit disagree — details below.`;
+      cls = "blocked";
+    } else {
+      status = "Scan done: tests and circuit agree everywhere. " +
+               "Coverage notes below.";
+      cls = "ready";
+    }
     _l3PaintBoard("b", {
-      status: n > 0
-        ? `Scan done: ${n} cell${n === 1 ? "" : "s"} where a test row and ` +
-          `the circuit disagree — details below.`
-        : "Scan done: tests and circuit agree everywhere. Coverage notes below.",
-      cls: n > 0 ? "blocked" : "ready",
-      enabled: true,
-      bodyHtml: l3ModeBBodyHtml(saved.modeB),
+      status,
+      cls,
+      enabled: !mb.locked,
+      bodyHtml: l3ModeBBodyHtml(mb) + l3ProposalsHtml(mb) + l3InjectHtml(mb),
     });
   } else {
     _l3PaintBoard("b", {
@@ -334,6 +354,247 @@ function _l3NotesHtml(notes) {
   return `<ul class="l3-notes">` +
     notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") + `</ul>`;
 }
+
+// --- Mode B: proposals + accept-flow (2.3 UI + 2.7) --------------------------
+// State lives in slot.modeB: { report, proposing, proposals, accepting,
+// inject: {file: outcomeBody}, injectFailing, tempName, locked }.
+
+function l3ProposalsHtml(mb) {
+  if (!mb.report || mb.report.total_flags > 0 || mb.locked) return "";
+  if (mb.proposing) {
+    return `<div class="l3-note-card">Asking the coach for new rows…</div>`;
+  }
+  if (!mb.proposals) {
+    return `<div class="l3-prop-bar">
+      <button class="btn" data-l3-act="propose">Propose new test rows</button>
+      <span class="l3-prop-hint">One hidden model call, grounded on the scan
+      above; every row is validated, and nothing touches your file until you
+      accept.</span></div>`;
+  }
+  const p = mb.proposals;
+  if (p.error) {
+    return `<div class="l3-note-card">Proposer unavailable: ${escapeHtml(p.error)}</div>` +
+      `<div class="l3-prop-bar"><button class="btn" data-l3-act="propose">Try again</button></div>`;
+  }
+  if (!p.proposals.length) {
+    return `<div class="l3-note-card">${escapeHtml((p.notes || []).join(" ") ||
+      "No usable proposals this time.")}</div>` +
+      `<div class="l3-prop-bar"><button class="btn" data-l3-act="propose">Try again</button></div>`;
+  }
+  let html = `<div class="l3-sec-title">Coach proposals
+    <span class="muted">(model: ${escapeHtml(p.model || "?")})</span></div>`;
+  p.proposals.forEach((g, gi) => {
+    const rows = g.rows.map((r) =>
+      `<div class="l3-prop-row">${escapeHtml(r)}</div>`).join("");
+    html += `<label class="l3-prop-card">
+      <input type="checkbox" data-l3-group="${gi}" checked />
+      <div class="l3-prop-body">
+        <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'</div>
+        ${rows}
+        <div class="l3-prop-why">${escapeHtml(g.why)}</div>
+      </div></label>`;
+  });
+  if ((p.notes || []).length) {
+    html += `<div class="l3-prop-hint">${escapeHtml(p.notes.join(" "))}</div>`;
+  }
+  html += `<div class="l3-prop-bar">
+    <button class="btn" data-l3-act="accept"${mb.accepting ? " disabled" : ""}>
+      ${mb.accepting ? "Verifying on a temp copy…" : "Accept & verify selected"}
+    </button>
+    <span class="l3-prop-hint">Accepted rows run on a TEMP copy through the
+    real simulator — your original file is never modified.</span></div>`;
+  return html;
+}
+
+function l3InjectHtml(mb) {
+  if (!mb.inject) return "";
+  const current = loaded[currentIdx] ? loaded[currentIdx].filename : null;
+  let html = `<div class="l3-sec-title">Verification on the temp circuit</div>`;
+  for (const [file, out] of Object.entries(mb.inject)) {
+    if (!out.ok) {
+      html += `<div class="l3-note-card">${escapeHtml(file)}: ${escapeHtml(out.warning || "inject failed")}</div>`;
+      continue;
+    }
+    const badge = out.outcome === "all_set"
+      ? `<span class="l3-chip">all pass</span>`
+      : `<span class="l3-chip l3-chip-bad">rows fail</span>`;
+    const clickable = file === current;
+    const headers = out.headers || [];
+    const head = `<tr><td class="l3-idx">idx</td>` +
+      headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") +
+      `<td>status</td></tr>`;
+    const rows = (out.rows || []).map((r) => {
+      const cells = (r.raw || "").split(/\s+/).filter(Boolean).slice(0, headers.length);
+      const tds = headers.map((_, i) => `<td>${escapeHtml(cells[i] ?? "")}</td>`).join("");
+      const cls = [r.status === "failed" ? "l3-row-fail" : "",
+                   r.added ? "l3-row-added" : "",
+                   clickable ? "l3-row-click" : ""].join(" ").trim();
+      const attrs = clickable
+        ? ` data-l3-simfile="${escapeHtml(out.temp_filename || "")}"` +
+          ` data-l3-spec="${out._spec_index ?? 0}" data-l3-row="${r.index}"`
+        : "";
+      return `<tr class="${cls}"${attrs}>
+        <td class="l3-idx">${r.index}${r.added ? "＋" : ""}</td>${tds}
+        <td>${escapeHtml(r.status)}</td></tr>`;
+    }).join("");
+    html += `<div class="l3-cov-circuit">
+      <div class="l3-cov-head"><span class="l3-cov-file">${escapeHtml(file)}</span>${badge}
+        <span class="l3-chip l3-chip-none">${escapeHtml(out.temp_filename || "")}</span></div>
+      <div class="l3-inj-wrap"><table class="l3-inj-table">${head}${rows}</table></div>
+      ${clickable
+        ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left — exactly like Layer 1. ＋ marks coach rows.</div>`
+        : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow (auto-drill lands with 2.8).</div>`}
+    </div>`;
+  }
+  return html;
+}
+
+async function l3ProposeClick() {
+  const file = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!file || file.error || !sessionId) return;
+  const slot = l3Slot(file.filename);
+  if (!slot.modeB || !slot.modeB.report || slot.modeB.proposing) return;
+  slot.modeB.proposing = true;
+  logEvent("l3_modeB_propose_started", { filename: file.filename });
+  renderL3Boards(file);
+  let body = null;
+  try {
+    const res = await fetch("/api/l3/propose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, filename: file.filename }),
+    });
+    body = res.ok ? await res.json()
+                  : { ok: false, error: `Server error ${res.status}` };
+  } catch (err) {
+    body = { ok: false, error: `Network error: ${err}` };
+  }
+  slot.modeB.proposing = false;
+  slot.modeB.proposals = body.ok
+    ? body
+    : { proposals: [], notes: [], model: body.model, error: body.error };
+  logEvent("l3_modeB_proposed", {
+    filename: file.filename, ok: !!body.ok,
+    n_rows: (body.proposals || []).reduce((n, g) => n + g.rows.length, 0),
+  });
+  if (l3PageVisible() && loaded[currentIdx]
+      && loaded[currentIdx].filename === file.filename) {
+    renderL3Boards(loaded[currentIdx]);
+  }
+}
+
+async function l3AcceptClick() {
+  const file = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!file || file.error || !sessionId) return;
+  const slot = l3Slot(file.filename);
+  const mb = slot.modeB;
+  if (!mb || !mb.proposals || mb.accepting) return;
+  const body = document.getElementById("l3-b-body");
+  const picked = [];
+  body.querySelectorAll("input[data-l3-group]:checked").forEach((cb) => {
+    const g = mb.proposals.proposals[parseInt(cb.dataset.l3Group, 10)];
+    if (g) picked.push(g);
+  });
+  if (!picked.length) return;
+
+  mb.accepting = true;
+  l3RunState.b = true;                       // circuit-switch guard is live
+  logEvent("l3_modeB_accept_started", {
+    filename: file.filename,
+    n_rows: picked.reduce((n, g) => n + g.rows.length, 0),
+  });
+  renderL3Boards(file);
+
+  mb.inject = {};
+  mb.injectFailing = 0;
+  let allSet = true;
+  for (const g of picked) {                  // one inject per target file
+    let out;
+    try {
+      const res = await fetch("/api/l3/inject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId, filename: g.file,
+          spec_name: g.spec_name, rows: g.rows,
+        }),
+      });
+      out = res.ok ? await res.json()
+                   : { ok: false, warning: `Server error ${res.status}` };
+    } catch (err) {
+      out = { ok: false, warning: `Network error: ${err}` };
+    }
+    if (out.ok) {
+      // spec index inside that file (temp preserves testcase order)
+      const cov = (mb.report.circuits || []).find((c) => c.file === g.file);
+      const sp = cov && (cov.specs || []).find((s) => s.name === g.spec_name);
+      out._spec_index = sp ? sp.spec_index : 0;
+      const failedAdded = (out.rows || [])
+        .filter((r) => r.added && r.status === "failed").length;
+      mb.injectFailing += failedAdded;
+      if (g.file === file.filename) mb.tempName = out.temp_filename;
+      if (out.outcome !== "all_set") allSet = false;
+    } else {
+      allSet = false;
+    }
+    mb.inject[g.file] = out;
+    logEvent("l3_modeB_inject_outcome", {
+      file: g.file, outcome: out.outcome || "error",
+    });
+  }
+  mb.accepting = false;
+  l3RunState.b = false;
+  if (allSet && mb.injectFailing === 0) {
+    mb.locked = true;                        // "you're all set" — done today
+    logEvent("l3_modeB_all_set", { filename: file.filename });
+  }
+  if (l3PageVisible() && loaded[currentIdx]
+      && loaded[currentIdx].filename === file.filename) {
+    renderL3Boards(loaded[currentIdx]);
+  }
+}
+
+async function l3SimTempRow(tr) {
+  const filename = tr.dataset.l3Simfile;
+  const specIdx = parseInt(tr.dataset.l3Spec, 10) || 0;
+  const rowIdx = parseInt(tr.dataset.l3Row, 10);
+  if (!filename || Number.isNaN(rowIdx) || !sessionId || !l3Cy) return;
+  let sim;
+  try {
+    const res = await fetch("/api/simulate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId, filename,
+        spec_index: specIdx, row_index: rowIdx,
+      }),
+    });
+    if (!res.ok) return;
+    sim = await res.json();
+  } catch { return; }
+  if (!sim || sim.ok === false) return;
+  document.querySelectorAll("#l3-b-body tr.l3-row-sel")
+    .forEach((t) => t.classList.remove("l3-row-sel"));
+  tr.classList.add("l3-row-sel");
+  applySignalFlow(sim, l3Cy);               // same painter Layer 1 uses
+  logEvent("l3_modeB_temp_row_viewed", { filename, row: rowIdx });
+}
+
+// One delegated listener serves every dynamically rendered control.
+(function wireL3BoardB() {
+  const body = document.getElementById("l3-b-body");
+  if (!body) return;
+  body.addEventListener("click", (evt) => {
+    const btn = evt.target.closest("[data-l3-act]");
+    if (btn) {
+      if (btn.dataset.l3Act === "propose") l3ProposeClick();
+      if (btn.dataset.l3Act === "accept") l3AcceptClick();
+      return;
+    }
+    const tr = evt.target.closest("tr[data-l3-simfile]");
+    if (tr) l3SimTempRow(tr);
+  });
+})();
 
 // Skeleton run buttons: store a note card in the per-circuit slot so the
 // stickiness is testable end-to-end (switch file and back — it persists;
