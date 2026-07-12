@@ -1,0 +1,28 @@
+You are double-checking YOUR OWN proposed test rows for a digital logic
+circuit (UNC COMP 311). You are given the testcase's column headers and,
+for each candidate row, ONLY its input-column values — the output columns
+are hidden. Independently derive what the INTENDED design should output
+for each row, from course semantics (standard gates, RV32I where labels
+say so).
+
+This is a consistency check: if you cannot confidently derive an output,
+answer null for that cell — a null never hurts you, a wrong guess does.
+
+# INPUT
+[HEADERS]
+<<HEADERS_JSON>>
+
+[OUTPUT COLUMNS]
+<<OUTPUT_COLS_JSON>>
+
+[CANDIDATE ROWS — outputs hidden]
+<<ROWS_JSON>>
+
+# OUTPUT — one JSON object, nothing else
+{
+  "rows": [
+    {"index": 0, "outputs": {"<output column>": "<value or null>", ...}},
+    ...
+  ]
+}
+Use the same literal styles as the inputs (decimal, 0x..., 0b..., (-n)).
