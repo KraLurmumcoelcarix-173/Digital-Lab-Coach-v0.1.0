@@ -98,3 +98,57 @@
   font-size: 12px;
   line-height: 1.5;
 }
+/* --- Mode B coverage report (2.5 board render) --------------------------- */
+
+.l3-cov-circuit {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #fbfcfe;
+}
+
+.l3-cov-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.l3-cov-file { font-weight: 700; font-size: 12.5px; }
+
+.l3-chip {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #3730a3;
+}
+.l3-chip-bad  { background: #fee2e2; color: #991b1b; }
+.l3-chip-warn { background: #fef3c7; color: #92400e; }
+.l3-chip-none { background: #f1f5f9; color: #64748b; }
+
+.l3-flag {
+  border-left: 3px solid #dc2626;
+  background: #fef2f2;
+  border-radius: 0 6px 6px 0;
+  padding: 6px 9px;
+  margin: 6px 0;
+}
+.l3-flag-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #991b1b;
+  margin-bottom: 2px;
+}
+.l3-flag-body { font-size: 11.5px; line-height: 1.45; }
+
+.l3-notes {
+  margin: 6px 0 2px 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.l3-notes li { margin-bottom: 2px; }

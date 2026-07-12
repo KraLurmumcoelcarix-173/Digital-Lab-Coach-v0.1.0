@@ -241,14 +241,98 @@ function renderL3Boards(file) {
 
   // Mode B (lower): L1-clean is the only gate (runs whether or not the
   // current tests pass); scope is tree-wide incl. subcircuit testcases.
-  _l3PaintBoard("b", {
-    status:
-      "Ready. Scans this file AND every subcircuit's testcases for rows " +
-      "that assert the wrong value, then proposes verified new rows.",
-    cls: "ready",
-    enabled: true,
-    bodyHtml: savedCard(saved.modeB),
-  });
+  if (l3RunState.b) {
+    _l3PaintBoard("b", {
+      status: "Scanning this file and every subcircuit's testcases…",
+      cls: "muted",
+      bodyHtml: l3ModeBBodyHtml(saved.modeB),
+    });
+  } else if (saved.modeB && saved.modeB.report) {
+    const rep = saved.modeB.report;
+    const n = rep.total_flags || 0;
+    _l3PaintBoard("b", {
+      status: n > 0
+        ? `Scan done: ${n} cell${n === 1 ? "" : "s"} where a test row and ` +
+          `the circuit disagree — details below.`
+        : "Scan done: tests and circuit agree everywhere. Coverage notes below.",
+      cls: n > 0 ? "blocked" : "ready",
+      enabled: true,
+      bodyHtml: l3ModeBBodyHtml(saved.modeB),
+    });
+  } else {
+    _l3PaintBoard("b", {
+      status:
+        "Ready. Scans this file AND every subcircuit's testcases for rows " +
+        "that assert the wrong value, then reports your coverage gaps.",
+      cls: "ready",
+      enabled: true,
+      bodyHtml: savedCard(saved.modeB),
+    });
+  }
+}
+
+// --- Mode B: coverage scan render -------------------------------------------
+// The board body for a finished /api/l3/coverage run: one section per circuit
+// in the tree (root first), disagreement cards on top, then the coverage
+// notes ("good report"). Falls back to the legacy stub note shape.
+
+function l3ModeBBodyHtml(savedB) {
+  if (!savedB) return "";
+  if (!savedB.report) {
+    return savedB.note
+      ? `<div class="l3-note-card">${escapeHtml(savedB.note)}</div>`
+      : "";
+  }
+  const rep = savedB.report;
+  let html = "";
+  for (const c of rep.circuits || []) {
+    html += `<div class="l3-cov-circuit">`;
+    html += `<div class="l3-cov-head">` +
+      `<span class="l3-cov-file">${escapeHtml(c.file)}</span>` +
+      _l3CircuitChips(c) + `</div>`;
+    for (const f of c.flags || []) html += _l3FlagCardHtml(f);
+    html += _l3NotesHtml(c.notes || []);
+    html += `</div>`;
+  }
+  if ((rep.notes || []).length) {
+    html += `<div class="l3-cov-circuit"><div class="l3-cov-head">` +
+      `<span class="l3-cov-file">whole tree</span></div>` +
+      _l3NotesHtml(rep.notes) + `</div>`;
+  }
+  return html;
+}
+
+function _l3CircuitChips(c) {
+  const chips = [];
+  if (!c.has_testcases) {
+    chips.push(`<span class="l3-chip l3-chip-none">no tests</span>`);
+  } else {
+    chips.push(`<span class="l3-chip">${c.row_count} row${c.row_count === 1 ? "" : "s"}</span>`);
+  }
+  const flags = (c.flags || []).length;
+  if (flags) {
+    chips.push(`<span class="l3-chip l3-chip-bad">${flags} disagreement${flags === 1 ? "" : "s"}</span>`);
+  }
+  const unresolved = (c.specs || [])
+    .reduce((n, s) => n + (s.unresolved_cells || 0), 0);
+  if (unresolved) {
+    // honesty guard visibility: these cells were counted, never accused
+    chips.push(`<span class="l3-chip l3-chip-warn" title="The evaluator could not resolve these output cells, so they were never accused.">${unresolved} unchecked</span>`);
+  }
+  return chips.join("");
+}
+
+function _l3FlagCardHtml(f) {
+  return `<div class="l3-flag">
+    <div class="l3-flag-title">'${escapeHtml(f.spec_name)}' row ${f.row_index} &middot; ${escapeHtml(f.column)} — test and circuit disagree</div>
+    <div class="l3-flag-body">This row expects <b>${escapeHtml(f.column)} = ${escapeHtml(f.asserted_fmt)}</b>, but the circuit as built computes <b>${escapeHtml(f.computed_fmt)}</b>. One of them is wrong: either the row's expected value is a typo — fix the testcase — or the circuit has a bug at this output (run per-row tests, then the Failed-test analysis above).</div>
+  </div>`;
+}
+
+function _l3NotesHtml(notes) {
+  if (!notes.length) return "";
+  return `<ul class="l3-notes">` +
+    notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") + `</ul>`;
 }
 
 // Skeleton run buttons: store a note card in the per-circuit slot so the
@@ -269,19 +353,56 @@ l3ARunBtn.addEventListener("click", () => {
   renderL3Boards(file);
 });
 
-l3BRunBtn.addEventListener("click", () => {
+// Mode B run: synchronous scan (sub-second even on a full CPU tree). The
+// result is stored per circuit (sticky; expires on re-upload) under the
+// filename the run STARTED on, so a mid-run circuit switch can't misfile it.
+l3BRunBtn.addEventListener("click", async () => {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
-  if (!file || file.error) return;
-  logEvent("l3_modeB_stub_clicked", { filename: file.filename });
-  l3Slot(file.filename).modeB = {
-    stub: true,
-    note:
-      "Board wired and ready — the Mode B engine (tree-wide wrong-test " +
-      "detection + coverage report + verified new-row proposals) lands in " +
-      "Phase 2. This card is stored per circuit: switch files and come " +
-      "back, it persists; re-upload clears it.",
-  };
+  if (!file || file.error || !sessionId || l3RunState.b) return;
+  const filename = file.filename;
+  logEvent("l3_modeB_run_started", { filename });
+
+  l3RunState.b = true;
+  l3BRunBtn.textContent = "Scanning…";
   renderL3Boards(file);
+
+  let body = null;
+  let failText = null;
+  try {
+    const res = await fetch("/api/l3/coverage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, filename }),
+    });
+    if (!res.ok) failText = `Server error ${res.status}: ${await res.text()}`;
+    else body = await res.json();
+  } catch (err) {
+    failText = `Network error: ${err}`;
+  }
+  l3RunState.b = false;
+  l3BRunBtn.textContent = "Check my test coverage";
+
+  if (body && body.ok) {
+    l3Slot(filename).modeB = { report: body };
+    logEvent("l3_modeB_run_complete", {
+      filename, ok: true, total_flags: body.total_flags || 0,
+    });
+  } else {
+    const warn = failText || (body && body.warning) || "Scan failed.";
+    l3Slot(filename).modeB = null;
+    logEvent("l3_modeB_run_complete", { filename, ok: false });
+    const status = document.getElementById("l3-b-status");
+    if (status && l3PageVisible()
+        && loaded[currentIdx] && loaded[currentIdx].filename === filename) {
+      renderL3Boards(loaded[currentIdx]);
+      status.textContent = `Coverage scan failed: ${warn}`;
+      status.className = "l3-status blocked";
+      return;
+    }
+  }
+  // re-render only if the user is still looking at the file the run was for
+  if (l3PageVisible() && loaded[currentIdx]
+      && loaded[currentIdx].filename === filename) {
+    renderL3Boards(loaded[currentIdx]);
+  }
 });
-
-
