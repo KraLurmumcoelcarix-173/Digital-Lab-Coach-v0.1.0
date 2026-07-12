@@ -1,0 +1,144 @@
+{
+  "lab": "lab5",
+  "description": "COMP 311 Lab 5 \u2014 RV32I single-cycle subset (Harris&Harris-style control).",
+  "applies_to": [
+    "cpu.dig",
+    "alu.dig",
+    "control-unit.dig",
+    "register-file.dig",
+    "add-sub.dig",
+    "bidirectional-shifter.dig",
+    "boolean-unit.dig",
+    "slt-unit.dig"
+  ],
+  "categories": {
+    "control-unit.dig": [
+      {
+        "name": "add",
+        "when": {
+          "opcode": "0b0110011",
+          "funct3": "0b000",
+          "funct7": "0b0000000"
+        }
+      },
+      {
+        "name": "sub",
+        "when": {
+          "opcode": "0b0110011",
+          "funct3": "0b000",
+          "funct7": "0b0100000"
+        }
+      },
+      {
+        "name": "and",
+        "when": {
+          "opcode": "0b0110011",
+          "funct3": "0b111"
+        }
+      },
+      {
+        "name": "or",
+        "when": {
+          "opcode": "0b0110011",
+          "funct3": "0b110"
+        }
+      },
+      {
+        "name": "slt",
+        "when": {
+          "opcode": "0b0110011",
+          "funct3": "0b010"
+        }
+      },
+      {
+        "name": "addi",
+        "when": {
+          "opcode": "0b0010011",
+          "funct3": "0b000"
+        }
+      },
+      {
+        "name": "slti",
+        "when": {
+          "opcode": "0b0010011",
+          "funct3": "0b010"
+        }
+      },
+      {
+        "name": "andi",
+        "when": {
+          "opcode": "0b0010011",
+          "funct3": "0b111"
+        }
+      }
+    ],
+    "alu.dig": [
+      {
+        "name": "AND",
+        "when": {
+          "ALUOp": "0b0000"
+        }
+      },
+      {
+        "name": "OR",
+        "when": {
+          "ALUOp": "0b0001"
+        }
+      },
+      {
+        "name": "ADD",
+        "when": {
+          "ALUOp": "0b0010"
+        }
+      },
+      {
+        "name": "XOR",
+        "when": {
+          "ALUOp": "0b0011"
+        }
+      },
+      {
+        "name": "SLL",
+        "when": {
+          "ALUOp": "0b0100"
+        }
+      },
+      {
+        "name": "SRL",
+        "when": {
+          "ALUOp": "0b0101"
+        }
+      },
+      {
+        "name": "SUB",
+        "when": {
+          "ALUOp": "0b0110"
+        }
+      },
+      {
+        "name": "SLT",
+        "when": {
+          "ALUOp": "0b0111"
+        }
+      },
+      {
+        "name": "SRA",
+        "when": {
+          "ALUOp": "0b1000"
+        }
+      }
+    ]
+  },
+  "official_tests": {
+    "cpu.dig": "52845cf7436dee1da97c4bf4b96ca4cb49f8322a",
+    "alu.dig": "55e59f668e601b00beade984af5d76924292c6a5",
+    "control-unit.dig": "95c7b8dd203dc9090174bb3582d90cb7876516cc",
+    "register-file.dig": "9e23eb3263f5675688324ffd07a3f33eb66c171c",
+    "add-sub.dig": "f9bf26813804ac07a943ce3c98a079bba0201afb",
+    "bidirectional-shifter.dig": "20288590b786e5bd78906578a8f3d0d2b2790253",
+    "boolean-unit.dig": "639ad5726555da437ff918178eadfc795a366bfa",
+    "slt-unit.dig": "3c1a4612aae0270c09f9e02d50c9f159ee66677e"
+  },
+  "reference_dir": null,
+  "_note": "reference_dir stays null in the repo; instructors point DLC_REFERENCE_DIR at their local solutions folder."
+}
