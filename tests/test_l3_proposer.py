@@ -267,3 +267,92 @@ def test_propose_endpoint_404s_on_unknown_session():
         "session_id": "nope", "filename": "x.dig",
     })
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 2.10: program-extension proposals (cpu-like ROM-driven targets)
+# ---------------------------------------------------------------------------
+
+from dlc.testing.runner import find_digital_jar  # noqa: E402
+
+_needs_jar = pytest.mark.skipif(
+    find_digital_jar() is None, reason="Digital.jar not configured",
+)
+
+
+def _cpu_like_target():
+    return {"file": "cpu.dig", "spec_name": "Test",
+            "headers": ["clk", "ReadData1", "ReadData2"],
+            "inputs": [],
+            "outputs": [{"label": "ReadData1", "bits": 32},
+                        {"label": "ReadData2", "bits": 32}],
+            "existing_rows": [], "existing_rows_omitted": 0,
+            "has_clock": True, "clock_col": "clk",
+            "has_program_rom": True, "program_words": ["13"],
+            "rom_capacity_left": 100}
+
+
+def test_program_group_survives_validation_atomically():
+    t = _cpu_like_target()
+    props = [{"file": "cpu.dig", "spec_name": "Test",
+              "rows": ["C 1 2", "C 3 4"], "why": "r-type gap",
+              "program_words": ["628e33", "0x40430EB3"]}]
+    valid, rejected = proposer.validate_and_dedupe(props, [t])
+    assert rejected == []
+    assert len(valid) == 1
+    assert valid[0]["program_words"] == ["628e33", "40430eb3"]  # normalized
+    assert valid[0]["rows"] == ["C 1 2", "C 3 4"]
+
+
+def test_program_group_rejections():
+    t = _cpu_like_target()
+    base = {"file": "cpu.dig", "spec_name": "Test", "why": "w"}
+
+    def reason(p, target=t):
+        v, r = proposer.validate_and_dedupe([p], [target])
+        assert v == [] and len(r) == 1
+        return r[0]["reason"]
+
+    assert "one row per program word" in reason(
+        {**base, "rows": ["C 1 2"], "program_words": ["13", "93"]})
+    assert "hex" in reason(
+        {**base, "rows": ["C 1 2"], "program_words": ["not-hex"]})
+    assert "clock" in reason(                      # row must pulse the clock
+        {**base, "rows": ["0 1 2"], "program_words": ["13"]})
+    assert "only valid for clocked" in reason(
+        {**base, "rows": ["C 1 2"], "program_words": ["13"]},
+        target={**_cpu_like_target(), "has_program_rom": False})
+    assert "does not fit" in reason(
+        {**base, "rows": ["C 1 2"], "program_words": ["13"]},
+        target={**_cpu_like_target(), "rom_capacity_left": 0})
+
+
+def test_parse_proposals_carries_program_words():
+    text = json.dumps({"proposals": [
+        {"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
+         "why": "w", "program_words": ["628e33"]}]})
+    got = proposer.parse_proposals(text)
+    assert got[0]["program_words"] == ["628e33"]
+    # absent key stays absent on normal groups
+    text2 = json.dumps({"proposals": [
+        {"file": "f.dig", "spec_name": "T", "rows": ["1 0 0"], "why": "w"}]})
+    assert "program_words" not in proposer.parse_proposals(text2)[0]
+
+
+@_needs_jar
+def test_inject_endpoint_as_second_builds_second_testcase():
+    spec_name = proposer.build_targets(scan_tree_coverage(_AND))[0]["spec_name"]
+    sid = _upload_and()
+    try:
+        r = client.post("/api/l3/inject", json={
+            "session_id": sid, "filename": "single_and.dig",
+            "spec_name": spec_name, "rows": ["1 0 0"], "as_second": True,
+        })
+        body = r.json()
+        assert body["ok"] is True and body["outcome"] == "all_set"
+        assert body["spec_name"] == f"{spec_name}_second"
+        assert body["spec_index"] == 1
+        assert body["base_spec"]["all_passed"] is True
+        assert body["temp_filename"] == "single_and__coach.dig"
+    finally:
+        server._SESSIONS.pop(sid, None)

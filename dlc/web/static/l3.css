@@ -225,3 +225,5 @@
 
 /* 2.9 category chip: GREEN when every manifest category is exercised */
 .l3-chip-good { background: #dcfce7; color: #166534; }
+.l3-row-warm { opacity: .5; }
+.l3-prop-prog { background: #eef2ff; color: #3730a3; font-family: ui-monospace, monospace; }

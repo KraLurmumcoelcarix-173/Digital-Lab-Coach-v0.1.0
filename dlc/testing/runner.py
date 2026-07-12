@@ -66,6 +66,7 @@ from dlc.testing.spec import TestSpec
 
 
 _DATASTRING_RE = re.compile(r'(<dataString>).*?(</dataString>)', flags=re.DOTALL)
+_SYNTHETIC_NAME_RE = re.compile(r"Testcase_\d+")   # parser's name for label-less testcases
 _PENDING_CLEANUP: list[str] = []
 
 
@@ -248,6 +249,12 @@ def per_row_run_iter(
             tc = run.by_name().get(spec.name)
             if tc is None and len(run.testcases) == 1:
                 tc = run.testcases[0]
+            if tc is None and _SYNTHETIC_NAME_RE.fullmatch(spec.name):
+                # Digital prints 'unnamed' for a label-less testcase; our
+                # parser names it 'Testcase_<idx>'. Alias when unambiguous.
+                unnamed = [t for t in run.testcases if t.name == "unnamed"]
+                if len(unnamed) == 1:
+                    tc = unnamed[0]
             if tc is None:
                 names_seen = ", ".join(t.name for t in run.testcases) or "<none>"
                 yield PerRowResult(
@@ -397,6 +404,13 @@ def per_file_run_fast(
             # Single testcase whose label Digital renders differently
             # (e.g. unnamed) — same tolerance the slow path applies.
             section = next(iter(sections.values()))
+        if (section is None and _SYNTHETIC_NAME_RE.fullmatch(spec.name)
+                and "unnamed" in sections
+                and sum(1 for s in specs
+                        if _SYNTHETIC_NAME_RE.fullmatch(s.name)) == 1):
+            # Digital prints 'unnamed' for a label-less testcase; alias our
+            # synthetic 'Testcase_<idx>' to it when it is the only one.
+            section = sections["unnamed"]
         if section is None:
             names_seen = ", ".join(sections) or "<none>"
             results[spec.name] = _error_rows(

@@ -31,6 +31,7 @@ _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
 
 _MAX_EXISTING_ROWS_SHOWN = 40    # keep the prompt lean on loop-heavy specs
 _MAX_TOTAL_ROWS = 6              # hard cap across all accepted proposals
+_MAX_PROGRAM_WORDS = 8           # 2.10: cap per program-extension proposal
 
 
 def _load_prompt() -> str:
@@ -59,7 +60,10 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
         spec = specs[0]              # Mode B injects into the first testcase
         existing = [r.raw.strip() for r in spec.rows if not r.is_malformed]
         shown = existing[:_MAX_EXISTING_ROWS_SHOWN]
-        targets.append({
+        bindings = match_variables_to_io(spec.headers, circuit)
+        clock_col = next((col for col, b in bindings.items()
+                          if b is not None and b.role == "clock"), None)
+        target = {
             "file": cov.file,
             "spec_name": spec.name,
             "headers": list(spec.headers),
@@ -69,12 +73,42 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
                         for c in circuit.outputs() if c.label],
             "existing_rows": shown,
             "existing_rows_omitted": max(0, len(existing) - len(shown)),
-            "has_clock": any(
-                b and b.role == "clock"
-                for b in match_variables_to_io(spec.headers, circuit).values()
-            ),
-        })
+            "has_clock": clock_col is not None,
+            "clock_col": clock_col,
+            "has_program_rom": False,
+        }
+        # 2.10: program-driven targets (cpu-like) — expose the existing
+        # program so the model can derive per-cycle register state.
+        rom = _program_rom_of(circuit)
+        if rom is not None:
+            words, addr_bits = rom
+            target["has_program_rom"] = True
+            target["program_words"] = [f"{w:x}" for w in words]
+            target["rom_capacity_left"] = max(0, (1 << addr_bits) - len(words))
+        targets.append(target)
     return targets
+
+
+def _program_rom_of(circuit) -> tuple[list[int], int] | None:
+    """(existing_words, addr_bits) of the single program ROM, else None."""
+    roms = []
+    for comp in circuit.components:
+        if comp.element_name != "ROM":
+            continue
+        if str(comp.attributes.get("isProgramMemory", "")).lower() != "true":
+            continue
+        data = str(comp.attributes.get("Data", "") or "")
+        try:
+            words = [int(w, 16) for w in data.replace("\n", "").split(",")
+                     if w.strip()]
+        except ValueError:
+            continue
+        try:
+            addr_bits = int(comp.attributes.get("AddrBits", 10))
+        except (TypeError, ValueError):
+            addr_bits = 10
+        roms.append((words, addr_bits))
+    return roms[0] if len(roms) == 1 else None
 
 
 def build_prompt(report: TreeCoverageReport, targets: list[dict]) -> str:
@@ -119,12 +153,18 @@ def parse_proposals(text: str) -> list[dict]:
         rows = [r.strip() for r in rows if isinstance(r, str) and r.strip()]
         if not rows:
             continue
-        out.append({
+        entry = {
             "file": str(p.get("file", "")),
             "spec_name": str(p.get("spec_name", "")),
             "rows": rows,
             "why": str(p.get("why", "")).strip(),
-        })
+        }
+        pw = p.get("program_words")
+        if isinstance(pw, list):        # 2.10: optional program extension
+            pw = [str(w).strip() for w in pw if str(w).strip()]
+            if pw:
+                entry["program_words"] = pw
+        out.append(entry)
     return out
 
 
@@ -159,6 +199,13 @@ def validate_and_dedupe(
         if t is None or p["spec_name"] != t["spec_name"]:
             rejected.append({**p, "reason": "unknown target file or testcase"})
             continue
+        if p.get("program_words"):          # 2.10: atomic program extension
+            ok_entry, reason = _validate_program_group(p, t)
+            if ok_entry is not None:
+                valid.append(ok_entry)
+            else:
+                rejected.append({**p, "reason": reason})
+            continue
         good_rows: list[str] = []
         bad: list[tuple[str, str]] = []
         for raw in p["rows"]:
@@ -185,6 +232,39 @@ def validate_and_dedupe(
                              "rows": [raw], "why": p.get("why", ""),
                              "reason": reason})
     return valid, rejected
+
+
+def _validate_program_group(p: dict, t: dict) -> tuple[dict | None, str]:
+    """2.10: validate an atomic program-extension proposal (words + rows).
+    Returns (valid_entry, "") or (None, reason). No dedupe: the rows run in
+    a fresh SECOND testcase whose replay context is different by design."""
+    from dlc.l3.oracle import parse_program_words
+    if not (t.get("has_clock") and t.get("has_program_rom")):
+        return None, ("program_words are only valid for clocked targets "
+                      "with a program ROM")
+    try:
+        words = parse_program_words(p["program_words"])
+    except ValueError as exc:
+        return None, str(exc)
+    if not 1 <= len(words) <= _MAX_PROGRAM_WORDS:
+        return None, f"program extension must be 1..{_MAX_PROGRAM_WORDS} words"
+    if len(words) > t.get("rom_capacity_left", 0):
+        return None, "program extension does not fit in the ROM"
+    if len(p["rows"]) != len(words):
+        return None, (f"needs exactly one row per program word "
+                      f"({len(words)} word(s), {len(p['rows'])} row(s))")
+    clk = t.get("clock_col")
+    for raw in p["rows"]:
+        try:
+            _validate_against_headers(raw, t["headers"], p["spec_name"])
+        except ValueError as exc:
+            return None, str(exc)
+        cells = dict(zip(t["headers"], raw.split("#", 1)[0].split()))
+        if clk and cells.get(clk, "").upper() != "C":
+            return None, (f"every program-extension row must clock the "
+                          f"circuit: expected C in column {clk!r}: {raw!r}")
+    return {**p, "rows": list(p["rows"]),
+            "program_words": [f"{w:x}" for w in words]}, ""
 
 
 def _validate_against_headers(raw: str, headers: list[str], spec_name: str) -> None:
@@ -262,6 +342,10 @@ def propose_rows(
         valid, rejected, notes, targets, call, used_model,
     )
 
+    if any(g.get("program_words") for g in valid):
+        notes.append("program-extending proposal(s) run in a SECOND testcase "
+                     "on Accept — the official testcase is never edited and "
+                     "is re-run unchanged as a regression guard.")
     if rejected:
         notes.append(f"{sum(len(r['rows']) for r in rejected)} proposed "
                      f"row(s) were dropped before display.")

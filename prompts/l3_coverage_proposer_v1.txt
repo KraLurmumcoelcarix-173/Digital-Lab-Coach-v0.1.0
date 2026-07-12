@@ -50,6 +50,27 @@ You are a coach, not an answer key.
   those inputs (course semantics, e.g. RV32I). If the circuit disagrees,
   the verifier will surface that — that is a feature, not a mistake.
 
+# PROGRAM-DRIVEN TARGETS (2.10) — targets with "has_program_rom": true
+For these (e.g. a single-cycle CPU) the testcase columns carry only the
+clock and observed outputs; the INSTRUCTIONS come from the program ROM
+whose current contents are given as "program_words". New rows alone can
+NEVER exercise a new instruction category there. Instead you may propose a
+PROGRAM EXTENSION by adding to such a group:
+  "program_words": ["<hex word>", ...]     (appended to the ROM, 1..8)
+with EXACTLY one row per word, in order. Rules:
+- Word i and row i pair up: row i is checked on the cycle word i executes,
+  AFTER the entire existing program has run and committed (registers start
+  at 0 — simulate the existing "program_words" first, then yours, per the
+  lab's ISA, to derive every expected output cell).
+- Rows use the normal header columns with C in the clock column.
+- Only instructions the lab's ISA actually decodes; prefer extensions that
+  also READ BACK a result written by an earlier new instruction, proving
+  the write really happened.
+- If you are unsure of even ONE expected value, drop the whole group.
+The tool never edits the official testcase: your rows run in a SECOND
+testcase named "<spec_name>_second" on a temp copy, and the official
+testcase is re-run unchanged as a regression guard.
+
 # OUTPUT — one JSON object, nothing else
 {
   "proposals": [
@@ -57,10 +78,13 @@ You are a coach, not an answer key.
       "file": "<target filename from TARGETS>",
       "spec_name": "<testcase name from TARGETS>",
       "rows": ["<row line>", "..."],
-      "why": "<one sentence: the gap this closes>"
+      "why": "<one sentence: the gap this closes>",
+      "program_words": ["<hex word>", "..."]
     }
   ]
 }
-- 1 to 4 proposal groups, at most 6 rows TOTAL across all groups.
+- "program_words" appears ONLY on program-driven groups; omit it otherwise.
+- 1 to 4 proposal groups, at most 6 rows TOTAL across normal groups
+  (program-extension groups are capped separately at 8 words = 8 rows).
 - Prefer the most valuable gaps over quantity; an empty list is a valid
   answer when nothing trustworthy remains.

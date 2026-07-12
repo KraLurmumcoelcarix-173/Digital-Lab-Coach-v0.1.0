@@ -253,3 +253,86 @@ def test_rerun_keep_temp_hands_ownership_to_caller():
     )
     assert out.ok and out.temp_path and os.path.exists(out.temp_path)
     os.unlink(out.temp_path)
+
+# ---------------------------------------------------------------------------
+# 2.10: second testcase + program-ROM extension
+# ---------------------------------------------------------------------------
+
+from dlc.l3.oracle import (              # noqa: E402
+    add_testcase_text,
+    extend_program_rom_text,
+    find_program_rom,
+    parse_program_words,
+    rerun_with_second,
+)
+
+_AND = "data/sample_circuits/tier1_minimal/single_and.dig"
+
+_ROMISH = """<circuit><visualElements>
+    <visualElement>
+      <elementName>ROM</elementName>
+      <elementAttributes>
+        <entry><string>AddrBits</string><int>3</int></entry>
+        <entry><string>isProgramMemory</string><boolean>true</boolean></entry>
+        <entry><string>Data</string><data>13,93</data></entry>
+      </elementAttributes>
+      <pos x="0" y="40"/>
+    </visualElement>
+  </visualElements><wires/></circuit>"""
+
+
+def test_program_rom_found_extended_and_capacity_guarded():
+    words, addr_bits, _span = find_program_rom(_ROMISH)
+    assert words == [0x13, 0x93] and addr_bits == 3
+    out = extend_program_rom_text(_ROMISH, [0x628E33])
+    assert "<data>13,93,628e33</data>" in out
+    assert find_program_rom(out)[0] == [0x13, 0x93, 0x628E33]
+    with pytest.raises(ValueError):                 # 3 addr bits = 8 words max
+        extend_program_rom_text(_ROMISH, [1] * 7)
+    assert find_program_rom("<circuit><visualElements/></circuit>") is None
+
+
+def test_parse_program_words_accepts_hex_rejects_junk():
+    assert parse_program_words(["628e33", "0x40430EB3"]) == [0x628E33, 0x40430EB3]
+    with pytest.raises(ValueError):
+        parse_program_words(["not-hex"])
+    with pytest.raises(ValueError):
+        parse_program_words(["1ffffffff"])          # > 32 bits
+
+
+def test_add_testcase_text_second_spec_original_untouched(tmp_path):
+    original = Path(_CALC).read_text(encoding="utf-8")
+    spec = extract_test_specs(parse_dig_file(_CALC))[0]
+    label = f"{spec.name}_second"
+    ds = " ".join(spec.headers) + "\n1 1 0 0 2 0 0 0"
+    out = add_testcase_text(original, label, ds)
+    p = tmp_path / "calc.dig"
+    p.write_text(out, encoding="utf-8")
+    specs = extract_test_specs(parse_dig_file(str(p)))
+    second = next(s for s in specs if s.name == label)
+    assert second.headers == spec.headers and second.row_count() == 1
+    base = next(s for s in specs if s.name == spec.name)
+    assert base.row_count() == spec.row_count()     # official spec untouched
+    assert base.raw_data_string == spec.raw_data_string
+
+
+@_needs_jar
+def test_rerun_with_second_runs_both_specs_and_guards_base():
+    spec_name = extract_test_specs(parse_dig_file(_AND))[0].name
+    out = rerun_with_second(_AND, spec_name, [InjectedRow("1 0 0")], [])
+    assert out.ok is True
+    assert out.spec_name == f"{spec_name}_second"
+    assert out.spec_index == 1                      # appended after spec 0
+    assert [r["status"] for r in out.rows] == ["passed"]
+    assert out.rows[0]["added"] is True and out.rows[0]["origin"] == "coach"
+    assert out.base_spec == {"name": spec_name, "total": 4,
+                             "passed": 4, "all_passed": True}
+    assert out.all_passed is True and out.added_all_passed is True
+
+
+@_needs_jar
+def test_rerun_with_second_needs_a_program_rom_for_words():
+    spec_name = extract_test_specs(parse_dig_file(_AND))[0].name
+    out = rerun_with_second(_AND, spec_name, [InjectedRow("1 0 0")], ["13"])
+    assert out.ok is False
+    assert "program memory" in (out.warning or "")

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from dlc.l3 import limits
 from dlc.l3.coverage import scan_tree_coverage
-from dlc.l3.oracle import InjectedRow, rerun_with_rows
+from dlc.l3.oracle import InjectedRow, rerun_with_rows, rerun_with_second
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs
 
@@ -110,6 +110,12 @@ class InjectRequest(BaseModel):
     rows: list[str] = []
     spec_name: str | None = None    # default: the file's first testcase
     origin: str = "coach"           # provenance tag carried to result rows
+    # 2.10 program-driven targets: build a SECOND testcase '<spec>_second'
+    # instead of appending; rom_words extend the program ROM (one row per
+    # word). The official testcase stays byte-identical and is re-run as a
+    # regression guard (response carries base_spec).
+    as_second: bool = False
+    rom_words: list[str] = []
 
 
 @router.post("/api/l3/inject")
@@ -149,9 +155,14 @@ def l3_inject(req: InjectRequest) -> dict:
 
     rows = [InjectedRow(raw=r, origin=req.origin or "coach")
             for r in req.rows if isinstance(r, str)]
-    outcome = rerun_with_rows(
-        target["path"], spec_name, rows, keep_temp=True,
-    )
+    if req.as_second:
+        outcome = rerun_with_second(
+            target["path"], spec_name, rows, req.rom_words, keep_temp=True,
+        )
+    else:
+        outcome = rerun_with_rows(
+            target["path"], spec_name, rows, keep_temp=True,
+        )
     body = outcome.to_dict()
     if not outcome.ok:
         return {**body, "outcome": "error", "temp_filename": None}
@@ -175,7 +186,8 @@ def l3_inject(req: InjectRequest) -> dict:
             "for": req.filename,
             "name": temp_filename,
             "path": outcome.temp_path,
-            "spec_name": spec_name,
+            # for as_second this is '<spec>_second' — Mode A targets it
+            "spec_name": outcome.spec_name or spec_name,
         }
 
     return {

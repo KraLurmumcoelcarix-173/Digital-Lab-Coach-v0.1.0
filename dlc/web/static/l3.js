@@ -406,12 +406,23 @@ function l3ProposalsHtml(mb) {
   p.proposals.forEach((g, gi) => {
     const rows = g.rows.map((r) =>
       `<div class="l3-prop-row">${escapeHtml(r)}</div>`).join("");
+    const isProg = !!(g.program_words && g.program_words.length);
+    const prog = isProg
+      ? `<div class="l3-prop-row l3-prop-prog">+ ROM: ${escapeHtml(g.program_words.join(" "))}</div>`
+      : "";
+    const progHint = isProg
+      ? `<div class="l3-prop-hint">Extends the instruction ROM by ${g.program_words.length}
+         word(s); the rows run in a NEW testcase '${escapeHtml(g.spec_name)}_second' —
+         your official testcase is never edited and is re-run unchanged.</div>`
+      : "";
     html += `<label class="l3-prop-card">
       <input type="checkbox" data-l3-group="${gi}" checked />
       <div class="l3-prop-body">
         <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'</div>
+        ${prog}
         ${rows}
         <div class="l3-prop-why">${escapeHtml(g.why)}</div>
+        ${progHint}
       </div></label>`;
   });
   if ((p.notes || []).length) {
@@ -448,6 +459,7 @@ function l3InjectHtml(mb) {
       const tds = headers.map((_, i) => `<td>${escapeHtml(cells[i] ?? "")}</td>`).join("");
       const cls = [r.status === "failed" ? "l3-row-fail" : "",
                    r.added ? "l3-row-added" : "",
+                   r.origin === "replay" ? "l3-row-warm" : "",
                    clickable ? "l3-row-click" : ""].join(" ").trim();
       const attrs = clickable
         ? ` data-l3-simfile="${escapeHtml(out.temp_filename || "")}"` +
@@ -457,16 +469,27 @@ function l3InjectHtml(mb) {
         <td class="l3-idx">${r.index}${r.added ? "＋" : ""}</td>${tds}
         <td>${escapeHtml(r.status)}</td></tr>`;
     }).join("");
+    const baseLine = out.base_spec
+      ? `<div class="l3-prop-hint">Official testcase '${escapeHtml(out.base_spec.name)}'
+         re-run unchanged: ${out.base_spec.passed}/${out.base_spec.total}
+         ${out.base_spec.all_passed ? "still passing ✓" : "REGRESSED ✗"} —
+         dimmed rows just replay your original program (nothing asserted).</div>`
+      : "";
     html += `<div class="l3-cov-circuit">
       <div class="l3-cov-head"><span class="l3-cov-file">${escapeHtml(file)}</span>${badge}
-        <span class="l3-chip l3-chip-none">${escapeHtml(out.temp_filename || "")}</span></div>
+        <span class="l3-chip l3-chip-none">${escapeHtml(out.temp_filename || "")}</span>
+        ${out.spec_name ? `<span class="l3-chip l3-chip-none">${escapeHtml(out.spec_name)}</span>` : ""}</div>
+      ${baseLine}
       <div class="l3-inj-wrap"><table class="l3-inj-table">${head}${rows}</table></div>
       ${clickable
         ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left — exactly like Layer 1. ＋ marks coach rows.</div>`
-        : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow (auto-drill lands with 2.8).</div>`}
+        : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow.</div>`}
       ${out.outcome !== "all_set"
-        ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard failing coach rows &amp; re-verify</button>
-           <span class="l3-prop-hint">A failing coach row can itself be wrong — discarding keeps only the rows your circuit and the coach agree on.</span></div>`
+        ? (out._rom_words
+          ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard the program extension</button>
+             <span class="l3-prop-hint">A program extension verifies as a unit — later instructions read earlier results — so discarding removes the whole extension.</span></div>`
+          : `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard failing coach rows &amp; re-verify</button>
+             <span class="l3-prop-hint">A failing coach row can itself be wrong — discarding keeps only the rows your circuit and the coach agree on.</span></div>`)
         : ""}
     </div>`;
   }
@@ -535,12 +558,14 @@ async function l3AcceptClick() {
   for (const g of picked) {                  // one inject per target file
     let out;
     try {
+      const isProg = !!(g.program_words && g.program_words.length);
       const res = await fetch("/api/l3/inject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId, filename: g.file,
           spec_name: g.spec_name, rows: g.rows,
+          as_second: isProg, rom_words: g.program_words || [],
         }),
       });
       out = res.ok ? await res.json()
@@ -549,10 +574,14 @@ async function l3AcceptClick() {
       out = { ok: false, warning: `Network error: ${err}` };
     }
     if (out.ok) {
-      // spec index inside that file (temp preserves testcase order)
+      // spec index inside that file (temp preserves testcase order); for a
+      // second testcase the server says where it appended it
       const cov = (mb.report.circuits || []).find((c) => c.file === g.file);
       const sp = cov && (cov.specs || []).find((s) => s.name === g.spec_name);
-      out._spec_index = sp ? sp.spec_index : 0;
+      out._spec_index = (out.spec_index != null)
+        ? out.spec_index : (sp ? sp.spec_index : 0);
+      out._rom_words = (g.program_words && g.program_words.length)
+        ? g.program_words : null;
       const failedAdded = (out.rows || [])
         .filter((r) => r.added && r.status === "failed").length;
       mb.injectFailing += failedAdded;
@@ -612,10 +641,13 @@ async function l3DiscardFail(file) {
   const mb = l3Slot(cur.filename).modeB;
   const out = mb && mb.inject && mb.inject[file];
   if (!out || !out.ok || mb.accepting) return;
-  const keep = (out.rows || [])
+  // A program extension is atomic (later instructions read earlier
+  // results), so discarding drops the WHOLE extension — keep nothing.
+  const keep = out._rom_words ? [] : (out.rows || [])
     .filter((r) => r.added && r.status === "passed")
     .map((r) => r.raw);
-  logEvent("l3_modeB_discard_failing", { file, kept: keep.length });
+  logEvent("l3_modeB_discard_failing",
+           { file, kept: keep.length, program: !!out._rom_words });
   if (!keep.length) {
     delete mb.inject[file];
     if (!Object.keys(mb.inject).length) mb.inject = null;
