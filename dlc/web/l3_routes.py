@@ -77,6 +77,33 @@ def l3_coverage(req: CoverageRequest) -> dict:
     }
 
 
+class ProposeRequest(BaseModel):
+    session_id: str
+    filename: str
+    model: str | None = None
+
+
+@router.post("/api/l3/propose")
+def l3_propose(req: ProposeRequest) -> dict:
+    """Mode B's ONE hidden model call: propose non-redundant new test
+    rows grounded on the fresh coverage report. Proposing is free — the
+    Mode B daily use was already consumed by the clean scan that unlocks
+    this button. Every returned row has passed the deterministic validator
+    (legal shape, non-duplicate); nothing is written anywhere until the
+    student accepts, which goes through /api/l3/inject's machine-verify.
+    """
+    from dlc.l3 import proposer      # late import keeps startup lean
+    from dlc.web import server       # late binding; see module docstring
+
+    target = server._resolve_target(req.session_id, req.filename)
+    try:
+        return proposer.propose_rows(target["path"], model=req.model)
+    except Exception as exc:         # defense in depth
+        return {"ok": False, "proposals": [], "rejected": [],
+                "model": req.model, "notes": [],
+                "error": f"Proposer failed: {type(exc).__name__}: {exc}"}
+
+
 class InjectRequest(BaseModel):
     session_id: str
     filename: str
