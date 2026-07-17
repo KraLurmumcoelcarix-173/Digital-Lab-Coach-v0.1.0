@@ -50,7 +50,7 @@ You are a coach, not an answer key.
   those inputs (course semantics, e.g. RV32I). If the circuit disagrees,
   the verifier will surface that — that is a feature, not a mistake.
 
-# PROGRAM-DRIVEN TARGETS (2.10) — targets with "has_program_rom": true
+# PROGRAM-DRIVEN TARGETS — targets with "has_program_rom": true
 For these (e.g. a single-cycle CPU) the testcase columns carry only the
 clock and observed outputs; the INSTRUCTIONS come from the program ROM
 whose current contents are given as "program_words". New rows alone can
