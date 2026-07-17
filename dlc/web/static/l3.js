@@ -118,6 +118,15 @@ function renderL3Graph(file) {
     return;
   }
 
+  l3HideDrillBar();          // returning to the selected file ends any drill view
+  l3BuildMirror(file);
+}
+
+// Build the mirror for ANY loaded entry (the selected file normally; during a
+// auto-drill descent, each parent level and finally the child as own top).
+function l3BuildMirror(file) {
+  const box = document.getElementById("l3-cy");
+  if (!box || !file || file.error || !file.graph) return;
   if (l3Cy) { try { l3Cy.destroy(); } catch {} l3Cy = null; }
   const elements = JSON.parse(JSON.stringify(
     { nodes: file.graph.nodes, edges: file.graph.edges },
@@ -454,17 +463,22 @@ function l3InjectHtml(mb) {
     const head = `<tr><td class="l3-idx">idx</td>` +
       headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") +
       `<td>status</td></tr>`;
+    const drillable = !clickable && !!out.temp_filename;   // 2.8 auto-drill
     const rows = (out.rows || []).map((r) => {
       const cells = (r.raw || "").split(/\s+/).filter(Boolean).slice(0, headers.length);
       const tds = headers.map((_, i) => `<td>${escapeHtml(cells[i] ?? "")}</td>`).join("");
       const cls = [r.status === "failed" ? "l3-row-fail" : "",
                    r.added ? "l3-row-added" : "",
                    r.origin === "replay" ? "l3-row-warm" : "",
-                   clickable ? "l3-row-click" : ""].join(" ").trim();
+                   (clickable || drillable) ? "l3-row-click" : ""].join(" ").trim();
       const attrs = clickable
         ? ` data-l3-simfile="${escapeHtml(out.temp_filename || "")}"` +
           ` data-l3-spec="${out._spec_index ?? 0}" data-l3-row="${r.index}"`
-        : "";
+        : (drillable
+          ? ` data-l3-drillfile="${escapeHtml(file)}"` +
+            ` data-l3-simfile="${escapeHtml(out.temp_filename || "")}"` +
+            ` data-l3-spec="${out._spec_index ?? 0}" data-l3-row="${r.index}"`
+          : "");
       return `<tr class="${cls}"${attrs}>
         <td class="l3-idx">${r.index}${r.added ? "＋" : ""}</td>${tds}
         <td>${escapeHtml(r.status)}</td></tr>`;
@@ -483,7 +497,9 @@ function l3InjectHtml(mb) {
       <div class="l3-inj-wrap"><table class="l3-inj-table">${head}${rows}</table></div>
       ${clickable
         ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left — exactly like Layer 1. ＋ marks coach rows.</div>`
-        : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow.</div>`}
+        : (drillable
+          ? `<div class="l3-prop-hint">Click a row to AUTO-DRILL into ${escapeHtml(file)} — the descent plays by itself and shows the row's inner signal flow, with ${escapeHtml(file)} as its own top.</div>`
+          : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow.</div>`)}
       ${out.outcome !== "all_set"
         ? (out._rom_words
           ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard the program extension</button>
@@ -633,6 +649,148 @@ async function l3SimTempRow(tr) {
   logEvent("l3_modeB_temp_row_viewed", { filename, row: rowIdx });
 }
 
+// --- AUTO-DRILL: subcircuit-testcase rows play their own descent -------
+// Clicking a coach row that belongs to a SUBCIRCUIT auto-plays the drill-in
+// descent (any depth, no rectangle-touching): each parent level flashes the
+// instance being entered, then the child renders as its OWN top with the
+// row's inner signal flow, and a bar offers the way back + a re-run-Mode-A
+// hint. Pure client work: graphs come from `loaded`, values come from
+// /api/simulate on the child's registered coach temp.
+
+let l3DrillBusy = false;
+
+const l3Wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function l3LoadedByName() {
+  const byName = {};
+  loaded.forEach((f) => { if (!f.error && f.graph) byName[f.filename] = f; });
+  return byName;
+}
+
+// BFS across the loaded graphs: the chain of subcircuit instances leading
+// from `fromFile` down to `targetFile`. Steps: [{file, nodeId, child}].
+// Multiple instances of the same child: the first found is played.
+function l3FindDescent(fromFile, targetFile) {
+  const byName = l3LoadedByName();
+  const queue = [[fromFile, []]];
+  const seen = new Set([fromFile]);
+  while (queue.length) {
+    const [file, path] = queue.shift();
+    const entry = byName[file];
+    if (!entry) continue;
+    for (const n of entry.graph.nodes) {
+      const en = n.data && n.data.element_name;
+      if (typeof en !== "string" || !en.endsWith(".dig")) continue;
+      const step = { file, nodeId: n.data.id, child: en };
+      if (en === targetFile) return path.concat(step);
+      if (!seen.has(en)) {
+        seen.add(en);
+        queue.push([en, path.concat(step)]);
+      }
+    }
+  }
+  return null;
+}
+
+function l3DrillBarEl() {
+  let el = document.getElementById("l3-drill-bar");
+  if (!el) {
+    const box = document.getElementById("l3-cy");
+    if (!box || !box.parentElement) return null;
+    el = document.createElement("div");
+    el.id = "l3-drill-bar";
+    el.className = "l3-drill-bar hidden";
+    box.parentElement.insertBefore(el, box);
+    el.addEventListener("click", (evt) => {
+      if (evt.target.closest("[data-l3-drillback]")) {
+        l3HideDrillBar();
+        const cur = loaded[currentIdx];
+        if (cur && !cur.error) l3BuildMirror(cur);
+      }
+    });
+  }
+  return el;
+}
+
+function l3RenderDrillBar(crumb, rowIdx, targetFile) {
+  const el = l3DrillBarEl();
+  if (!el) return;
+  const top = loaded[currentIdx] ? loaded[currentIdx].filename : "top";
+  el.innerHTML =
+    `<span class="l3-drill-crumb">` +
+    crumb.map(escapeHtml).join('<span class="crumb-sep">&#9656;</span>') +
+    ` <span class="crumb-row">row ${rowIdx}</span></span>` +
+    `<span class="l3-drill-hint">the coach row playing inside ` +
+    `${escapeHtml(targetFile)} — done exploring? Re-run Mode A on the temp ` +
+    `circuit.</span>` +
+    `<button class="btn-ghost" data-l3-drillback>&#9666; back to ${escapeHtml(top)}</button>`;
+  el.classList.remove("hidden");
+}
+
+function l3HideDrillBar() {
+  const el = document.getElementById("l3-drill-bar");
+  if (el) el.classList.add("hidden");
+}
+
+async function l3AutoDrillRow(tr) {
+  const targetFile = tr.dataset.l3Drillfile;
+  const tempName = tr.dataset.l3Simfile;
+  const specIdx = parseInt(tr.dataset.l3Spec, 10) || 0;
+  const rowIdx = parseInt(tr.dataset.l3Row, 10);
+  const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!cur || cur.error || !sessionId || l3DrillBusy || Number.isNaN(rowIdx)) return;
+  const byName = l3LoadedByName();
+  if (!byName[targetFile]) return;          // child never uploaded: keep note
+  l3DrillBusy = true;
+  try {
+    document.querySelectorAll("#l3-b-body tr.l3-row-sel")
+      .forEach((t) => t.classList.remove("l3-row-sel"));
+    tr.classList.add("l3-row-sel");
+
+    // The descent: flash + zoom each instance on the way down.
+    const steps = l3FindDescent(cur.filename, targetFile) || [];
+    for (const step of steps) {
+      l3BuildMirror(byName[step.file]);
+      await l3Wait(350);
+      const node = l3Cy && l3Cy.getElementById(String(step.nodeId));
+      if (node && node.length) {
+        node.style({ "border-width": 6, "border-color": "#f59e0b",
+                     "border-opacity": 1 });
+        try {
+          l3Cy.animate({ fit: { eles: node, padding: 130 }, duration: 480 });
+        } catch {}
+        await l3Wait(820);
+      }
+    }
+
+    // Land: the child as its OWN top, painted with its own row's flow.
+    l3BuildMirror(byName[targetFile]);
+    await l3Wait(300);
+    let sim = null;
+    try {
+      const res = await fetch("/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId, filename: tempName,
+          spec_index: specIdx, row_index: rowIdx,
+        }),
+      });
+      if (res.ok) sim = await res.json();
+    } catch {}
+    if (sim && sim.ok !== false && l3Cy) applySignalFlow(sim, l3Cy);
+
+    const crumb = [cur.filename].concat(steps.map((s) => s.child));
+    if (crumb[crumb.length - 1] !== targetFile) crumb.push(targetFile);
+    l3RenderDrillBar(crumb, rowIdx, targetFile);
+    logEvent("l3_modeB_auto_drill", {
+      from: cur.filename, to: targetFile, row: rowIdx, depth: steps.length,
+    });
+  } finally {
+    l3DrillBusy = false;
+  }
+}
+
 // Drop the failing coach rows for one file and re-verify the survivors on
 // a fresh temp copy; with no survivors the section just clears.
 async function l3DiscardFail(file) {
@@ -705,6 +863,8 @@ async function l3DiscardFail(file) {
       if (btn.dataset.l3Act === "discardfail") l3DiscardFail(btn.dataset.l3File);
       return;
     }
+    const trDrill = evt.target.closest("tr[data-l3-drillfile]");
+    if (trDrill) { l3AutoDrillRow(trDrill); return; }
     const tr = evt.target.closest("tr[data-l3-simfile]");
     if (tr) l3SimTempRow(tr);
   });
@@ -712,7 +872,7 @@ async function l3DiscardFail(file) {
 
 // Skeleton run buttons: store a note card in the per-circuit slot so the
 // stickiness is testable end-to-end (switch file and back — it persists;
-// re-upload — it's gone). Phases 2/3 replace these bodies with real runs.
+// re-upload — it's gone). 
 l3ARunBtn.addEventListener("click", () => {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!file || file.error) return;
