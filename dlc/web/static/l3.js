@@ -316,6 +316,16 @@ function l3ModeBBodyHtml(savedB) {
   }
   const rep = savedB.report;
   let html = "";
+  const lim = rep.limits;
+  if (lim && lim.caps && lim.caps.modeB != null) {
+    const used = (lim.used && lim.used.modeB) || 0;
+    html += `<div class="l3-lim-bar">` +
+      `<span class="l3-chip">Coverage Coach today: ${used}/${lim.caps.modeB} used</span>` +
+      (lim.enforced
+        ? ""
+        : `<span class="l3-chip l3-chip-warn" title="DLC_ENFORCE_LIMITS is off — counters tick but nothing blocks. Release flips this on.">dev mode — limit not enforced</span>`) +
+      `</div>`;
+  }
   for (const c of rep.circuits || []) {
     html += `<div class="l3-cov-circuit">`;
     html += `<div class="l3-cov-head">` +
@@ -424,18 +434,34 @@ function l3ProposalsHtml(mb) {
          word(s); the rows run in a NEW testcase '${escapeHtml(g.spec_name)}_second' —
          your official testcase is never edited and is re-run unchanged.</div>`
       : "";
+    // Deterministic decode truth: say WHICH lab instruction each
+    // ROM word is — from the manifest decode, never the model's claim.
+    const words = (g.word_info || []).map((w) =>
+      `<div class="l3-prop-wordinfo">${escapeHtml(w.word)} = <b>${escapeHtml(w.category)}</b>${
+        w.closes_gap ? ` <span class="l3-chip l3-chip-good">closes a missing category</span>` : ""}</div>`).join("");
     html += `<label class="l3-prop-card">
-      <input type="checkbox" data-l3-group="${gi}" checked />
+      <span class="l3-prop-pick"><input type="checkbox" data-l3-group="${gi}" checked /> include</span>
       <div class="l3-prop-body">
         <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'</div>
         ${prog}
+        ${words}
         ${rows}
         <div class="l3-prop-why">${escapeHtml(g.why)}</div>
         ${progHint}
       </div></label>`;
   });
+  if (p.proposals.length > 1) {
+    html += `<div class="l3-prop-hint">Untick a card to leave that file's rows
+      out — Accept only verifies the ticked cards.</div>`;
+  }
   if ((p.notes || []).length) {
     html += `<div class="l3-prop-hint">${escapeHtml(p.notes.join(" "))}</div>`;
+  }
+  if ((p.rejected || []).length) {
+    const items = p.rejected.map((r) =>
+      `<li><code>${escapeHtml((r.rows || []).join(" | "))}</code> — ${escapeHtml(r.reason || "")}</li>`).join("");
+    html += `<details class="l3-rej-details"><summary>${p.rejected.length} dropped
+      proposal(s) — why (builder detail)</summary><ul>${items}</ul></details>`;
   }
   html += `<div class="l3-prop-bar">
     <button class="btn" data-l3-act="accept"${mb.accepting ? " disabled" : ""}>
@@ -464,12 +490,29 @@ function l3InjectHtml(mb) {
       headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") +
       `<td>status</td></tr>`;
     const drillable = !clickable && !!out.temp_filename;   // 2.8 auto-drill
-    const rows = (out.rows || []).map((r) => {
+    const nWarm = (out.rows || []).filter((r) => r.origin === "replay").length;
+    const showWarm = !!out._showWarm;
+    let warmToggled = false;
+    let rows = "";
+    for (const r of out.rows || []) {
+      const isWarm = r.origin === "replay";
+      // replay warm-ups are 90% of a program extension's table and
+      // carry no assertions — collapse them behind one toggle row.
+      if (isWarm && !showWarm) {
+        if (!warmToggled) {
+          warmToggled = true;
+          rows += `<tr class="l3-warm-toggle" data-l3-warmtoggle="${escapeHtml(file)}">
+            <td class="l3-idx">…</td><td colspan="${headers.length + 1}">
+            ▸ ${nWarm} replay warm-up rows (your original program re-running,
+            nothing asserted) — click to show</td></tr>`;
+        }
+        continue;
+      }
       const cells = (r.raw || "").split(/\s+/).filter(Boolean).slice(0, headers.length);
       const tds = headers.map((_, i) => `<td>${escapeHtml(cells[i] ?? "")}</td>`).join("");
       const cls = [r.status === "failed" ? "l3-row-fail" : "",
                    r.added ? "l3-row-added" : "",
-                   r.origin === "replay" ? "l3-row-warm" : "",
+                   isWarm ? "l3-row-warm" : "",
                    (clickable || drillable) ? "l3-row-click" : ""].join(" ").trim();
       const attrs = clickable
         ? ` data-l3-simfile="${escapeHtml(out.temp_filename || "")}"` +
@@ -479,10 +522,15 @@ function l3InjectHtml(mb) {
             ` data-l3-simfile="${escapeHtml(out.temp_filename || "")}"` +
             ` data-l3-spec="${out._spec_index ?? 0}" data-l3-row="${r.index}"`
           : "");
-      return `<tr class="${cls}"${attrs}>
+      rows += `<tr class="${cls}"${attrs}>
         <td class="l3-idx">${r.index}${r.added ? "＋" : ""}</td>${tds}
         <td>${escapeHtml(r.status)}</td></tr>`;
-    }).join("");
+    }
+    if (showWarm && nWarm) {
+      rows = `<tr class="l3-warm-toggle" data-l3-warmtoggle="${escapeHtml(file)}">
+        <td class="l3-idx">…</td><td colspan="${headers.length + 1}">
+        ▾ hide the ${nWarm} replay warm-up rows</td></tr>` + rows;
+    }
     const baseLine = out.base_spec
       ? `<div class="l3-prop-hint">Official testcase '${escapeHtml(out.base_spec.name)}'
          re-run unchanged: ${out.base_spec.passed}/${out.base_spec.total}
@@ -500,6 +548,13 @@ function l3InjectHtml(mb) {
         : (drillable
           ? `<div class="l3-prop-hint">Click a row to AUTO-DRILL into ${escapeHtml(file)} — the descent plays by itself and shows the row's inner signal flow, with ${escapeHtml(file)} as its own top.</div>`
           : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow.</div>`)}
+      ${(out.rows || []).some((r) => r.added)
+        ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="copyrows" data-l3-file="${escapeHtml(file)}">Copy the coach rows</button>
+           <span class="l3-prop-hint">These rows live on the coach's TEMP copy —
+           <b>your ${escapeHtml(file)} is unchanged</b>. To keep them, paste
+           them into your testcase in Digital yourself (that practice is the
+           point).</span></div>`
+        : ""}
       ${out.outcome !== "all_set"
         ? (out._rom_words
           ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard the program extension</button>
@@ -791,6 +846,44 @@ async function l3AutoDrillRow(tr) {
   }
 }
 
+// the coach rows never touch the student's file — give them a
+// one-click way to carry the rows into Digital themselves.
+async function l3CopyRows(file, btn) {
+  const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!cur) return;
+  const mb = l3Slot(cur.filename).modeB;
+  const out = mb && mb.inject && mb.inject[file];
+  if (!out || !out.ok) return;
+  const lines = [];
+  if (out._rom_words && out._rom_words.length) {
+    lines.push(`# ROM program words (append to the Instruction Memory Data):`);
+    lines.push(out._rom_words.join(","));
+    lines.push(`# test rows (paste into a testcase — new '${out.spec_name || "second"}' or your own):`);
+  }
+  for (const r of out.rows || []) {
+    if (r.added && r.raw) lines.push(r.raw);
+  }
+  const text = lines.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) { const t = btn.textContent; btn.textContent = "copied ✓";
+               setTimeout(() => { btn.textContent = t; }, 1500); }
+  } catch {
+    window.prompt("Copy the coach rows:", text);
+  }
+  logEvent("l3_modeB_rows_copied", { file, n: lines.length });
+}
+
+function l3ToggleWarm(file) {
+  const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!cur) return;
+  const mb = l3Slot(cur.filename).modeB;
+  const out = mb && mb.inject && mb.inject[file];
+  if (!out) return;
+  out._showWarm = !out._showWarm;
+  renderL3Boards(cur);
+}
+
 // Drop the failing coach rows for one file and re-verify the survivors on
 // a fresh temp copy; with no survivors the section just clears.
 async function l3DiscardFail(file) {
@@ -861,8 +954,11 @@ async function l3DiscardFail(file) {
       if (btn.dataset.l3Act === "propose") l3ProposeClick();
       if (btn.dataset.l3Act === "accept") l3AcceptClick();
       if (btn.dataset.l3Act === "discardfail") l3DiscardFail(btn.dataset.l3File);
+      if (btn.dataset.l3Act === "copyrows") l3CopyRows(btn.dataset.l3File, btn);
       return;
     }
+    const trWarm = evt.target.closest("tr[data-l3-warmtoggle]");
+    if (trWarm) { l3ToggleWarm(trWarm.dataset.l3Warmtoggle); return; }
     const trDrill = evt.target.closest("tr[data-l3-drillfile]");
     if (trDrill) { l3AutoDrillRow(trDrill); return; }
     const tr = evt.target.closest("tr[data-l3-simfile]");

@@ -233,3 +233,14 @@
 .l3-drill-bar.hidden { display: none; }
 .l3-drill-crumb { font-weight: 600; color: #92400e; }
 .l3-drill-hint { color: #6b7280; flex: 1; min-width: 180px; }
+.l3-lim-bar { display: flex; gap: 6px; margin: 0 0 8px 0; }
+.l3-prop-pick { display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; color: #374151; white-space: nowrap; }
+.l3-prop-pick input[type="checkbox"] { width: 16px; height: 16px; accent-color: #2563eb; }
+.l3-prop-wordinfo { font-family: ui-monospace, monospace; font-size: 12.5px;
+  color: #3730a3; padding: 1px 0; }
+.l3-rej-details { margin: 6px 0; font-size: 12.5px; color: #6b7280; }
+.l3-rej-details summary { cursor: pointer; }
+.l3-rej-details code { background: #f3f4f6; padding: 0 4px; border-radius: 4px; }
+.l3-warm-toggle td { color: #92400e; background: #fffbeb; cursor: pointer;
+  font-size: 12px; }
