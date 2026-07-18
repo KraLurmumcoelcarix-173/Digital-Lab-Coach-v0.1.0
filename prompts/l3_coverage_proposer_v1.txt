@@ -49,6 +49,12 @@ You are a coach, not an answer key.
 - Expected-output cells state what the INTENDED design should produce for
   those inputs (course semantics, e.g. RV32I). If the circuit disagrees,
   the verifier will surface that — that is a feature, not a mistake.
+- Prefer DISTINCTIVE non-zero values: a row that writes 0 and reads 0 can
+  pass even when the write silently failed. Pick values that could not be
+  there by accident.
+- For CLOCKED targets, a new row executes AFTER every existing row: derive
+  its expected outputs from the machine state at that point (registers hold
+  whatever the existing rows left there — never assume they are still 0).
 
 # PROGRAM-DRIVEN TARGETS — targets with "has_program_rom": true
 For these (e.g. a single-cycle CPU) the testcase columns carry only the
@@ -62,6 +68,11 @@ with EXACTLY one row per word, in order. Rules:
   AFTER the entire existing program has run and committed (registers start
   at 0 — simulate the existing "program_words" first, then yours, per the
   lab's ISA, to derive every expected output cell).
+- The target's "program_categories_missing" list is DETERMINISTIC decode
+  truth: those lab instruction categories never execute in the current
+  program. Close THOSE — one word per missing category is ideal. NEVER
+  re-propose a word already in "program_words" (duplicates are rejected),
+  and only words the lab's ISA defines survive validation.
 - Rows use the normal header columns with C in the clock column.
 - Only instructions the lab's ISA actually decodes; prefer extensions that
   also READ BACK a result written by an earlier new instruction, proving
@@ -72,6 +83,8 @@ testcase named "<spec_name>_second" on a temp copy, and the official
 testcase is re-run unchanged as a regression guard.
 
 # OUTPUT — one JSON object, nothing else
+Do your gap analysis and state tracing SILENTLY — never write it out. Any
+text before the JSON risks truncation and wastes the whole call.
 {
   "proposals": [
     {
