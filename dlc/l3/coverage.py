@@ -466,9 +466,11 @@ def _collect_tree(circuit: Circuit, root_path: str) -> list[tuple[str, str, Circ
 
 
 # ---------------------------------------------------------------------------
-# Replay pre-gate helper: what would THIS circuit compute for rows
+# D2 replay pre-gate helper: what would THIS circuit compute for rows
 # appended after the full official sequence? Used by the proposer to kill
-# clocked rows whose expected values ignore the machine state.
+# clocked rows whose expected values ignore the machine state (the exact
+# failure Charles caught twice on real lab5: a proposed register-file row
+# assuming registers were still 0, and a cpu row copying old expectations).
 # ---------------------------------------------------------------------------
 
 def replay_appended_rows(
@@ -483,8 +485,7 @@ def replay_appended_rows(
     columns) | 'unresolved' (evaluator couldn't settle — no accusation).
 
     With `rom_words`, the circuit's program ROM is extended first (on a
-    throwaway temp copy) — the appended rows are then judged exactly as the
-    second-testcase would execute them.
+    throwaway temp copy)
     """
     tmp = None
     try:
@@ -612,12 +613,23 @@ def _apply_manifest(report: TreeCoverageReport) -> None:
         if not cov.has_testcases or not cov.path:
             continue
         try:
-            spec = extract_test_specs(parse_dig_file(cov.path))[0]
+            circuit = parse_dig_file(cov.path)
+            spec = extract_test_specs(circuit)[0]
         except Exception:
             continue
         cov.official_test = mf.official_status(
             m, cov.file, spec.raw_data_string,
         )
+        rom = mf.program_rom_words(circuit)
+        if rom is not None:
+            pc = mf.program_categories(m, rom[0])
+            if pc and pc["missing"]:
+                cov.notes.insert(0, (
+                    f"the instruction ROM's program executes only "
+                    f"{', '.join(pc['present'])} — these lab instructions "
+                    f"NEVER execute: {', '.join(pc['missing'])} (decoded "
+                    f"from the program words)."
+                ))
         if cov.official_test == "official" and cov.flags:
             for f in cov.flags:
                 f.classification = "official"

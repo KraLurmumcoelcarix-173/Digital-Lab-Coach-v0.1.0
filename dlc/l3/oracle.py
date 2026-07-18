@@ -68,9 +68,9 @@ class InjectionOutcome:
     rows: list[dict] = field(default_factory=list)
     all_passed: bool | None = None        # every row (old + new)
     added_all_passed: bool | None = None  # just the injected rows (Mode B's lock signal)
-    # 2.10 second-testcase mode only:
     spec_index: int | None = None         # index of the run spec in the TEMP file
     base_spec: dict | None = None         # {name, total, passed, all_passed} regression guard
+    rom_program: str | None = None        # FULL extended program (comma hex) for copy-out
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
@@ -198,6 +198,19 @@ def write_temp_with_rows(
 
 # ---------------------------------------------------------------------------
 # SECOND-testcase injection 
+#
+# For clocked, ROM-driven circuits new rows alone cannot exercise new
+# instruction categories — rows only carry the clock; the instructions come
+# from the program ROM. The ratified answer: append the new
+# program WORDS to the ROM (a data attribute — no wires, no components) and
+# put the matching assertion rows in a SECOND testcase named
+# "<spec>_second". The official testcase stays byte-identical (its manifest
+# fingerprint survives) and is re-run unchanged as a regression guard.
+#
+# Cycle alignment: a fresh testcase replays from power-on, so the second
+# testcase is prefixed with machine-generated WARM-UP rows (clock column
+# driven, every other cell X = assert nothing) — one per existing program
+# word — and then carries one assertion row per appended word, in order.
 # ---------------------------------------------------------------------------
 
 _PROGMEM_TRUE_RE = re.compile(
@@ -340,6 +353,7 @@ def rerun_with_second(
         source_text = src_path.read_text(encoding="utf-8")
         words = parse_program_words(rom_words or [])
         warmups: list[str] = []
+        rom_program = None
         if words:
             if len(words) != len(rows):
                 raise ValueError(
@@ -358,6 +372,7 @@ def rerun_with_second(
                 return " ".join(clkval if h == clk else "X"
                                 for h in base_spec.headers)
             warmups = [wrow("0")] + [wrow("C")] * (n_existing - 1)
+            rom_program = ",".join(f"{w:x}" for w in found[0] + words)
             source_text = extend_program_rom_text(source_text, words)
 
         data_string = "\n".join(
@@ -422,6 +437,7 @@ def rerun_with_second(
             spec_index=spec_index,
             base_spec={"name": spec_name, "total": len(base_results),
                        "passed": base_passed, "all_passed": base_all},
+            rom_program=rom_program,
         )
     finally:
         if not keep_temp:

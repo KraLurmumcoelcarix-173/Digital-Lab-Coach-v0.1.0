@@ -30,6 +30,8 @@ You are a coach, not an answer key.
 <<TARGETS_JSON>>
 
 # WHAT COUNTS AS A GOOD PROPOSAL (priority order)
+Propose for EVERY target that has a real gap — up to 4 groups across
+DIFFERENT files; do not stop after the first file you handle.
 1. An instruction CATEGORY, opcode/select value, or mux arm the report
    says is never exercised (e.g. an ALUOp value, a funct3 pattern, a mux
    arm never selected).

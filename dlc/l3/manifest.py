@@ -176,7 +176,7 @@ def category_coverage(manifest: dict | None, file: str, spec) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# Program-word decoding : deterministic instruction-category
+# Program-word decoding: deterministic instruction-category
 # judgment for program-ROM extensions. The manifest's optional block
 #
 #   "program_decode": {
@@ -190,6 +190,29 @@ def category_coverage(manifest: dict | None, file: str, spec) -> dict | None:
 # instruction is this word, and which category does it close?" is decided
 # by decode, never by the model's own claim.
 # ---------------------------------------------------------------------------
+
+def program_rom_words(circuit) -> tuple[list[int], int] | None:
+    """(words, addr_bits) of the circuit's single program-memory ROM, else
+    None (absent or ambiguous)."""
+    roms = []
+    for comp in circuit.components:
+        if comp.element_name != "ROM":
+            continue
+        if str(comp.attributes.get("isProgramMemory", "")).lower() != "true":
+            continue
+        data = str(comp.attributes.get("Data", "") or "")
+        try:
+            words = [int(w, 16) for w in data.replace("\n", "").split(",")
+                     if w.strip()]
+        except ValueError:
+            continue
+        try:
+            addr_bits = int(comp.attributes.get("AddrBits", 10))
+        except (TypeError, ValueError):
+            addr_bits = 10
+        roms.append((words, addr_bits))
+    return roms[0] if len(roms) == 1 else None
+
 
 def decode_program_word(manifest: dict | None, word: int) -> dict | None:
     """{'category': name|None, 'fields': {...}} for one program word, or

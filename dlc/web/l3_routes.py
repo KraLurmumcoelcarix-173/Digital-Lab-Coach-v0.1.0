@@ -195,3 +195,31 @@ def l3_inject(req: InjectRequest) -> dict:
         "outcome": "all_set" if outcome.all_passed else "rows_fail",
         "temp_filename": temp_filename,
     }
+
+
+class UninjectRequest(BaseModel):
+    session_id: str
+    filename: str
+
+
+@router.post("/api/l3/uninject")
+def l3_uninject(req: UninjectRequest) -> dict:
+    from dlc.web import server   
+
+    server._resolve_target(req.session_id, req.filename)   # 404 on unknown
+    temp_filename = f"{Path(req.filename).stem}__coach.dig"
+    session = server._SESSIONS.get(req.session_id)
+    removed = False
+    if session is not None:
+        for f in list(session["files"]):
+            if f["name"] == temp_filename:
+                session["files"].remove(f)
+                removed = True
+                try:
+                    os.remove(f["path"])
+                except OSError:
+                    pass
+        lt = session.get("l3_temp")
+        if lt and lt.get("name") == temp_filename:
+            session["l3_temp"] = None
+    return {"ok": True, "removed": removed, "temp_filename": temp_filename}

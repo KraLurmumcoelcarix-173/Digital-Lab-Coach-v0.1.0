@@ -287,7 +287,10 @@ function renderL3Boards(file) {
     _l3PaintBoard("b", {
       status,
       cls,
-      enabled: !mb.locked,
+      // a finished scan grays the button — every click costs a daily
+      // use, and rescanning the same upload cannot change the answer.
+      // Re-uploading (which resets the store) re-enables it.
+      enabled: false,
       bodyHtml: l3ModeBBodyHtml(mb) + l3ProposalsHtml(mb) + l3InjectHtml(mb),
     });
   } else {
@@ -406,9 +409,7 @@ function l3ProposalsHtml(mb) {
   if (!mb.proposals) {
     return `<div class="l3-prop-bar">
       <button class="btn" data-l3-act="propose">Propose new test rows</button>
-      <span class="l3-prop-hint">One hidden model call, grounded on the scan
-      above; every row is validated, and nothing touches your file until you
-      accept.</span></div>`;
+    </div>`;
   }
   const p = mb.proposals;
   if (p.error) {
@@ -434,7 +435,7 @@ function l3ProposalsHtml(mb) {
          word(s); the rows run in a NEW testcase '${escapeHtml(g.spec_name)}_second' —
          your official testcase is never edited and is re-run unchanged.</div>`
       : "";
-    // Deterministic decode truth: say WHICH lab instruction each
+    // Deterministic decode truth (07-17): say WHICH lab instruction each
     // ROM word is — from the manifest decode, never the model's claim.
     const words = (g.word_info || []).map((w) =>
       `<div class="l3-prop-wordinfo">${escapeHtml(w.word)} = <b>${escapeHtml(w.category)}</b>${
@@ -458,17 +459,28 @@ function l3ProposalsHtml(mb) {
     html += `<div class="l3-prop-hint">${escapeHtml(p.notes.join(" "))}</div>`;
   }
   if ((p.rejected || []).length) {
+    const friendly = {
+      duplicate: "already covered by an existing row — proposing it again adds nothing",
+      undefined_op: "tests an operation this lab does not define — no test needed",
+      wrong_expectation: "its expected outputs were wrong — the coach dropped its own mistake before showing it",
+      format: "not a legal row for that testcase",
+    };
     const items = p.rejected.map((r) =>
-      `<li><code>${escapeHtml((r.rows || []).join(" | "))}</code> — ${escapeHtml(r.reason || "")}</li>`).join("");
-    html += `<details class="l3-rej-details"><summary>${p.rejected.length} dropped
-      proposal(s) — why (builder detail)</summary><ul>${items}</ul></details>`;
+      `<li><span class="l3-rej-where">${escapeHtml(r.file || "?")} · '${escapeHtml(r.spec_name || "?")}'</span>
+       — ${escapeHtml(friendly[r.kind] || friendly.format)}
+       <div class="l3-rej-raw"><code>${escapeHtml((r.rows || []).join(" | "))}</code>
+       <small>${escapeHtml(r.reason || "")}</small></div></li>`).join("");
+    html += `<details class="l3-rej-details"><summary>${p.rejected.length} idea(s)
+      the coach dropped</summary><ul>${items}</ul></details>`;
   }
+  const doneLine = mb.inject && Object.keys(mb.inject).length
+    ? `<span class="l3-prop-hint l3-added-note">new tests added to temp .dig in layer 3</span>`
+    : "";
   html += `<div class="l3-prop-bar">
     <button class="btn" data-l3-act="accept"${mb.accepting ? " disabled" : ""}>
-      ${mb.accepting ? "Verifying on a temp copy…" : "Accept & verify selected"}
+      Accept & verify selected
     </button>
-    <span class="l3-prop-hint">Accepted rows run on a TEMP copy through the
-    real simulator — your original file is never modified.</span></div>`;
+    ${mb.accepting ? `<span class="l3-spinner" aria-label="verifying"></span>` : doneLine}</div>`;
   return html;
 }
 
@@ -496,7 +508,7 @@ function l3InjectHtml(mb) {
     let rows = "";
     for (const r of out.rows || []) {
       const isWarm = r.origin === "replay";
-      // replay warm-ups are 90% of a program extension's table and
+      // 07-17: replay warm-ups are 90% of a program extension's table and
       // carry no assertions — collapse them behind one toggle row.
       if (isWarm && !showWarm) {
         if (!warmToggled) {
@@ -544,16 +556,18 @@ function l3InjectHtml(mb) {
       ${baseLine}
       <div class="l3-inj-wrap"><table class="l3-inj-table">${head}${rows}</table></div>
       ${clickable
-        ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left — exactly like Layer 1. ＋ marks coach rows.</div>`
+        ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left.</div>`
         : (drillable
           ? `<div class="l3-prop-hint">Click a row to AUTO-DRILL into ${escapeHtml(file)} — the descent plays by itself and shows the row's inner signal flow, with ${escapeHtml(file)} as its own top.</div>`
           : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow.</div>`)}
       ${(out.rows || []).some((r) => r.added)
         ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="copyrows" data-l3-file="${escapeHtml(file)}">Copy the coach rows</button>
+           ${out.rom_program ? `<button class="btn-ghost" data-l3-act="copyrom" data-l3-file="${escapeHtml(file)}">Copy the full ROM program</button>` : ""}
            <span class="l3-prop-hint">These rows live on the coach's TEMP copy —
            <b>your ${escapeHtml(file)} is unchanged</b>. To keep them, paste
-           them into your testcase in Digital yourself (that practice is the
-           point).</span></div>`
+           them into your testcase in Digital${out.rom_program
+             ? " and replace the Instruction Memory Data with the full ROM program"
+             : ""}.</span></div>`
         : ""}
       ${out.outcome !== "all_set"
         ? (out._rom_words
@@ -874,6 +888,22 @@ async function l3CopyRows(file, btn) {
   logEvent("l3_modeB_rows_copied", { file, n: lines.length });
 }
 
+async function l3CopyRom(file, btn) {
+  const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!cur) return;
+  const mb = l3Slot(cur.filename).modeB;
+  const out = mb && mb.inject && mb.inject[file];
+  if (!out || !out.rom_program) return;
+  try {
+    await navigator.clipboard.writeText(out.rom_program);
+    if (btn) { const t = btn.textContent; btn.textContent = "copied ✓";
+               setTimeout(() => { btn.textContent = t; }, 1500); }
+  } catch {
+    window.prompt("Copy the full ROM program:", out.rom_program);
+  }
+  logEvent("l3_modeB_rom_copied", { file });
+}
+
 function l3ToggleWarm(file) {
   const cur = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!cur) return;
@@ -902,6 +932,13 @@ async function l3DiscardFail(file) {
   if (!keep.length) {
     delete mb.inject[file];
     if (!Object.keys(mb.inject).length) mb.inject = null;
+    try {
+      fetch("/api/l3/uninject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, filename: file }),
+      });
+    } catch {}
   } else {
     mb.accepting = true;
     l3RunState.b = true;
@@ -955,6 +992,7 @@ async function l3DiscardFail(file) {
       if (btn.dataset.l3Act === "accept") l3AcceptClick();
       if (btn.dataset.l3Act === "discardfail") l3DiscardFail(btn.dataset.l3File);
       if (btn.dataset.l3Act === "copyrows") l3CopyRows(btn.dataset.l3File, btn);
+      if (btn.dataset.l3Act === "copyrom") l3CopyRom(btn.dataset.l3File, btn);
       return;
     }
     const trWarm = evt.target.closest("tr[data-l3-warmtoggle]");

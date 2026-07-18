@@ -10,8 +10,7 @@ and none of them touches a file until the student accepts them — at which
 point /api/l3/inject machine-verifies the lot on a temp copy.
 
 The prompt (prompts/l3_coverage_proposer_v1.txt) carries the v1 DRAFT of
-the F13 spoiler-guard: test rows only, gap-naming "why", no fix
-talk. The full guard rules + tests.
+the F13 spoiler-guard: test rows only, gap-naming "why". The full guard rules + tests.
 """
 
 from __future__ import annotations
@@ -31,7 +30,27 @@ _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
 
 _MAX_EXISTING_ROWS_SHOWN = 40    # keep the prompt lean on loop-heavy specs
 _MAX_TOTAL_ROWS = 6              # hard cap across all accepted proposals
-_MAX_PROGRAM_WORDS = 8           # cap per program-extension proposal
+_MAX_PROGRAM_WORDS = 8           # 2.10: cap per program-extension proposal
+
+# The proposer needs real reasoning about machine state and lab ISAs —
+#  Override per install with l3_propose_model in
+# ~/.dlc/config.json or the DLC_L3_PROPOSE_MODEL env var.
+_PROPOSE_MODEL_FALLBACK = "claude-sonnet-4-6"
+
+
+def _propose_model() -> str:
+    import os
+    env = os.environ.get("DLC_L3_PROPOSE_MODEL", "").strip()
+    if env:
+        return env
+    try:
+        from dlc.llm.client import _load_config
+        cfg = _load_config().get("l3_propose_model")
+        if isinstance(cfg, str) and cfg.strip():
+            return cfg.strip()
+    except Exception:
+        pass
+    return _PROPOSE_MODEL_FALLBACK
 
 
 def _load_prompt() -> str:
@@ -77,7 +96,7 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
             "clock_col": clock_col,
             "has_program_rom": False,
         }
-        # 2.10: program-driven targets (cpu-like) — expose the existing
+        # program-driven targets (cpu-like) — expose the existing
         # program so the model can derive per-cycle register state.
         rom = _program_rom_of(circuit)
         if rom is not None:
@@ -85,30 +104,23 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
             target["has_program_rom"] = True
             target["program_words"] = [f"{w:x}" for w in words]
             target["rom_capacity_left"] = max(0, (1 << addr_bits) - len(words))
+            # Deterministic category truth: which lab instructions the
+            # program already executes, and which are missing — decoded
+            # from the words, never guessed by the model.
+            from dlc.l3 import manifest as mf
+            m = mf.find_manifest({c.file for c in report.circuits})
+            pc = mf.program_categories(m, words) if m else None
+            if pc is not None:
+                target["program_categories_present"] = pc["present"]
+                target["program_categories_missing"] = pc["missing"]
         targets.append(target)
     return targets
 
 
 def _program_rom_of(circuit) -> tuple[list[int], int] | None:
     """(existing_words, addr_bits) of the single program ROM, else None."""
-    roms = []
-    for comp in circuit.components:
-        if comp.element_name != "ROM":
-            continue
-        if str(comp.attributes.get("isProgramMemory", "")).lower() != "true":
-            continue
-        data = str(comp.attributes.get("Data", "") or "")
-        try:
-            words = [int(w, 16) for w in data.replace("\n", "").split(",")
-                     if w.strip()]
-        except ValueError:
-            continue
-        try:
-            addr_bits = int(comp.attributes.get("AddrBits", 10))
-        except (TypeError, ValueError):
-            addr_bits = 10
-        roms.append((words, addr_bits))
-    return roms[0] if len(roms) == 1 else None
+    from dlc.l3.manifest import program_rom_words
+    return program_rom_words(circuit)
 
 
 def build_prompt(report: TreeCoverageReport, targets: list[dict]) -> str:
@@ -178,7 +190,7 @@ def _row_key(raw: str, headers: list[str]) -> tuple:
 
 
 def validate_and_dedupe(
-    proposals: list[dict], targets: list[dict],
+    proposals: list[dict], targets: list[dict], manifest: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Split the model's proposals into (valid, rejected). Rejected entries
     carry a `reason`; valid rows are legal for their spec, non-duplicate,
@@ -197,8 +209,8 @@ def validate_and_dedupe(
         if t is None or p["spec_name"] != t["spec_name"]:
             rejected.append({**p, "reason": "unknown target file or testcase"})
             continue
-        if p.get("program_words"):          # 2.10: atomic program extension
-            ok_entry, reason = _validate_program_group(p, t)
+        if p.get("program_words"):         
+            ok_entry, reason = _validate_program_group(p, t, manifest)
             if ok_entry is not None:
                 valid.append(ok_entry)
             else:
@@ -232,10 +244,16 @@ def validate_and_dedupe(
     return valid, rejected
 
 
-def _validate_program_group(p: dict, t: dict) -> tuple[dict | None, str]:
-    """2.10: validate an atomic program-extension proposal (words + rows).
-    Returns (valid_entry, "") or (None, reason). No dedupe: the rows run in
-    a fresh SECOND testcase whose replay context is different by design."""
+def _validate_program_group(
+    p: dict, t: dict, manifest: dict | None = None,
+) -> tuple[dict | None, str]:
+    """validate an atomic program-extension proposal (words + rows).
+    Returns (valid_entry, "") or (None, reason). Row dedupe is skipped (a
+    fresh SECOND testcase has a different replay context by design), but
+    WORDS are deduped against the existing program, and — when the manifest
+    can decode — each word must be an instruction the lab defines; its
+    category is recorded in `word_info` so the UI states deterministically
+    what the extension tests, instead of trusting the model's claim."""
     from dlc.l3.oracle import parse_program_words
     if not (t.get("has_clock") and t.get("has_program_rom")):
         return None, ("program_words are only valid for clocked targets "
@@ -251,6 +269,37 @@ def _validate_program_group(p: dict, t: dict) -> tuple[dict | None, str]:
     if len(p["rows"]) != len(words):
         return None, (f"needs exactly one row per program word "
                       f"({len(words)} word(s), {len(p['rows'])} row(s))")
+
+    existing = set()
+    try:
+        existing = {int(w, 16) for w in t.get("program_words", [])}
+    except ValueError:
+        pass
+    seen_new: set[int] = set()
+    from dlc.l3 import manifest as mf
+    can_decode = bool((manifest or {}).get("program_decode"))
+    word_info: list[dict] = []
+    for w in words:
+        if w in existing:
+            d = mf.decode_program_word(manifest, w) if can_decode else None
+            cat = f" (category '{d['category']}')" if d and d["category"] else ""
+            return None, (f"word {w:x} duplicates an instruction already in "
+                          f"the program{cat} — nothing new would execute")
+        if w in seen_new:
+            return None, f"word {w:x} appears twice in the extension"
+        seen_new.add(w)
+        if can_decode:
+            d = mf.decode_program_word(manifest, w)
+            if not d or not d["category"]:
+                return None, (f"word {w:x} is not an instruction this lab "
+                              f"defines — the lab ISA cannot execute it")
+            missing = t.get("program_categories_missing") or []
+            word_info.append({
+                "word": f"{w:x}",
+                "category": d["category"],
+                "closes_gap": d["category"] in missing,
+            })
+
     clk = t.get("clock_col")
     for raw in p["rows"]:
         try:
@@ -261,8 +310,11 @@ def _validate_program_group(p: dict, t: dict) -> tuple[dict | None, str]:
         if clk and cells.get(clk, "").upper() != "C":
             return None, (f"every program-extension row must clock the "
                           f"circuit: expected C in column {clk!r}: {raw!r}")
-    return {**p, "rows": list(p["rows"]),
-            "program_words": [f"{w:x}" for w in words]}, ""
+    entry = {**p, "rows": list(p["rows"]),
+             "program_words": [f"{w:x}" for w in words]}
+    if word_info:
+        entry["word_info"] = word_info
+    return entry, ""
 
 
 def _validate_against_headers(raw: str, headers: list[str], spec_name: str) -> None:
@@ -312,8 +364,10 @@ def propose_rows(
                 "notes": []}
 
     prompt = build_prompt(report, targets)
-    used_model = model or DEFAULT_MODEL
-    resp = call(prompt, model=used_model, max_tokens=1500)
+    used_model = model or _propose_model()
+    # stronger models front-load visible analysis before the JSON;
+    # 1500 tokens truncated mid-thought and parsed as "nothing usable".
+    resp = call(prompt, model=used_model, max_tokens=4000)
     if not resp.get("ok"):
         return {"ok": False, "proposals": [], "rejected": [],
                 "model": used_model,
@@ -321,38 +375,190 @@ def propose_rows(
                 "notes": []}
 
     proposals = parse_proposals(resp.get("text") or "")
+    if not proposals and (resp.get("text") or "").strip():
+        # the model sometimes writes analysis and never reaches the
+        # JSON. One bounded retry with a terse reminder fixes most of it.
+        resp2 = call(prompt + "\n\nREMINDER: output ONLY the JSON object "
+                     "now — no analysis text.",
+                     model=used_model, max_tokens=4000)
+        if resp2.get("ok"):
+            proposals = parse_proposals(resp2.get("text") or "")
     if not proposals:
         return {"ok": True, "proposals": [], "rejected": [],
                 "model": used_model, "error": None,
-                "notes": ["The model proposed nothing usable this time — "
-                          "run it again or add rows by hand."]}
-    valid, rejected = validate_and_dedupe(proposals, targets)
+                "notes": ["The coach found nothing trustworthy to propose "
+                          "this time — try Propose again."]}
+    from dlc.l3 import manifest as mf
+    m = mf.find_manifest({t["file"] for t in targets})
+    valid, rejected = validate_and_dedupe(proposals, targets, manifest=m)
     notes: list[str] = []
 
-    # HARDENING, strongest gate first:
-    # 1) deterministic reference check — a row the lab reference disagrees
+    # HARDENING, strongest gates first:
+    # 1) deterministic REPLAY pre-gate — for clocked targets (where the
+    #    reference and self-check gates cannot run) the student's own
+    #    circuit is replayed through the official rows and the proposed
+    #    rows; a row whose expected values ignore the machine state at
+    #    that point is dropped. On a clean-scanned circuit (tests and
+    #    circuit agree everywhere) such a row is almost surely a wrong
+    #    expectation, not a discovered bug.
+    # 2) deterministic reference check — a row the lab reference disagrees
     #    with is WRONG and is dropped before the student ever sees it;
-    # 2) model self-check — for un-referenced combinational targets, the
+    # 3) model self-check — for un-referenced combinational targets, the
     #    model must independently re-derive its own rows' outputs; any
     #    mismatch drops the row.
+    paths = {c.file: c.path for c in report.circuits if c.path}
+    valid, rejected, notes = _category_gate(valid, rejected, notes, targets, m)
+    valid, rejected, notes = _replay_gate(valid, rejected, notes, targets, paths)
     valid, rejected, notes = _reference_gate(valid, rejected, notes, targets)
     valid, rejected, notes = _selfcheck_gate(
         valid, rejected, notes, targets, call, used_model,
     )
+    for r in rejected:                     
+        r["kind"] = _classify_reason(r.get("reason", ""))
 
-    if any(g.get("program_words") for g in valid):
-        notes.append("program-extending proposal(s) run in a SECOND testcase "
-                     "on Accept — the official testcase is never edited and "
-                     "is re-run unchanged as a regression guard.")
-    if rejected:
-        notes.append(f"{sum(len(r['rows']) for r in rejected)} proposed "
-                     f"row(s) were dropped before display.")
     return {"ok": True, "proposals": valid, "rejected": rejected,
             "model": used_model, "error": None, "notes": notes}
 
 
+def _classify_reason(reason: str) -> str:
+    r = reason.lower()
+    if "duplicate" in r or "already in the program" in r or "appears twice" in r:
+        return "duplicate"
+    if ("not an instruction" in r or "instruction set" in r
+            or "does not define" in r or "doesn't define" in r):
+        return "undefined_op"
+    if ("wrong expected value" in r or "lab reference" in r
+            or "self-check" in r or "machine state" in r
+            or "follows a dropped row" in r):
+        return "wrong_expectation"
+    return "format"
+
+
+def _category_gate(valid, rejected, notes, targets, manifest):
+    if not manifest:
+        return valid, rejected, notes
+    from dlc.l3.manifest import _cell_value
+    cats_by_file = manifest.get("categories") or {}
+    kept: list[dict] = []
+    for g in valid:
+        cats = cats_by_file.get(g["file"])
+        t = next((x for x in targets if x["file"] == g["file"]), None)
+        if not cats or t is None or g.get("program_words"):
+            kept.append(g)               # program words judged by decode gate
+            continue
+        headers = t["headers"]
+        pred_cols = set()
+        parsed = []
+        for cat in cats:
+            when = {}
+            for col, v in (cat.get("when") or {}).items():
+                val = _cell_value(str(v)) if not isinstance(v, int) else v
+                if val is not None:
+                    when[col] = val
+            if when:
+                parsed.append(when)
+                pred_cols |= set(when)
+        if not parsed or any(c not in headers for c in pred_cols):
+            kept.append(g)
+            continue
+        idx = {h: i for i, h in enumerate(headers)}
+        good: list[str] = []
+        for raw in g["rows"]:
+            cells = raw.split("#", 1)[0].split()
+            vals = {}
+            for col in pred_cols:
+                i = idx[col]
+                vals[col] = _cell_value(cells[i]) if i < len(cells) else None
+            if any(v is None for v in vals.values()):
+                good.append(raw)        
+                continue
+            if any(all(vals.get(c) == w for c, w in when.items())
+                   for when in parsed):
+                good.append(raw)
+                continue
+            rejected.append({
+                "file": g["file"], "spec_name": g["spec_name"],
+                "rows": [raw], "why": g.get("why", ""),
+                "reason": ("tests an operation this lab does not define "
+                           f"({', '.join(f'{c}={vals[c]}' for c in sorted(vals))}"
+                           " matches no defined category) — no test needed"),
+            })
+        if good:
+            kept.append({**g, "rows": good})
+    return kept, rejected, notes
+
+
+def _replay_gate(valid, rejected, notes, targets, paths):
+    """deterministic pre-check for CLOCKED targets — replay the
+    student's circuit through the official rows, then evaluate each proposed
+    row in sequence. Rows whose asserted outputs disagree with the machine
+    state at that point are dropped with the computed values in the reason
+    (it is the student's own circuit — nothing secret is revealed).
+    Program extensions are judged the same way with the ROM pre-extended;
+    they drop as a unit. A replay that errors never blocks."""
+    from dlc.l3.coverage import replay_appended_rows
+    by_file = {t["file"]: t for t in targets}
+    kept: list[dict] = []
+    checked = False
+    for g in valid:
+        t = by_file.get(g["file"])
+        path = paths.get(g["file"])
+        if t is None or path is None or not t.get("has_clock"):
+            kept.append(g)
+            continue
+        try:
+            verdicts = replay_appended_rows(
+                path, g["spec_name"], g["rows"], g.get("program_words"),
+            )
+        except Exception:
+            kept.append(g)               # a broken replay never blocks
+            continue
+        checked = True
+        if g.get("program_words"):       # atomic: any disagreement kills all
+            bad = [v for v in verdicts if v["verdict"] == "disagrees"]
+            if bad:
+                rejected.append({
+                    "file": g["file"], "spec_name": g["spec_name"],
+                    "rows": [v["row"] for v in bad],
+                    "why": g.get("why", ""),
+                    "reason": ("expected values don't match the machine "
+                               "state at that point in the program — "
+                               + "; ".join(v["detail"] for v in bad)),
+                })
+            else:
+                kept.append(g)
+            continue
+        # Prefix-keep: a clocked row's expectations were derived under the
+        # state left by the rows BEFORE it — once one row drops, every
+        # later row's context is gone, so they drop with it.
+        good: list[str] = []
+        bad_hit = False
+        for v in verdicts:
+            if bad_hit:
+                rejected.append({
+                    "file": g["file"], "spec_name": g["spec_name"],
+                    "rows": [v["row"]], "why": g.get("why", ""),
+                    "reason": ("follows a dropped row — its expected values "
+                               "assume that row's state change happened"),
+                })
+                continue
+            if v["verdict"] == "disagrees":
+                bad_hit = True
+                rejected.append({
+                    "file": g["file"], "spec_name": g["spec_name"],
+                    "rows": [v["row"]], "why": g.get("why", ""),
+                    "reason": ("wrong expected value for the state after "
+                               "the existing rows — " + v["detail"]),
+                })
+                continue
+            good.append(v["row"])
+        if good:
+            kept.append({**g, "rows": good})
+    return kept, rejected, notes
+
+
 def _reference_gate(valid, rejected, notes, targets):
-    """2.9: judge every surviving row against the lab reference circuit,
+    """judge every surviving row against the lab reference circuit,
     when one is configured. Deterministic; 'unresolved' rows pass through
     to the normal inject verification."""
     from dlc.l3 import manifest as mf
@@ -386,8 +592,6 @@ def _reference_gate(valid, rejected, notes, targets):
                                            f"({v['detail']})"})
         if good:
             kept.append({**g, "rows": good})
-    if checked:
-        notes.append("rows were checked against the lab reference circuit.")
     return kept, rejected, notes
 
 

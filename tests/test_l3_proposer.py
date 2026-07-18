@@ -257,7 +257,7 @@ def test_propose_endpoint_uses_the_proposer(monkeypatch):
         # "0 1 0" duplicates an existing row by value -> validator drops it
         assert body["ok"] is True
         assert body["proposals"] == []
-        assert any("dropped" in n for n in body["notes"])
+        assert body["rejected"] and body["rejected"][0]["kind"] == "duplicate"
     finally:
         server._SESSIONS.pop(sid, None)
 
@@ -269,9 +269,6 @@ def test_propose_endpoint_404s_on_unknown_session():
     assert r.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# 2.10: program-extension proposals (cpu-like ROM-driven targets)
-# ---------------------------------------------------------------------------
 
 from dlc.testing.runner import find_digital_jar  # noqa: E402
 
@@ -422,7 +419,6 @@ def test_replay_gate_drops_state_ignorant_clocked_rows():
     assert "wrong expected value" in rejected[0]["reason"]
     assert "your circuit computes" in rejected[0]["reason"]
     assert "follows a dropped row" in rejected[1]["reason"]
-    assert any("replaying your circuit" in n for n in notes)
 
 
 def test_propose_model_default_and_override(monkeypatch):
@@ -430,3 +426,64 @@ def test_propose_model_default_and_override(monkeypatch):
     assert proposer._propose_model() == proposer._PROPOSE_MODEL_FALLBACK
     monkeypatch.setenv("DLC_L3_PROPOSE_MODEL", "claude-sonnet-5")
     assert proposer._propose_model() == "claude-sonnet-5"
+
+
+def test_category_gate_drops_undefined_operations():
+    m = {"categories": {"alu-like.dig": [
+        {"name": "AND", "when": {"ALUOp": "0b0000"}},
+        {"name": "ADD", "when": {"ALUOp": "0b0010"}}]}}
+    t = {"file": "alu-like.dig", "spec_name": "T",
+         "headers": ["A", "B", "ALUOp", "Out"], "inputs": [], "outputs": [],
+         "existing_rows": [], "existing_rows_omitted": 0,
+         "has_clock": False, "clock_col": None, "has_program_rom": False}
+    valid = [{"file": "alu-like.dig", "spec_name": "T",
+              "rows": ["1 1 9 0", "1 1 0 1", "1 1 X 0"], "why": "w"}]
+    kept, rejected, _ = proposer._category_gate(valid, [], [], [t], m)
+    assert kept[0]["rows"] == ["1 1 0 1", "1 1 X 0"]   # defined op + don't-care
+    assert len(rejected) == 1
+    assert "does not define" in rejected[0]["reason"]
+    assert rejected[0]["file"] == "alu-like.dig"
+
+
+def test_classify_reason_maps_to_student_kinds():
+    c = proposer._classify_reason
+    assert c("duplicate of an existing or proposed row") == "duplicate"
+    assert c("word 13 duplicates an instruction already in the program") == "duplicate"
+    assert c("word ff is not an instruction this lab defines") == "undefined_op"
+    assert c("tests an operation this lab does not define (x=9)") == "undefined_op"
+    assert c("wrong expected value for the state after the existing rows") == "wrong_expectation"
+    assert c("disagrees with the lab reference (Out: ...)") == "wrong_expectation"
+    assert c("failed the coach's self-check") == "wrong_expectation"
+    assert c("row has 2 cells but testcase has 3 columns") == "format"
+
+
+def test_uninject_endpoint_removes_nothing_gracefully():
+    sid = _upload_and()
+    try:
+        r = client.post("/api/l3/uninject", json={
+            "session_id": sid, "filename": "single_and.dig"})
+        body = r.json()
+        assert body["ok"] is True and body["removed"] is False
+    finally:
+        server._SESSIONS.pop(sid, None)
+
+
+@_needs_jar
+def test_uninject_endpoint_evicts_registered_temp():
+    spec_name = proposer.build_targets(scan_tree_coverage(_AND))[0]["spec_name"]
+    sid = _upload_and()
+    try:
+        r = client.post("/api/l3/inject", json={
+            "session_id": sid, "filename": "single_and.dig",
+            "spec_name": spec_name, "rows": ["1 0 0"], "as_second": True})
+        assert r.json()["ok"] is True
+        names = [f["name"] for f in server._SESSIONS[sid]["files"]]
+        assert "single_and__coach.dig" in names
+        r2 = client.post("/api/l3/uninject", json={
+            "session_id": sid, "filename": "single_and.dig"})
+        assert r2.json()["removed"] is True
+        names = [f["name"] for f in server._SESSIONS[sid]["files"]]
+        assert "single_and__coach.dig" not in names
+        assert server._SESSIONS[sid].get("l3_temp") is None
+    finally:
+        server._SESSIONS.pop(sid, None)
