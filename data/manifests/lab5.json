@@ -140,5 +140,35 @@
     "slt-unit.dig": "3c1a4612aae0270c09f9e02d50c9f159ee66677e"
   },
   "reference_dir": null,
-  "_note": "reference_dir stays null in the repo; instructors point DLC_REFERENCE_DIR at their local solutions folder."
+  "_note": "reference_dir stays null in the repo; instructors point DLC_REFERENCE_DIR at their local solutions folder.",
+  "program_decode": {
+    "categories_from": "control-unit.dig",
+    "fields": {
+      "opcode": [
+        0,
+        7
+      ],
+      "funct3": [
+        12,
+        3
+      ],
+      "funct7": [
+        25,
+        7
+      ],
+      "rd": [
+        7,
+        5
+      ],
+      "rs1": [
+        15,
+        5
+      ],
+      "rs2": [
+        20,
+        5
+      ]
+    },
+    "note": "bit ranges [low_bit, width] of a 32-bit RV32I word; field names match the control-unit category predicate columns"
+  }
 }

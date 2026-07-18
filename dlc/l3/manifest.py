@@ -176,6 +176,69 @@ def category_coverage(manifest: dict | None, file: str, spec) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Program-word decoding : deterministic instruction-category
+# judgment for program-ROM extensions. The manifest's optional block
+#
+#   "program_decode": {
+#     "categories_from": "control-unit.dig",
+#     "fields": {"opcode": [0, 7], "funct3": [12, 3], "funct7": [25, 7],
+#                "rd": [7, 5], "rs1": [15, 5], "rs2": [20, 5]}
+#   }
+#
+# maps bit ranges [low_bit, width] of a program word onto the SAME column
+# names the categories_from file's category predicates use — so "which lab
+# instruction is this word, and which category does it close?" is decided
+# by decode, never by the model's own claim.
+# ---------------------------------------------------------------------------
+
+def decode_program_word(manifest: dict | None, word: int) -> dict | None:
+    """{'category': name|None, 'fields': {...}} for one program word, or
+    None when the manifest defines no program_decode block."""
+    pd = (manifest or {}).get("program_decode")
+    if not isinstance(pd, dict) or not pd.get("fields"):
+        return None
+    fields: dict[str, int] = {}
+    for name, spec in pd["fields"].items():
+        try:
+            lo, width = int(spec[0]), int(spec[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        fields[name] = (word >> lo) & ((1 << width) - 1)
+    cats = (manifest.get("categories") or {}).get(
+        pd.get("categories_from") or "", [])
+    category = None
+    for cat in cats:
+        when = _norm_when(cat.get("when", {}))
+        if when and all(fields.get(c) == v for c, v in when.items()):
+            category = cat.get("name")
+            break
+    return {"category": category, "fields": fields}
+
+
+def program_categories(manifest: dict | None, words: list[int]) -> dict | None:
+    """Deterministic category coverage of a PROGRAM: which lab-defined
+    instruction categories the given words execute, and which are missing.
+    None when the manifest can't decode words."""
+    pd = (manifest or {}).get("program_decode")
+    if not isinstance(pd, dict):
+        return None
+    cats = (manifest.get("categories") or {}).get(
+        pd.get("categories_from") or "", [])
+    if not cats:
+        return None
+    names = [c.get("name", "?") for c in cats]
+    present: set[str] = set()
+    for w in words:
+        d = decode_program_word(manifest, w)
+        if d and d["category"]:
+            present.add(d["category"])
+    return {
+        "present": [n for n in names if n in present],
+        "missing": [n for n in names if n not in present],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Reference verdicts (the deterministic wrong-row killer)
 # ---------------------------------------------------------------------------
 

@@ -31,7 +31,7 @@ _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
 
 _MAX_EXISTING_ROWS_SHOWN = 40    # keep the prompt lean on loop-heavy specs
 _MAX_TOTAL_ROWS = 6              # hard cap across all accepted proposals
-_MAX_PROGRAM_WORDS = 8           # 2.10: cap per program-extension proposal
+_MAX_PROGRAM_WORDS = 8           # cap per program-extension proposal
 
 
 def _load_prompt() -> str:
@@ -113,8 +113,6 @@ def _program_rom_of(circuit) -> tuple[list[int], int] | None:
 
 def build_prompt(report: TreeCoverageReport, targets: list[dict]) -> str:
     template = _load_prompt()
-    # token replace (not str.format): the template and the JSON both
-    # contain literal braces, and Charles hand-edits the prompt file.
     slim = report.to_dict()
     for c in slim["circuits"]:
         c.pop("flags", None)         # clean scans have none; drop the field

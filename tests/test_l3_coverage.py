@@ -226,3 +226,40 @@ def test_report_round_trips_through_json():
     assert back["total_flags"] == 0
     assert back["circuits"][0]["specs"][0]["checked_cells"] == 4
     assert isinstance(TreeCoverageReport(root="x"), TreeCoverageReport)
+
+# ---------------------------------------------------------------------------
+# 07-17: replay helper + manifest-aware note filter
+# ---------------------------------------------------------------------------
+
+def test_replay_appended_rows_agrees_and_disagrees():
+    from dlc.l3.coverage import replay_appended_rows
+    from dlc.parser.dig_parser import parse_dig_file
+    from dlc.testing.spec import extract_test_specs
+    p = "data/sample_circuits/tier3_realistic/pipelined_adder_correct.dig"
+    spec = extract_test_specs(parse_dig_file(p))[0]
+    # two-stage pipe, post-edge asserts: appended row N sees the sum fed
+    # two rows earlier. 5+5 lands two rows later; the final row wrongly
+    # claims 10 again when the pipe has already flushed to 0+0.
+    v = replay_appended_rows(p, spec.name, ["5 5 C 0", "0 0 C 10", "0 0 C 10"])
+    assert [x["verdict"] for x in v] == ["agrees", "agrees", "disagrees"]
+    assert "Sum" in v[2]["detail"]
+
+
+def test_manifest_note_filter_rewrites_undefined_value_notes():
+    from dlc.l3.coverage import _manifest_note_filter
+    cats = [{"name": "AND", "when": {"ALUOp": "0b0000"}},
+            {"name": "ADD", "when": {"ALUOp": "0b0010"}}]
+    notes = [
+        "input 'ALUOp' (4-bit) is never tested with values 9, 10, 11.",
+        "input 'Other' (4-bit) is never tested with values 9, 10.",
+        "output 'FlagZ' is only ever expected to be 1 — no row checks it "
+        "at another value.",
+    ]
+    out = _manifest_note_filter(notes, cats, categories_complete=True)
+    assert "not part of this lab's instruction set" in out[0]
+    assert out[1] == notes[1]                     # non-category column: kept
+    assert "consistent with this lab's instruction set" in out[2]
+    # a value INSIDE the defined set keeps the original honest note
+    notes2 = ["input 'ALUOp' (4-bit) is never tested with values 0, 9."]
+    out2 = _manifest_note_filter(notes2, cats, categories_complete=False)
+    assert out2 == notes2

@@ -318,7 +318,9 @@ def test_program_group_rejections():
     assert "hex" in reason(
         {**base, "rows": ["C 1 2"], "program_words": ["not-hex"]})
     assert "clock" in reason(                      # row must pulse the clock
-        {**base, "rows": ["0 1 2"], "program_words": ["13"]})
+        {**base, "rows": ["0 1 2"], "program_words": ["93"]})
+    assert "duplicates an instruction" in reason(
+        {**base, "rows": ["C 1 2"], "program_words": ["13"]})
     assert "only valid for clocked" in reason(
         {**base, "rows": ["C 1 2"], "program_words": ["13"]},
         target={**_cpu_like_target(), "has_program_rom": False})
@@ -356,3 +358,75 @@ def test_inject_endpoint_as_second_builds_second_testcase():
         assert body["temp_filename"] == "single_and__coach.dig"
     finally:
         server._SESSIONS.pop(sid, None)
+
+def _lab5ish_manifest():
+    return {
+        "lab": "t", "applies_to": ["cpu.dig"],
+        "categories": {"control-unit.dig": [
+            {"name": "add",  "when": {"opcode": "0b0110011", "funct3": "0b000",
+                                      "funct7": "0b0000000"}},
+            {"name": "addi", "when": {"opcode": "0b0010011", "funct3": "0b000"}},
+        ]},
+        "official_tests": {}, "reference_dir": None,
+        "program_decode": {"categories_from": "control-unit.dig",
+                           "fields": {"opcode": [0, 7], "funct3": [12, 3],
+                                      "funct7": [25, 7]}},
+    }
+
+
+def test_program_word_decode_gate_and_word_info():
+    m = _lab5ish_manifest()
+    t = {**_cpu_like_target(), "program_words": ["fec00213"],
+         "program_categories_missing": ["add"]}
+    # a word the lab ISA does not define is rejected
+    v, r = proposer.validate_and_dedupe(
+        [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
+          "why": "w", "program_words": ["ffffffff"]}], [t], manifest=m)
+    assert v == [] and "not an instruction this lab defines" in r[0]["reason"]
+    # a defined word that closes a missing category survives with word_info
+    v, r = proposer.validate_and_dedupe(
+        [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
+          "why": "w", "program_words": ["628e33"]}], [t], manifest=m)
+    assert r == [] and v[0]["word_info"] == [
+        {"word": "628e33", "category": "add", "closes_gap": True}]
+    # duplicating an existing program word names its category in the reason
+    v, r = proposer.validate_and_dedupe(
+        [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
+          "why": "w", "program_words": ["fec00213"]}], [t], manifest=m)
+    assert v == [] and "category 'addi'" in r[0]["reason"]
+
+
+_PIPE = "data/sample_circuits/tier3_realistic/pipelined_adder_correct.dig"
+
+
+def test_replay_gate_drops_state_ignorant_clocked_rows():
+    # The 2-stage pipelined adder: Sum lags two rows. After the official
+    # rows the pipe holds 0+0 twice, so an appended row must expect Sum=0.
+    from dlc.parser.dig_parser import parse_dig_file
+    from dlc.testing.spec import extract_test_specs
+    spec = extract_test_specs(parse_dig_file(_PIPE))[0]
+    t = {"file": "pipelined_adder_correct.dig", "spec_name": spec.name,
+         "headers": list(spec.headers), "inputs": [], "outputs": [],
+         "existing_rows": [], "existing_rows_omitted": 0,
+         "has_clock": True, "clock_col": "Clk", "has_program_rom": False}
+    paths = {"pipelined_adder_correct.dig": _PIPE}
+    valid = [{"file": t["file"], "spec_name": spec.name,
+              # row 1 RIGHT (two-stage pipe still flushing 0s), row 2 WRONG
+              # (expects 5+5 immediately — it lands one row later), row 3
+              # would be right but FOLLOWS a dropped row: prefix-keep drops
+              # it too, because its context is gone.
+              "rows": ["5 5 C 0", "0 0 C 99", "0 0 C 10"], "why": "w"}]
+    kept, rejected, notes = proposer._replay_gate(valid, [], [], [t], paths)
+    assert len(kept) == 1 and kept[0]["rows"] == ["5 5 C 0"]
+    assert len(rejected) == 2
+    assert "wrong expected value" in rejected[0]["reason"]
+    assert "your circuit computes" in rejected[0]["reason"]
+    assert "follows a dropped row" in rejected[1]["reason"]
+    assert any("replaying your circuit" in n for n in notes)
+
+
+def test_propose_model_default_and_override(monkeypatch):
+    monkeypatch.delenv("DLC_L3_PROPOSE_MODEL", raising=False)
+    assert proposer._propose_model() == proposer._PROPOSE_MODEL_FALLBACK
+    monkeypatch.setenv("DLC_L3_PROPOSE_MODEL", "claude-sonnet-5")
+    assert proposer._propose_model() == "claude-sonnet-5"

@@ -5,7 +5,7 @@ This package holds the DETERMINISTIC engines Layer 3 stands on
 
   oracle.py     Temp-circuit injection + per-row rerun — the self-verify
                 oracle. Mode B injects accepted coach rows; Mode A's retest
-                and the Phase-4 verified-root-cause metric rerun proposed
+                and the verified-root-cause metric rerun proposed
                 fixes. Never modifies the student's original file.
 
 LLM-side modules (the /api/llm/debug coordinator, coverage agent,

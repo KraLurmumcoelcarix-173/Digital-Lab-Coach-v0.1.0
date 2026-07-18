@@ -197,20 +197,7 @@ def write_temp_with_rows(
 
 
 # ---------------------------------------------------------------------------
-# 2.10: SECOND-testcase injection (program-driven targets like the lab5 cpu)
-#
-# For clocked, ROM-driven circuits new rows alone cannot exercise new
-# instruction categories — rows only carry the clock; the instructions come
-# from the program ROM. The ratified answer (Charles, 07-12): append the new
-# program WORDS to the ROM (a data attribute — no wires, no components) and
-# put the matching assertion rows in a SECOND testcase named
-# "<spec>_second". The official testcase stays byte-identical (its manifest
-# fingerprint survives) and is re-run unchanged as a regression guard.
-#
-# Cycle alignment: a fresh testcase replays from power-on, so the second
-# testcase is prefixed with machine-generated WARM-UP rows (clock column
-# driven, every other cell X = assert nothing) — one per existing program
-# word — and then carries one assertion row per appended word, in order.
+# SECOND-testcase injection 
 # ---------------------------------------------------------------------------
 
 _PROGMEM_TRUE_RE = re.compile(

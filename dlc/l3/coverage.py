@@ -33,7 +33,10 @@ coverage report
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 
 from dlc.parser.models import Circuit
 from dlc.parser.dig_parser import parse_dig_file
@@ -41,7 +44,7 @@ from dlc.parser.netlist import build_netlist
 from dlc.parser.graph import build_signal_graph
 from dlc.sim import simulate, inputs_for_row
 from dlc.sim.simulator import _row_has_clock_edge
-from dlc.testing.spec import extract_test_specs, match_variables_to_io
+from dlc.testing.spec import extract_test_specs, match_variables_to_io, _tokenize
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +465,113 @@ def _collect_tree(circuit: Circuit, root_path: str) -> list[tuple[str, str, Circ
     return out
 
 
+# ---------------------------------------------------------------------------
+# Replay pre-gate helper: what would THIS circuit compute for rows
+# appended after the full official sequence? Used by the proposer to kill
+# clocked rows whose expected values ignore the machine state.
+# ---------------------------------------------------------------------------
+
+def replay_appended_rows(
+    path: str,
+    spec_name: str,
+    appended: list[str],
+    rom_words: list[str] | None = None,
+) -> list[dict]:
+    """Replay `spec_name`'s official rows (threading register state), then
+    evaluate each `appended` row in sequence. Verdict per appended row
+    against its asserted output cells: 'agrees' | 'disagrees' (with which
+    columns) | 'unresolved' (evaluator couldn't settle — no accusation).
+
+    With `rom_words`, the circuit's program ROM is extended first (on a
+    throwaway temp copy) — the appended rows are then judged exactly as the
+    second-testcase would execute them.
+    """
+    tmp = None
+    try:
+        if rom_words:
+            from dlc.l3.oracle import extend_program_rom_text, parse_program_words
+            src = Path(path).read_text(encoding="utf-8")
+            src = extend_program_rom_text(src, parse_program_words(rom_words))
+            fd, tmp = tempfile.mkstemp(suffix=".dig", prefix="dlc_row_l3_",
+                                       dir=str(Path(path).parent))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(src)
+            circuit = parse_dig_file(tmp)
+        else:
+            circuit = parse_dig_file(str(path))
+        netlist = build_netlist(circuit)
+        graph = build_signal_graph(circuit, netlist)
+        spec = next(s for s in extract_test_specs(circuit)
+                    if s.name == spec_name)
+        bindings = match_variables_to_io(spec.headers, circuit)
+
+        reg_state: dict = {}
+
+        def run_row(rowobj):
+            nonlocal reg_state
+            inp = inputs_for_row(circuit, spec.headers, rowobj)
+            clocked = _row_has_clock_edge(circuit, spec.headers, rowobj)
+            res = simulate(circuit, netlist, graph, inp,
+                           state_store=dict(reg_state))
+            if clocked:
+                ns = dict(reg_state)
+                ns.update(res.reg_next)
+                reg_state = ns
+                res = simulate(circuit, netlist, graph, inp,
+                               state_store=dict(reg_state))
+            return res
+
+        for row in spec.rows:                       # official replay
+            if row.is_malformed:
+                continue
+            if any(t.kind == "loop_expr" for t in row.values):
+                continue
+            run_row(row)
+
+        verdicts: list[dict] = []
+        for raw in appended:
+            cells = raw.split("#", 1)[0].split()
+
+            class _Row:
+                pass
+            shim = _Row()
+            shim.values = [_tokenize(c) for c in cells]
+            res = run_row(shim)
+            by_col = dict(zip(spec.headers, cells))
+            bad: list[str] = []
+            unresolved = False
+            for col, b in bindings.items():
+                if b is None or b.role != "output" or col not in by_col:
+                    continue
+                tok = _tokenize(by_col[col])
+                if tok.kind != "int" or tok.value is None:
+                    continue                        # don't-care: nothing asserted
+                found = res.output_values.get(col)
+                if found is None:
+                    unresolved = True
+                    continue
+                if not _bitpattern_eq(found, tok.value, b.bit_width):
+                    signed = tok.value < 0
+                    bad.append(
+                        f"{col}: your circuit computes "
+                        f"{_fmt_value(found, b.bit_width, signed)} at that "
+                        f"point, the row says "
+                        f"{_fmt_value(tok.value, b.bit_width, signed)}")
+            verdicts.append({
+                "row": raw,
+                "verdict": ("disagrees" if bad
+                            else ("unresolved" if unresolved else "agrees")),
+                "detail": "; ".join(bad),
+            })
+        return verdicts
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
     """Mode B's deterministic pass over the whole tree rooted at `dig_path`."""
     report = TreeCoverageReport(root=os.path.basename(dig_path))
@@ -534,3 +644,54 @@ def _apply_manifest(report: TreeCoverageReport) -> None:
                 f"category coverage is GREEN (raw vector % is informational "
                 f"only)."
             ))
+        cov.notes = _manifest_note_filter(
+            cov.notes, (m.get("categories") or {}).get(cov.file) or [],
+            categories_complete=not cc["missing"],
+        )
+
+
+_NEVER_TESTED_RE = re.compile(
+    r"input '([^']+)'.*never tested with values? ([\d, ]+)\.?$")
+_CONST_OUTPUT_RE = re.compile(r"output '([^']+)' is only ever expected")
+
+
+def _manifest_note_filter(
+    notes: list[str], cats: list[dict], *, categories_complete: bool,
+) -> list[str]:
+    """Category-aware note rewrite: a raw "input 'X' never tested with
+    values ..." note is an INVITATION to test those values — but when every
+    listed value lies outside the lab's defined categories, those values are
+    undefined operations and testing them is noise (or worse: the model
+    proposes them and the reference kills the rows). Rewrite such notes to
+    say so; likewise soften constant-output notes once every category is
+    exercised."""
+    defined: dict[str, set[int]] = {}
+    for cat in cats:
+        for col, v in (cat.get("when") or {}).items():
+            from dlc.l3.manifest import _cell_value
+            val = _cell_value(str(v)) if not isinstance(v, int) else v
+            if val is not None:
+                defined.setdefault(col, set()).add(val)
+    if not defined:
+        return notes
+    out: list[str] = []
+    for note in notes:
+        m2 = _NEVER_TESTED_RE.search(note)
+        if m2 and m2.group(1) in defined:
+            try:
+                listed = [int(x) for x in m2.group(2).replace(" ", "").split(",") if x]
+            except ValueError:
+                listed = []
+            if listed and all(v not in defined[m2.group(1)] for v in listed):
+                out.append(
+                    f"input '{m2.group(1)}': every lab-defined value is "
+                    f"tested; the untested values "
+                    f"({', '.join(str(v) for v in listed)}) are not part of "
+                    f"this lab's instruction set — no test needed.")
+                continue
+        if categories_complete and _CONST_OUTPUT_RE.search(note):
+            out.append(note + " (consistent with this lab's instruction "
+                              "set — every defined category is tested)")
+            continue
+        out.append(note)
+    return out
