@@ -30,7 +30,9 @@ _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
 
 _MAX_EXISTING_ROWS_SHOWN = 40    # keep the prompt lean on loop-heavy specs
 _MAX_TOTAL_ROWS = 6              # hard cap across all accepted proposals
-_MAX_PROGRAM_WORDS = 8           # 2.10: cap per program-extension proposal
+# a cpu missing all five R-type categories needs 5 gap
+# words + 5 read-backs; 8 forced the model to choose coverage OVER proof.
+_MAX_PROGRAM_WORDS = 12          # cap per program-extension proposal
 
 # The proposer needs real reasoning about machine state and lab ISAs —
 #  Override per install with l3_propose_model in
@@ -113,6 +115,12 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
             if pc is not None:
                 target["program_categories_present"] = pc["present"]
                 target["program_categories_missing"] = pc["missing"]
+                if pc["missing"]:
+                    # verified, non-lazy encoding templates per missing
+                    # category — ground truth the model can build on
+                    ex = mf.category_word_examples(m, pc["missing"], words)
+                    if ex:
+                        target["program_word_examples"] = ex
         targets.append(target)
     return targets
 
@@ -293,6 +301,12 @@ def _validate_program_group(
             if not d or not d["category"]:
                 return None, (f"word {w:x} is not an instruction this lab "
                               f"defines — the lab ISA cannot execute it")
+            # anti-lazy gate: a word whose result is discarded or
+            # identical across every lab instruction proves nothing.
+            lazy = mf.lazy_word_reason(manifest, w)
+            if lazy:
+                return None, (f"word {w:x} ({d['category']}) is a lazy "
+                              f"test — {lazy}")
             missing = t.get("program_categories_missing") or []
             word_info.append({
                 "word": f"{w:x}",
@@ -422,6 +436,8 @@ def propose_rows(
 
 def _classify_reason(reason: str) -> str:
     r = reason.lower()
+    if "lazy test" in r:
+        return "lazy"
     if "duplicate" in r or "already in the program" in r or "appears twice" in r:
         return "duplicate"
     if ("not an instruction" in r or "instruction set" in r

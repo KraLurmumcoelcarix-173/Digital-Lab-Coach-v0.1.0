@@ -249,6 +249,12 @@
   border-top-color: #2563eb; border-radius: 50%; display: inline-block;
   animation: l3spin .8s linear infinite; }
 @keyframes l3spin { to { transform: rotate(360deg); } }
+.l3-dots span { display: inline-block; font-weight: 700;
+  animation: l3dot 1.2s ease-in-out infinite; }
+.l3-dots span:nth-child(2) { animation-delay: .15s; }
+.l3-dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes l3dot { 0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); } }
 .l3-added-note { color: #166534; font-weight: 600; }
 .l3-rej-where { font-weight: 600; color: #374151; }
 .l3-rej-raw { margin: 1px 0 6px 0; }

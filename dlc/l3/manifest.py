@@ -1,4 +1,4 @@
-"""Per-lab manifest (2.9): the deterministic intent-reference for Mode B.
+"""Per-lab manifest: the deterministic intent-reference for Mode B.
 
 A manifest is one JSON file describing ONE lab:
 
@@ -259,6 +259,241 @@ def program_categories(manifest: dict | None, words: list[int]) -> dict | None:
         "present": [n for n in names if n in present],
         "missing": [n for n in names if n not in present],
     }
+
+
+# ---------------------------------------------------------------------------
+# RV32I word quality + encoding: the program_decode
+# block is RV32I-shaped by design (see its note), so the two ALU opcode
+# conventions below are manifest knowledge, not circuit guesses. Everything
+# here is deterministic and round-trip-verified against decode_program_word —
+# these helpers refuse to answer rather than answer wrong.
+# ---------------------------------------------------------------------------
+
+_OPCODE_RTYPE = 0b0110011      # R-type ALU: reads rs1+rs2, writes rd
+_OPCODE_ITYPE_ALU = 0b0010011  # I-type ALU: reads rs1+imm[31:20], writes rd
+
+
+def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
+    """Why this program word is a LAZY test, or None when it is fine (or
+    when the manifest lacks the fields to judge — never guess).
+
+    Lazy = the word can never distinguish a correct circuit from a broken
+    one: its operands are all zero (EVERY lab ALU instruction computes the
+    same 0, so the row cannot tell one operation from another), or it both
+    discards its result into x0 AND reads only x0 (nothing register-
+    dependent becomes observable). Deliberately narrow on the other side:
+    addi xN, x0, <imm≠0> is the idiomatic register loader, and
+    addi x0, xN, 0 is the lab's READ-BACK idiom — writing x0 while
+    exposing xN on a register-file read port — so neither is ever
+    flagged."""
+    d = decode_program_word(manifest, word)
+    if not d or not d["category"]:
+        return None
+    f = d["fields"]
+    op, rd, rs1 = f.get("opcode"), f.get("rd"), f.get("rs1")
+    if op == _OPCODE_RTYPE:
+        if rs1 == 0 and f.get("rs2") == 0:
+            return ("it reads x0 for BOTH operands — every lab instruction "
+                    "computes 0 on (0, 0), so the row cannot tell one "
+                    "operation from another")
+        return None                    # any nonzero source is observable
+    if op == _OPCODE_ITYPE_ALU:
+        if rs1 == 0 and ((word >> 20) & 0xFFF) == 0:
+            return ("it reads x0 with immediate 0 — every lab instruction "
+                    "computes 0 on (0, 0), so the row cannot tell one "
+                    "operation from another")
+        if rd == 0 and rs1 == 0:
+            return ("it discards its result into x0 and reads only x0 — "
+                    "nothing register-dependent is observable")
+        return None                    # rd=x0 with rs1≠0 is the read-back
+    return None                        # rd/rs1 only architectural for ALU ops
+
+
+def encode_category_word(
+    manifest: dict | None, category: str, *,
+    rd: int = 0, rs1: int = 0, rs2: int = 0, imm: int = 0,
+) -> int | None:
+    """Deterministically encode ONE program word of a named category using
+    the manifest's own field map + that category's `when` predicate. The
+    result is verified by decoding it back: anything that does not land on
+    the same category returns None instead of a wrong word."""
+    pd = (manifest or {}).get("program_decode")
+    if not isinstance(pd, dict) or not pd.get("fields"):
+        return None
+    cats = (manifest.get("categories") or {}).get(
+        pd.get("categories_from") or "", [])
+    when = None
+    for cat in cats:
+        if cat.get("name") == category:
+            when = _norm_when(cat.get("when", {}))
+            break
+    if not when:
+        return None
+    fields = pd["fields"]
+
+    def place(name: str, val: int) -> int | None:
+        spec = fields.get(name)
+        try:
+            lo, width = int(spec[0]), int(spec[1])
+        except (TypeError, ValueError, IndexError):
+            return None
+        return (val & ((1 << width) - 1)) << lo
+
+    word = 0
+    for col, v in when.items():
+        bits = place(col, v)
+        if bits is None:
+            return None
+        word |= bits
+    if when.get("opcode") == _OPCODE_ITYPE_ALU:
+        word |= (imm & 0xFFF) << 20            # I-type immediate [31:20]
+    else:
+        word |= place("rs2", rs2) or 0
+    for name, val in (("rd", rd), ("rs1", rs1)):
+        bits = place(name, val)
+        if bits is None:
+            return None
+        word |= bits
+    d = decode_program_word(manifest, word)
+    if not d or d["category"] != category:
+        return None                            # round-trip failed: no lies
+    return word
+
+
+_M32 = 0xFFFFFFFF
+
+
+def _signed32(v: int) -> int:
+    return v - (1 << 32) if v & (1 << 31) else v
+
+
+def constant_registers(manifest: dict | None, words: list[int]) -> dict[int, int]:
+    """Register file AFTER the program, for every register whose value is
+    deterministically computable from the ISA alone: constant propagation
+    over the lab's decoded ALU categories (registers start at 0; RV32I
+    add/sub/and/or/slt + addi/andi/slti semantics, 32-bit two's-complement,
+    returned unsigned). A write this walker cannot compute — an undecoded
+    word, an untracked category, an unknown source — DROPS its rd from the
+    result: false knowledge is the only failure mode that matters here.
+    Empty dict when the manifest cannot decode rd at all."""
+    pd = (manifest or {}).get("program_decode") or {}
+    if "rd" not in (pd.get("fields") or {}):
+        return {}
+    known: dict[int, int] = {r: 0 for r in range(32)}
+    for w in words:
+        d = decode_program_word(manifest, w)
+        if not d:
+            return {}
+        f = d["fields"]
+        rd = f.get("rd") or 0
+        cat, op = d["category"], f.get("opcode")
+        out = None
+        if cat and op == _OPCODE_ITYPE_ALU:
+            a = known.get(f.get("rs1"))
+            imm = (w >> 20) & 0xFFF
+            imm = imm - 0x1000 if imm & 0x800 else imm       # sign-extend
+            if a is not None:
+                if cat == "addi":
+                    out = (a + imm) & _M32
+                elif cat == "andi":
+                    out = a & (imm & _M32)
+                elif cat == "slti":
+                    out = 1 if _signed32(a) < imm else 0
+        elif cat and op == _OPCODE_RTYPE:
+            a, b = known.get(f.get("rs1")), known.get(f.get("rs2"))
+            if a is not None and b is not None:
+                if cat == "add":
+                    out = (a + b) & _M32
+                elif cat == "sub":
+                    out = (a - b) & _M32
+                elif cat == "and":
+                    out = a & b
+                elif cat == "or":
+                    out = a | b
+                elif cat == "slt":
+                    out = 1 if _signed32(a) < _signed32(b) else 0
+        if rd == 0:
+            continue                       # x0 is never written
+        if out is None:
+            known.pop(rd, None)            # can't compute => don't pretend
+        else:
+            known[rd] = out
+    return known
+
+
+def category_word_examples(
+    manifest: dict | None, missing: list[str], existing_words: list[int] = (),
+) -> list[dict]:
+    """Machine-verified, NON-lazy example encodings for the missing program
+    categories — [{category, word, asm, reads?}], in `missing` order.
+    Source registers prefer registers constant_registers PROVES hold
+    distinct non-zero values when the extension starts — those examples
+    test live data with no extra setup, and `reads` states the proven
+    values (signed) so expected outputs can be derived from ground truth.
+    Destination registers avoid every register the program writes. When
+    the program proves no usable sources, two fresh registers are used and
+    the addi example (when missing) doubles as their loader. Purely
+    illustrative — the proposer may pick other registers/values — but each
+    word is guaranteed to decode to its category and to pass the lazy
+    gate."""
+    if not missing:
+        return []
+    written: set[int] = set()
+    for w in existing_words:
+        d = decode_program_word(manifest, w)
+        if d and d["category"] and d["fields"].get("opcode") in (
+                _OPCODE_RTYPE, _OPCODE_ITYPE_ALU):
+            written.add(d["fields"].get("rd") or 0)
+    pool = [r for r in range(5, 32) if r not in written]
+    if len(pool) < 2 + len(missing):
+        pool = list(range(5, 32))              # crowded program: just rotate
+    known = constant_registers(manifest, list(existing_words))
+    cands = [(r, v) for r, v in known.items()
+             if r != 0 and v != 0 and r in written]
+    reads: dict[str, int] = {}
+    if len(cands) >= 2:
+        setup_a = cands[0][0]
+        setup_b = next((r for r, v in cands[1:] if v != cands[0][1]),
+                       cands[1][0])
+        reads = {f"x{setup_a}": _signed32(known[setup_a]),
+                 f"x{setup_b}": _signed32(known[setup_b])}
+        free = pool
+    else:
+        setup_a, setup_b = pool[0], pool[1]
+        free = pool[2:]
+
+    out: list[dict] = []
+    for i, name in enumerate(missing):
+        rd = free[i % len(free)] if free else setup_a
+        pd = (manifest or {}).get("program_decode") or {}
+        cats = (manifest.get("categories") or {}).get(
+            pd.get("categories_from") or "", [])
+        when = next((_norm_when(c.get("when", {})) for c in cats
+                     if c.get("name") == name), {})
+        used_reads = reads
+        if when.get("opcode") == _OPCODE_ITYPE_ALU:
+            rs1, imm = (0, 7) if name == "addi" else (setup_a, 7)
+            if name == "addi":
+                used_reads = {}                # reads only x0
+                if not reads:
+                    rd = setup_a   # doubles as the loader the others read
+            elif reads:
+                used_reads = {f"x{setup_a}": _signed32(known[setup_a])}
+            word = encode_category_word(manifest, name, rd=rd, rs1=rs1, imm=imm)
+            asm = f"{name} x{rd}, x{rs1}, {imm}"
+        else:
+            word = encode_category_word(
+                manifest, name, rd=rd, rs1=setup_a, rs2=setup_b)
+            asm = f"{name} x{rd}, x{setup_a}, x{setup_b}"
+        if word is None or lazy_word_reason(manifest, word) is not None:
+            continue                           # cannot verify: stay silent
+        entry = {"category": name, "word": f"{word:x}", "asm": asm}
+        if used_reads:
+            # values PROVEN by constant propagation over the official
+            # program — ground truth for deriving expected outputs
+            entry["reads"] = used_reads
+        out.append(entry)
+    return out
 
 
 # ---------------------------------------------------------------------------

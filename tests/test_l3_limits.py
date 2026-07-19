@@ -41,7 +41,8 @@ def test_counters_tick_even_when_unenforced():
 def test_enforced_blocks_at_cap(monkeypatch):
     monkeypatch.setenv("DLC_ENFORCE_LIMITS", "1")
     assert limits.allowed("modeA") is True
-    limits.consume("modeA")                     # cap is 1/day
+    for _ in range(3):                          # cap is 3/day (R3: rerun-on-
+        limits.consume("modeA")                 # temp books the 3rd use)
     assert limits.allowed("modeA") is False
     assert limits.allowed("modeB") is True      # independent counters
 

@@ -487,3 +487,82 @@ def test_uninject_endpoint_evicts_registered_temp():
         assert server._SESSIONS[sid].get("l3_temp") is None
     finally:
         server._SESSIONS.pop(sid, None)
+
+
+# ---------------------------------------------------------------------------
+#  anti-lazy word gate + append-mode inject routing
+# ---------------------------------------------------------------------------
+
+def _lab5rich_manifest():
+    """_lab5ish + rd/rs1/rs2 fields, so the lazy gate can judge."""
+    m = _lab5ish_manifest()
+    m["program_decode"]["fields"].update(
+        {"rd": [7, 5], "rs1": [15, 5], "rs2": [20, 5]})
+    return m
+
+
+def test_lazy_program_words_are_rejected_with_lazy_kind():
+    m = _lab5rich_manifest()
+    t = {**_cpu_like_target(), "program_categories_missing": ["add"]}
+    base = {"file": "cpu.dig", "spec_name": "Test", "why": "w"}
+    # add x5, x0, x0 — both operands zero
+    v, r = proposer.validate_and_dedupe(
+        [{**base, "rows": ["C 1 2"], "program_words": ["2b3"]}], [t], manifest=m)
+    assert v == [] and "lazy test" in r[0]["reason"]
+    assert proposer._classify_reason(r[0]["reason"]) == "lazy"
+    # addi x0, x0, 7 — discards the result and reads only x0
+    v, r = proposer.validate_and_dedupe(
+        [{**base, "rows": ["C 1 2"], "program_words": ["700013"]}], [t], manifest=m)
+    assert v == [] and "discards its result" in r[0]["reason"]
+    assert proposer._classify_reason(r[0]["reason"]) == "lazy"
+    # addi x0, x5, 0 — the READ-BACK idiom survives the gate
+    v, r = proposer.validate_and_dedupe(
+        [{**base, "rows": ["C 1 2"], "program_words": ["28013"]}], [t], manifest=m)
+    assert r == [] and v[0]["word_info"][0]["category"] == "addi"
+    # addi x4, x0, -20 — the idiomatic loader stays accepted
+    v, r = proposer.validate_and_dedupe(
+        [{**base, "rows": ["C 1 2"], "program_words": ["fec00213"]}], [t], manifest=m)
+    assert r == [] and v[0]["word_info"][0]["category"] == "addi"
+    # real-operand add stays accepted and closes the gap
+    v, r = proposer.validate_and_dedupe(
+        [{**base, "rows": ["C 1 2"], "program_words": ["628e33"]}], [t], manifest=m)
+    assert r == [] and v[0]["word_info"][0]["closes_gap"] is True
+
+
+def test_inject_endpoint_routes_program_words_to_append_mode(monkeypatch):
+    from dlc.l3.oracle import InjectionOutcome
+    from dlc.web import l3_routes
+
+    calls = []
+
+    def fake_program(path, spec_name, rows, rom_words, keep_temp=False):
+        calls.append(("program", spec_name, [r.raw for r in rows], rom_words))
+        return InjectionOutcome(ok=True, spec_name=spec_name, headers=["a"],
+                                rows=[], all_passed=True,
+                                added_all_passed=True, temp_path=None)
+
+    def fake_second(path, spec_name, rows, rom_words, keep_temp=False):
+        calls.append(("second", spec_name, [r.raw for r in rows], rom_words))
+        return InjectionOutcome(ok=True, spec_name=f"{spec_name}_second",
+                                headers=["a"], rows=[], all_passed=True,
+                                added_all_passed=True, temp_path=None)
+
+    monkeypatch.setattr(l3_routes, "rerun_with_program", fake_program)
+    monkeypatch.setattr(l3_routes, "rerun_with_second", fake_second)
+    spec_name = proposer.build_targets(scan_tree_coverage(_AND))[0]["spec_name"]
+    sid = _upload_and()
+    try:
+        # rom_words without as_second => 2.11 append mode
+        r = client.post("/api/l3/inject", json={
+            "session_id": sid, "filename": "single_and.dig",
+            "spec_name": spec_name, "rows": ["1 0 0"], "rom_words": ["13"]})
+        assert r.json()["outcome"] == "all_set"
+        # explicit as_second still reaches the isolated path
+        r = client.post("/api/l3/inject", json={
+            "session_id": sid, "filename": "single_and.dig",
+            "spec_name": spec_name, "rows": ["1 0 0"],
+            "rom_words": ["13"], "as_second": True})
+        assert r.json()["spec_name"] == f"{spec_name}_second"
+        assert [c[0] for c in calls] == ["program", "second"]
+    finally:
+        server._SESSIONS.pop(sid, None)

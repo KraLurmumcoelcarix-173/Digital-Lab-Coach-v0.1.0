@@ -20,7 +20,12 @@ from pydantic import BaseModel
 
 from dlc.l3 import limits
 from dlc.l3.coverage import scan_tree_coverage
-from dlc.l3.oracle import InjectedRow, rerun_with_rows, rerun_with_second
+from dlc.l3.oracle import (
+    InjectedRow,
+    rerun_with_program,
+    rerun_with_rows,
+    rerun_with_second,
+)
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs
 
@@ -110,10 +115,13 @@ class InjectRequest(BaseModel):
     rows: list[str] = []
     spec_name: str | None = None    # default: the file's first testcase
     origin: str = "coach"           # provenance tag carried to result rows
-    # 2.10 program-driven targets: build a SECOND testcase '<spec>_second'
-    # instead of appending; rom_words extend the program ROM (one row per
-    # word). The official testcase stays byte-identical and is re-run as a
-    # regression guard (response carries base_spec).
+    # Program-driven targets: rom_words extend the program ROM (one row per
+    # word). 2.11 default: the rows are APPENDED to the official testcase on
+    # the temp copy — state carries over from the official rows, which re-run
+    # ahead of the new ones as the regression guard (response carries
+    # base_spec). as_second=True forces the ISOLATED path instead: a fresh
+    # '<spec>_second' testcase with machine-generated warm-up replay rows,
+    # for rows that must not run under the official rows' end state.
     as_second: bool = False
     rom_words: list[str] = []
 
@@ -157,6 +165,10 @@ def l3_inject(req: InjectRequest) -> dict:
             for r in req.rows if isinstance(r, str)]
     if req.as_second:
         outcome = rerun_with_second(
+            target["path"], spec_name, rows, req.rom_words, keep_temp=True,
+        )
+    elif req.rom_words:
+        outcome = rerun_with_program(
             target["path"], spec_name, rows, req.rom_words, keep_temp=True,
         )
     else:

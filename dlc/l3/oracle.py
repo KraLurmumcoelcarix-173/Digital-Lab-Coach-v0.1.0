@@ -197,20 +197,27 @@ def write_temp_with_rows(
 
 
 # ---------------------------------------------------------------------------
-# SECOND-testcase injection 
+# Program-ROM injection
 #
 # For clocked, ROM-driven circuits new rows alone cannot exercise new
 # instruction categories — rows only carry the clock; the instructions come
-# from the program ROM. The ratified answer: append the new
-# program WORDS to the ROM (a data attribute — no wires, no components) and
-# put the matching assertion rows in a SECOND testcase named
-# "<spec>_second". The official testcase stays byte-identical (its manifest
-# fingerprint survives) and is re-run unchanged as a regression guard.
+# from the program ROM. So the program WORDS are appended to the ROM (a data
+# attribute — no wires, no components) alongside the assertion rows.
 #
-# Cycle alignment: a fresh testcase replays from power-on, so the second
-# testcase is prefixed with machine-generated WARM-UP rows (clock column
-# driven, every other cell X = assert nothing) — one per existing program
-# word — and then carries one assertion row per appended word, in order.
+# 2.11 (R3): the DEFAULT path is rerun_with_program — the rows are appended
+# to the END of the official testcase on the temp copy, executing right
+# after the existing program with all register state carried over. No
+# warm-up rows, no duplicate testcase, and the replay gate models exactly
+# this execution. The official rows re-run ahead of the new ones in the
+# same per-row pass; their subset is reported as the regression guard.
+#
+# rerun_with_second stays as the ISOLATED-context path: a second testcase
+# "<spec>_second" is only genuinely needed when new rows must NOT run under
+# the state the official rows leave behind. A fresh testcase replays from
+# power-on, so it is prefixed with machine-generated WARM-UP rows (clock
+# column driven, every other cell X = assert nothing) — one per existing
+# program word — then one assertion row per appended word, in order. This
+# also keeps the official testcase byte-identical inside the temp.
 # ---------------------------------------------------------------------------
 
 _PROGMEM_TRUE_RE = re.compile(
@@ -437,6 +444,113 @@ def rerun_with_second(
             spec_index=spec_index,
             base_spec={"name": spec_name, "total": len(base_results),
                        "passed": base_passed, "all_passed": base_all},
+            rom_program=rom_program,
+        )
+    finally:
+        if not keep_temp:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
+def rerun_with_program(
+    dig_path: str,
+    spec_name: str,
+    rows: list[InjectedRow],
+    rom_words: list[str],
+    *,
+    jar_path: str | None = None,
+    timeout: float = 60.0,
+    keep_temp: bool = False,
+) -> InjectionOutcome:
+    """append-mode program injection: on a temp copy, extend the
+    program ROM by `rom_words` and append `rows` to the END of `spec_name`.
+    State carries over from the official rows, so the appended rows execute
+    the new words directly — no warm-up, no second testcase. The official
+    rows run first in the same per-row pass and their subset is reported in
+    `base_spec` as the regression guard."""
+    jar = jar_path or find_digital_jar()
+    if jar is None:
+        return InjectionOutcome(
+            ok=False,
+            warning=("Digital.jar not configured. Open the jar picker from "
+                     "the toolbar to select it."),
+        )
+    src_path = Path(dig_path)
+    try:
+        circuit = parse_dig_file(str(src_path))
+        spec = _find_spec(circuit, spec_name)
+        validate_rows(spec, rows)
+        words = parse_program_words(rom_words or [])
+        if not words:
+            raise ValueError("Program injection needs at least one ROM word.")
+        if len(words) != len(rows):
+            raise ValueError(
+                f"Program extension needs exactly one row per word "
+                f"({len(words)} word(s), {len(rows)} row(s)).")
+        source_text = src_path.read_text(encoding="utf-8")
+        source_text = extend_program_rom_text(source_text, words)
+        ordinal = _datastring_ordinal(circuit, spec)
+        source_text = inject_rows_text(source_text, ordinal, rows)
+        rom_program = ",".join(f"{w:x}" for w in find_program_rom(source_text)[0])
+    except ValueError as exc:
+        return InjectionOutcome(ok=False, warning=str(exc))
+
+    fd, temp_path = tempfile.mkstemp(
+        suffix=".dig", prefix=_TEMP_PREFIX, dir=str(src_path.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(source_text)
+
+    n_original = spec.row_count()
+    try:
+        temp_circuit = parse_dig_file(temp_path)
+        temp_specs = extract_test_specs(temp_circuit)
+        temp_spec = _find_spec(temp_circuit, spec_name)
+        spec_index = next(i for i, s in enumerate(temp_specs)
+                          if s.name == spec_name)
+        results = per_row_run_auto(temp_spec, temp_path, jar_path=jar,
+                                   timeout=timeout)
+
+        rows_by_idx = {r.line_index: r for r in temp_spec.rows}
+        payload: list[dict] = []
+        any_bad = added_bad = False
+        base_total = base_passed = 0
+        for rr in results:
+            added = rr.row_index >= n_original
+            origin = (rows[rr.row_index - n_original].origin
+                      if added else "original")
+            src_row = rows_by_idx.get(rr.row_index)
+            bad = rr.status in ("failed", "error")
+            any_bad |= bad
+            added_bad |= bad and added
+            if not added:
+                base_total += 1
+                base_passed += rr.status == "passed"
+            payload.append({
+                "index": rr.row_index,
+                "raw": src_row.raw if src_row else "",
+                "status": rr.status,
+                "error_message": rr.error_message,
+                "mismatches": rr.mismatches,
+                "added": added,
+                "origin": origin,
+            })
+
+        return InjectionOutcome(
+            ok=True,
+            warning=("One or more rows could not be run (see status=error)."
+                     if any(r.status == "error" for r in results) else None),
+            temp_path=temp_path if keep_temp else None,
+            spec_name=spec_name,
+            headers=list(temp_spec.headers),
+            rows=payload,
+            all_passed=not any_bad,
+            added_all_passed=not added_bad,
+            spec_index=spec_index,
+            base_spec={"name": spec_name, "total": base_total,
+                       "passed": base_passed,
+                       "all_passed": base_passed == base_total},
             rom_program=rom_program,
         )
     finally:

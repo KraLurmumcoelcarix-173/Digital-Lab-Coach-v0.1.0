@@ -336,3 +336,126 @@ def test_rerun_with_second_needs_a_program_rom_for_words():
     out = rerun_with_second(_AND, spec_name, [InjectedRow("1 0 0")], ["13"])
     assert out.ok is False
     assert "program memory" in (out.warning or "")
+
+
+# ---------------------------------------------------------------------------
+# 2.11 (R3): append-mode program injection — rows join the OFFICIAL testcase
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace                    # noqa: E402
+
+from dlc.l3 import oracle as _om                     # noqa: E402
+from dlc.l3.oracle import rerun_with_program         # noqa: E402
+
+_PROGFX = """<?xml version="1.0" encoding="utf-8"?>
+<circuit>
+  <version>2</version>
+  <attributes/>
+  <visualElements>
+    <visualElement>
+      <elementName>ROM</elementName>
+      <elementAttributes>
+        <entry><string>AddrBits</string><int>3</int></entry>
+        <entry><string>isProgramMemory</string><boolean>true</boolean></entry>
+        <entry><string>Data</string><data>13,93</data></entry>
+      </elementAttributes>
+      <pos x="0" y="40"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>prog</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>Clk Q
+0 X
+C 1</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="0" y="200"/>
+    </visualElement>
+  </visualElements>
+  <wires/>
+</circuit>"""
+
+
+def _fake_per_row(statuses_by_spec=None):
+    """per_row_run_auto stand-in: every row passes unless overridden."""
+    def fake(spec, path, jar_path=None, timeout=60.0):
+        wanted = (statuses_by_spec or {}).get(spec.name, {})
+        return [SimpleNamespace(spec_name=spec.name, row_index=r.line_index,
+                                status=wanted.get(r.line_index, "passed"),
+                                error_message=None, mismatches=[])
+                for r in spec.rows if not r.is_malformed]
+    return fake
+
+
+@pytest.fixture()
+def _progfx(tmp_path, monkeypatch):
+    p = tmp_path / "prog.dig"
+    p.write_text(_PROGFX, encoding="utf-8")
+    monkeypatch.setattr(_om, "find_digital_jar", lambda: "fake.jar")
+    monkeypatch.setattr(_om, "per_row_run_auto", _fake_per_row())
+    return p
+
+
+def test_rerun_with_program_appends_to_official_spec(_progfx):
+    out = rerun_with_program(
+        str(_progfx), "prog", [InjectedRow("C 5"), InjectedRow("C 9")],
+        ["628e33", "40628433"], keep_temp=True)
+    try:
+        assert out.ok is True
+        assert out.spec_name == "prog" and out.spec_index == 0
+        assert out.rom_program == "13,93,628e33,40628433"
+        # official rows first (origin "original"), coach rows appended
+        assert [r["added"] for r in out.rows] == [False, False, True, True]
+        assert [r["origin"] for r in out.rows] == [
+            "original", "original", "coach", "coach"]
+        assert out.base_spec == {"name": "prog", "total": 2, "passed": 2,
+                                 "all_passed": True}
+        assert out.all_passed is True and out.added_all_passed is True
+        # the temp really carries the extended ROM + appended rows;
+        # no second testcase anywhere
+        temp = Path(out.temp_path).read_text(encoding="utf-8")
+        assert "<data>13,93,628e33,40628433</data>" in temp
+        specs = extract_test_specs(parse_dig_file(out.temp_path))
+        assert [s.name for s in specs] == ["prog"]
+        assert specs[0].row_count() == 4
+    finally:
+        os.unlink(out.temp_path)
+
+
+def test_rerun_with_program_reports_official_regression(_progfx, monkeypatch):
+    monkeypatch.setattr(_om, "per_row_run_auto",
+                        _fake_per_row({"prog": {1: "failed"}}))
+    out = rerun_with_program(
+        str(_progfx), "prog", [InjectedRow("C 5")], ["628e33"])
+    assert out.ok is True
+    assert out.base_spec == {"name": "prog", "total": 2, "passed": 1,
+                             "all_passed": False}
+    assert out.all_passed is False          # regression trips the lock…
+    assert out.added_all_passed is True     # …even with the new row green
+
+
+def test_rerun_with_program_validation_errors(_progfx):
+    out = rerun_with_program(str(_progfx), "prog", [InjectedRow("C 5")], [])
+    assert out.ok is False and "at least one ROM word" in out.warning
+    out = rerun_with_program(str(_progfx), "prog",
+                             [InjectedRow("C 5")], ["13", "93"])
+    assert out.ok is False and "one row per word" in out.warning
+    out = rerun_with_program(str(_progfx), "prog",
+                             [InjectedRow("C 5")], ["nope"])
+    assert out.ok is False and "hex" in out.warning
+
+
+def test_rerun_with_program_needs_a_program_rom(tmp_path, monkeypatch):
+    monkeypatch.setattr(_om, "find_digital_jar", lambda: "fake.jar")
+    monkeypatch.setattr(_om, "per_row_run_auto", _fake_per_row())
+    spec_name = extract_test_specs(parse_dig_file(_AND))[0].name
+    out = rerun_with_program(_AND, spec_name, [InjectedRow("1 0 0")], ["13"])
+    assert out.ok is False and "program memory" in (out.warning or "")

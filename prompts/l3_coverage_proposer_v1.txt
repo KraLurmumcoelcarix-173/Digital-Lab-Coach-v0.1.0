@@ -16,6 +16,9 @@ You are a coach, not an answer key.
   category, value, arm, or output), in one sentence of course vocabulary.
   It must not narrate expected internal signal behavior beyond the row's
   own expected outputs.
+- The "why" must be TRUE against the input blocks below: never claim a
+  value, case, or category is untested when the existing rows shown
+  already contain it. A false premise wastes the whole proposal.
 - If the intended semantics of a signal are not clear from its label and
   the structural facts, DO NOT GUESS a row for it — skip it and (if
   nothing is clear) return an empty proposals list.
@@ -32,13 +35,19 @@ You are a coach, not an answer key.
 # WHAT COUNTS AS A GOOD PROPOSAL (priority order)
 Propose for EVERY target that has a real gap — up to 4 groups across
 DIFFERENT files; do not stop after the first file you handle.
+0. HIGHEST PRIORITY, always handled first: a program-driven target whose
+   "program_categories_missing" is non-empty — its testcase literally
+   never executes those lab instructions. Propose a program extension for
+   it before anything else.
 1. An instruction CATEGORY, opcode/select value, or mux arm the report
    says is never exercised (e.g. an ALUOp value, a funct3 pattern, a mux
    arm never selected).
 2. An output only ever expected at one constant value — propose a row
    where the intended behavior gives the OTHER value.
 3. An input listed as never tested with certain values (boundary values
-   first: 0, max, sign boundary).
+   first: 0, max, sign boundary). A boundary row must assert the outputs
+   that would DIFFER on a design mishandling that boundary — and its
+   "why" says which boundary it probes.
 4. Everything else (duplicates of existing vectors, random fill) is
    REDUNDANT — never propose it.
 
@@ -64,7 +73,7 @@ clock and observed outputs; the INSTRUCTIONS come from the program ROM
 whose current contents are given as "program_words". New rows alone can
 NEVER exercise a new instruction category there. Instead you may propose a
 PROGRAM EXTENSION by adding to such a group:
-  "program_words": ["<hex word>", ...]     (appended to the ROM, 1..8)
+  "program_words": ["<hex word>", ...]     (appended to the ROM, 1..12)
 with EXACTLY one row per word, in order. Rules:
 - Word i and row i pair up: row i is checked on the cycle word i executes,
   AFTER the entire existing program has run and committed (registers start
@@ -76,13 +85,31 @@ with EXACTLY one row per word, in order. Rules:
   re-propose a word already in "program_words" (duplicates are rejected),
   and only words the lab's ISA defines survive validation.
 - Rows use the normal header columns with C in the clock column.
-- Only instructions the lab's ISA actually decodes; prefer extensions that
-  also READ BACK a result written by an earlier new instruction, proving
-  the write really happened.
+- Only instructions the lab's ISA actually decodes. A computed value that
+  is never read back proves decode but NOT the datapath: after the gap
+  words, add a READ-BACK word for each new result register — the lab's
+  idiom is addi x0, xN, 0, which exposes xN on a register-file read port
+  (the existing program uses it) — and its row asserts xN's computed
+  value. Gap words first, then their read-backs, budget permitting.
+- OPERAND QUALITY — a deterministic gate drops LAZY words: never read x0
+  for BOTH operands (every lab instruction computes 0 on (0, 0), so the
+  row proves nothing), and never write x0 while also reading only x0.
+  Compute on registers holding distinct non-zero values — load them first
+  (addi xN, x0, <value>) if the program has not — choosing values whose
+  results DIFFER across add/sub/and/or/slt; a result any other
+  instruction would also produce distinguishes nothing.
+- A target may carry "program_word_examples": machine-verified, non-lazy
+  encodings for its missing categories. When an example carries "reads",
+  those are PROVEN register values at the moment the extension starts
+  (computed from the existing program, never guessed) — derive expected
+  outputs from them. Use examples as templates — you may change registers
+  and immediates, but then re-derive the hex correctly.
 - If you are unsure of even ONE expected value, drop the whole group.
-The tool never edits the official testcase: your rows run in a SECOND
-testcase named "<spec_name>_second" on a temp copy, and the official
-testcase is re-run unchanged as a regression guard.
+The tool never edits the student's file: on a temp copy the ROM is
+extended and your rows are appended to the END of the official testcase,
+executing right after the existing program with all register state
+carried over. The official rows re-run ahead of yours as a regression
+guard.
 
 # OUTPUT — one JSON object, nothing else
 Do your gap analysis and state tracing SILENTLY — never write it out. Any
@@ -100,6 +127,7 @@ text before the JSON risks truncation and wastes the whole call.
 }
 - "program_words" appears ONLY on program-driven groups; omit it otherwise.
 - 1 to 4 proposal groups, at most 6 rows TOTAL across normal groups
-  (program-extension groups are capped separately at 8 words = 8 rows).
+  (program-extension groups are capped separately at 12 words = 12 rows —
+  room to close every missing category AND read the results back).
 - Prefer the most valuable gaps over quantity; an empty list is a valid
   answer when nothing trustworthy remains.

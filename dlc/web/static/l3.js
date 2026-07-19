@@ -404,7 +404,8 @@ function _l3NotesHtml(notes) {
 function l3ProposalsHtml(mb) {
   if (!mb.report || mb.report.total_flags > 0 || mb.locked) return "";
   if (mb.proposing) {
-    return `<div class="l3-note-card">Asking the coach for new rows…</div>`;
+    return `<div class="l3-note-card">Asking the coach for new rows<span
+      class="l3-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></div>`;
   }
   if (!mb.proposals) {
     return `<div class="l3-prop-bar">
@@ -432,8 +433,8 @@ function l3ProposalsHtml(mb) {
       : "";
     const progHint = isProg
       ? `<div class="l3-prop-hint">Extends the instruction ROM by ${g.program_words.length}
-         word(s); the rows run in a NEW testcase '${escapeHtml(g.spec_name)}_second' —
-         your official testcase is never edited and is re-run unchanged.</div>`
+         word(s); the rows run right AFTER your official rows on the coach's
+         temp copy — your own file is never edited.</div>`
       : "";
     // Deterministic decode truth (07-17): say WHICH lab instruction each
     // ROM word is — from the manifest decode, never the model's claim.
@@ -463,6 +464,7 @@ function l3ProposalsHtml(mb) {
       duplicate: "already covered by an existing row — proposing it again adds nothing",
       undefined_op: "tests an operation this lab does not define — no test needed",
       wrong_expectation: "its expected outputs were wrong — the coach dropped its own mistake before showing it",
+      lazy: "a lazy test — on those operands every instruction gives the same result (or the result is discarded), so it can't catch a wrong operation",
       format: "not a legal row for that testcase",
     };
     const items = p.rejected.map((r) =>
@@ -501,22 +503,34 @@ function l3InjectHtml(mb) {
     const head = `<tr><td class="l3-idx">idx</td>` +
       headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") +
       `<td>status</td></tr>`;
-    const drillable = !clickable && !!out.temp_filename;   // 2.8 auto-drill
-    const nWarm = (out.rows || []).filter((r) => r.origin === "replay").length;
+    const drillable = !clickable && !!out.temp_filename;   // auto-drill
+    // Collapsible bulk: legacy _second warm-ups (origin "replay", nothing
+    // asserted) and — append mode — the official rows re-running ahead
+    // of the new ones (fully asserted; a FAILED official row is a
+    // regression and always stays visible).
+    const isAppend = !!out._append;
+    const isBulk = (r) => r.origin === "replay" ||
+      (isAppend && !r.added && r.status === "passed");
+    const nWarm = (out.rows || []).filter(isBulk).length;
+    const warmLabelHidden = isAppend
+      ? `▸ ${nWarm} official rows re-ran ahead of the new ones (every cell
+         still checked, all passing) — click to show`
+      : `▸ ${nWarm} replay warm-up rows (your original program re-running,
+         nothing asserted) — click to show`;
+    const warmLabelShown = isAppend
+      ? `▾ hide the ${nWarm} official re-run rows`
+      : `▾ hide the ${nWarm} replay warm-up rows`;
     const showWarm = !!out._showWarm;
     let warmToggled = false;
     let rows = "";
     for (const r of out.rows || []) {
-      const isWarm = r.origin === "replay";
-      // 07-17: replay warm-ups are 90% of a program extension's table and
-      // carry no assertions — collapse them behind one toggle row.
+      const isWarm = isBulk(r);
       if (isWarm && !showWarm) {
         if (!warmToggled) {
           warmToggled = true;
           rows += `<tr class="l3-warm-toggle" data-l3-warmtoggle="${escapeHtml(file)}">
             <td class="l3-idx">…</td><td colspan="${headers.length + 1}">
-            ▸ ${nWarm} replay warm-up rows (your original program re-running,
-            nothing asserted) — click to show</td></tr>`;
+            ${warmLabelHidden}</td></tr>`;
         }
         continue;
       }
@@ -541,13 +555,18 @@ function l3InjectHtml(mb) {
     if (showWarm && nWarm) {
       rows = `<tr class="l3-warm-toggle" data-l3-warmtoggle="${escapeHtml(file)}">
         <td class="l3-idx">…</td><td colspan="${headers.length + 1}">
-        ▾ hide the ${nWarm} replay warm-up rows</td></tr>` + rows;
+        ${warmLabelShown}</td></tr>` + rows;
     }
     const baseLine = out.base_spec
-      ? `<div class="l3-prop-hint">Official testcase '${escapeHtml(out.base_spec.name)}'
-         re-run unchanged: ${out.base_spec.passed}/${out.base_spec.total}
-         ${out.base_spec.all_passed ? "still passing ✓" : "REGRESSED ✗"} —
-         dimmed rows just replay your original program (nothing asserted).</div>`
+      ? (isAppend
+        ? `<div class="l3-prop-hint">Official rows re-ran ahead of the new ones:
+           ${out.base_spec.passed}/${out.base_spec.total}
+           ${out.base_spec.all_passed ? "still passing ✓" : "REGRESSED ✗"} —
+           the coach rows execute after them, register state carried over.</div>`
+        : `<div class="l3-prop-hint">Official testcase '${escapeHtml(out.base_spec.name)}'
+           re-run unchanged: ${out.base_spec.passed}/${out.base_spec.total}
+           ${out.base_spec.all_passed ? "still passing ✓" : "REGRESSED ✗"} —
+           dimmed rows just replay your original program (nothing asserted).</div>`)
       : "";
     html += `<div class="l3-cov-circuit">
       <div class="l3-cov-head"><span class="l3-cov-file">${escapeHtml(file)}</span>${badge}
@@ -558,7 +577,7 @@ function l3InjectHtml(mb) {
       ${clickable
         ? `<div class="l3-prop-hint">Click a row to drive its signal flow on the circuit at the left.</div>`
         : (drillable
-          ? `<div class="l3-prop-hint">Click a row to AUTO-DRILL into ${escapeHtml(file)} — the descent plays by itself and shows the row's inner signal flow, with ${escapeHtml(file)} as its own top.</div>`
+          ? `<div class="l3-prop-hint">Click a row to AUTO-DRILL into ${escapeHtml(file)}.</div>`
           : `<div class="l3-prop-hint">Rows for ${escapeHtml(file)} — switch to that file to view their signal flow.</div>`)}
       ${(out.rows || []).some((r) => r.added)
         ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="copyrows" data-l3-file="${escapeHtml(file)}">Copy the coach rows</button>
@@ -643,14 +662,16 @@ async function l3AcceptClick() {
   for (const g of picked) {                  // one inject per target file
     let out;
     try {
-      const isProg = !!(g.program_words && g.program_words.length);
+      // program extensions APPEND to the official testcase on the
+      // temp copy (state carries over) — as_second stays server-side for
+      // genuinely isolated cases only.
       const res = await fetch("/api/l3/inject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId, filename: g.file,
           spec_name: g.spec_name, rows: g.rows,
-          as_second: isProg, rom_words: g.program_words || [],
+          rom_words: g.program_words || [],
         }),
       });
       out = res.ok ? await res.json()
@@ -667,6 +688,7 @@ async function l3AcceptClick() {
         ? out.spec_index : (sp ? sp.spec_index : 0);
       out._rom_words = (g.program_words && g.program_words.length)
         ? g.program_words : null;
+      out._append = !!out._rom_words;      // append-mode rendering
       const failedAdded = (out.rows || [])
         .filter((r) => r.added && r.status === "failed").length;
       mb.injectFailing += failedAdded;
@@ -790,15 +812,20 @@ function l3RenderDrillBar(crumb, rowIdx, targetFile) {
     crumb.map(escapeHtml).join('<span class="crumb-sep">&#9656;</span>') +
     ` <span class="crumb-row">row ${rowIdx}</span></span>` +
     `<span class="l3-drill-hint">the coach row playing inside ` +
-    `${escapeHtml(targetFile)} — done exploring? Re-run Mode A on the temp ` +
-    `circuit.</span>` +
+    `${escapeHtml(targetFile)}</span>` +
     `<button class="btn-ghost" data-l3-drillback>&#9666; back to ${escapeHtml(top)}</button>`;
   el.classList.remove("hidden");
+  // the "coaching <file>" chip names the SELECTED file — misleading (and
+  // overlapping) while a drilled child owns the mirror, so hide it
+  const chip = document.getElementById("l3-file-chip");
+  if (chip) chip.classList.add("hidden");
 }
 
 function l3HideDrillBar() {
   const el = document.getElementById("l3-drill-bar");
   if (el) el.classList.add("hidden");
+  const chip = document.getElementById("l3-file-chip");
+  if (chip && chip.textContent) chip.classList.remove("hidden");
 }
 
 async function l3AutoDrillRow(tr) {
@@ -872,7 +899,7 @@ async function l3CopyRows(file, btn) {
   if (out._rom_words && out._rom_words.length) {
     lines.push(`# ROM program words (append to the Instruction Memory Data):`);
     lines.push(out._rom_words.join(","));
-    lines.push(`# test rows (paste into a testcase — new '${out.spec_name || "second"}' or your own):`);
+    lines.push(`# test rows (append to the END of your '${out.spec_name || ""}' testcase):`);
   }
   for (const r of out.rows || []) {
     if (r.added && r.raw) lines.push(r.raw);
