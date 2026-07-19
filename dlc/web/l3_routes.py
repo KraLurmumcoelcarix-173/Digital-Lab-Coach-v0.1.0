@@ -116,7 +116,7 @@ class InjectRequest(BaseModel):
     spec_name: str | None = None    # default: the file's first testcase
     origin: str = "coach"           # provenance tag carried to result rows
     # Program-driven targets: rom_words extend the program ROM (one row per
-    # word). 2.11 default: the rows are APPENDED to the official testcase on
+    # word). Default: the rows are APPENDED to the official testcase on
     # the temp copy — state carries over from the official rows, which re-run
     # ahead of the new ones as the regression guard (response carries
     # base_spec). as_second=True forces the ISOLATED path instead: a fresh
