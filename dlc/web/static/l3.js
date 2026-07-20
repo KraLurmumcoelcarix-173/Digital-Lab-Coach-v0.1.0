@@ -440,7 +440,8 @@ function l3ProposalsHtml(mb) {
     // ROM word is — from the manifest decode, never the model's claim.
     const words = (g.word_info || []).map((w) =>
       `<div class="l3-prop-wordinfo">${escapeHtml(w.word)} = <b>${escapeHtml(w.category)}</b>${
-        w.closes_gap ? ` <span class="l3-chip l3-chip-good">closes a missing category</span>` : ""}</div>`).join("");
+        w.closes_gap ? ` <span class="l3-chip l3-chip-good">closes a missing category</span>` : ""}${
+        w.auto_readback ? ` <span class="l3-chip l3-chip-none">auto read-back · observes ${escapeHtml(w.observes || "")}</span>` : ""}</div>`).join("");
     html += `<label class="l3-prop-card">
       <span class="l3-prop-pick"><input type="checkbox" data-l3-group="${gi}" checked /> include</span>
       <div class="l3-prop-body">
@@ -465,6 +466,7 @@ function l3ProposalsHtml(mb) {
       undefined_op: "tests an operation this lab does not define — no test needed",
       wrong_expectation: "its expected outputs were wrong — the coach dropped its own mistake before showing it",
       lazy: "a lazy test — on those operands every instruction gives the same result (or the result is discarded), so it can't catch a wrong operation",
+      unobserved: "computes a result nothing ever reads back — the write could silently fail and no row would notice",
       format: "not a legal row for that testcase",
     };
     const items = p.rejected.map((r) =>

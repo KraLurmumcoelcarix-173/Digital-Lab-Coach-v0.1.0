@@ -105,7 +105,14 @@ def official_status(manifest: dict | None, file: str,
                     raw_data_string: str) -> str | None:
     """'official' when the file's testcase still matches the instructor
     fingerprint, 'modified' when a fingerprint exists but differs, None
-    when the manifest says nothing about this file."""
+    when nothing is known about this file. The user-configured official
+    store (Settings ⚙) is consulted FIRST and works without any manifest —
+    it is the instructor-controlled truth; manifest fingerprints are the
+    shipped fallback."""
+    from dlc.l3 import official_store
+    st = official_store.status_for(file, raw_data_string)
+    if st is not None:
+        return st
     if not manifest:
         return None
     want = (manifest.get("official_tests") or {}).get(file)

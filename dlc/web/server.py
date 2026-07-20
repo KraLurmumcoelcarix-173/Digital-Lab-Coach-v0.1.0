@@ -1075,6 +1075,39 @@ def clear_api_key_endpoint(provider: str) -> dict:
     }
 
 
+# --- Official-test store (Settings ⚙): instructor-controlled truth ---
+# Mode B classifies a disagreement on a file as "official" (tests right,
+# circuit wrong) when the file's testcase matches an entry here — by
+# filename + normalized content hash. Works for ANY lab, no manifest needed.
+
+class OfficialTestRequest(BaseModel):
+    filename: str
+    content: str
+
+
+@app.get("/api/config/official_tests")
+def list_official_tests() -> dict:
+    from dlc.l3 import official_store
+    return {"ok": True, "tests": official_store.list_tests()}
+
+
+@app.post("/api/config/official_tests")
+def save_official_test(req: OfficialTestRequest) -> dict:
+    from dlc.l3 import official_store
+    try:
+        entry = official_store.save_test(req.filename, req.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, **entry}
+
+
+@app.delete("/api/config/official_tests")
+def delete_official_test(filename: str) -> dict:
+    from dlc.l3 import official_store
+    return {"ok": True, "removed": official_store.delete_test(filename),
+            "filename": filename}
+
+
 @app.get("/api/llm/models")
 def list_models() -> dict:
     models = []

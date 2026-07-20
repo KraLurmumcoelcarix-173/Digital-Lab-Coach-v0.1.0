@@ -41,13 +41,28 @@ DIFFERENT files; do not stop after the first file you handle.
    it before anything else.
 1. An instruction CATEGORY, opcode/select value, or mux arm the report
    says is never exercised (e.g. an ALUOp value, a funct3 pattern, a mux
-   arm never selected).
+   arm never selected). The report's "mux_branches" may carry
+   "arm_drivers" — DETERMINISTIC wiring truth naming the component each
+   arm selects (e.g. arm 2 ← BarrelShifter 'RSL'; labels are the
+   student's own names — LS/RSL/RSA typically mean left / right-logical /
+   right-arithmetic shift). Derive each arm's semantics from that wiring
+   plus the element type, then VERIFY your reading against at least one
+   existing non-trivial row before predicting outputs; if the existing
+   rows contradict your reading of an arm, do not propose for that arm.
 2. An output only ever expected at one constant value — propose a row
    where the intended behavior gives the OTHER value.
 3. An input listed as never tested with certain values (boundary values
    first: 0, max, sign boundary). A boundary row must assert the outputs
    that would DIFFER on a design mishandling that boundary — and its
    "why" says which boundary it probes.
+DISCRIMINATION TEST — apply to every row before emitting it: would the
+expected output DIFFER if the circuit ran a different arm/operation on
+the same inputs? If every arm gives the same result (0 shifted by
+anything, x0-only operands, 0 AND/OR 0), the row proves nothing — replace
+it with operands that separate the arms. When closing an arm or category
+gap and the row budget allows, send a PAIR: one boundary vector AND one
+mid-range distinctive vector — boundaries prove corners, mid-range values
+prove the operation itself.
 4. Everything else (duplicates of existing vectors, random fill) is
    REDUNDANT — never propose it.
 

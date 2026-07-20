@@ -1443,3 +1443,33 @@ main {
   background: var(--panel);
 }
 
+
+/* --- Settings page (gear tab, R4) ------------------------------------- */
+.tab-gear { margin-left: 4px; font-size: 16px; line-height: 1;
+  padding: 4px 10px; }
+.settings-wrap { max-width: 860px; margin: 0 auto; padding: 18px 22px 40px; }
+.settings-title { margin: 8px 0 14px; font-size: 20px; }
+.settings-card { background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.settings-card h3 { margin: 0 0 6px; font-size: 15px; }
+.settings-row { display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; margin-top: 8px; }
+.settings-code { background: #f3f4f6; border-radius: 6px; padding: 3px 8px;
+  font-size: 12.5px; font-family: ui-monospace, monospace; }
+.settings-bad { color: #991b1b; }
+.settings-add { display: flex; flex-direction: column; gap: 8px;
+  margin: 10px 0 12px; }
+.ot-textarea { min-height: 110px; font-family: ui-monospace, monospace;
+  font-size: 12.5px; width: 100%; box-sizing: border-box; }
+.ot-list { display: flex; flex-direction: column; gap: 8px; }
+.ot-item { border: 1px solid var(--border); border-radius: 8px;
+  padding: 0 10px 8px; background: #fafafa; }
+.ot-bar { display: flex; align-items: center; gap: 12px; cursor: pointer;
+  padding: 9px 2px; list-style-position: inside; }
+.ot-name { font-weight: 600; color: #1d4ed8;
+  font-family: ui-monospace, monospace; }
+.ot-sha { font-size: 11.5px; color: #6b7280;
+  font-family: ui-monospace, monospace; background: #eef2ff;
+  border-radius: 5px; padding: 2px 7px; }
+.ot-open { margin-left: auto; font-size: 12px; }
+.ot-delete { color: #991b1b; }

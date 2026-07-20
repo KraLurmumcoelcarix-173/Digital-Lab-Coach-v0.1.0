@@ -519,13 +519,20 @@ def test_lazy_program_words_are_rejected_with_lazy_kind():
     v, r = proposer.validate_and_dedupe(
         [{**base, "rows": ["C 1 2"], "program_words": ["28013"]}], [t], manifest=m)
     assert r == [] and v[0]["word_info"][0]["category"] == "addi"
-    # addi x4, x0, -20 — the idiomatic loader stays accepted
+    # addi x4, x0, -20 — the idiomatic loader passes the LAZY gate; since
+    # nothing reads x4 back, the R4 observability pass then auto-appends a
+    # machine-derived read-back (observe mapping present)
+    mo = _observing_manifest()
     v, r = proposer.validate_and_dedupe(
-        [{**base, "rows": ["C 1 2"], "program_words": ["fec00213"]}], [t], manifest=m)
+        [{**base, "rows": ["C 1 2"], "program_words": ["fec00213"]}],
+        [t], manifest=mo)
     assert r == [] and v[0]["word_info"][0]["category"] == "addi"
+    assert len(v[0]["program_words"]) == 2      # + auto read-back of x4
+    assert v[0]["rows"][1].startswith("C (-20)")
     # real-operand add stays accepted and closes the gap
     v, r = proposer.validate_and_dedupe(
-        [{**base, "rows": ["C 1 2"], "program_words": ["628e33"]}], [t], manifest=m)
+        [{**base, "rows": ["C 1 2"], "program_words": ["628e33"]}],
+        [t], manifest=mo)
     assert r == [] and v[0]["word_info"][0]["closes_gap"] is True
 
 
@@ -566,3 +573,88 @@ def test_inject_endpoint_routes_program_words_to_append_mode(monkeypatch):
         assert [c[0] for c in calls] == ["program", "second"]
     finally:
         server._SESSIONS.pop(sid, None)
+
+
+# ---------------------------------------------------------------------------
+# observability guarantee — write it, then READ IT BACK
+# ---------------------------------------------------------------------------
+
+def _observing_manifest():
+    m = _lab5rich_manifest()
+    m["program_decode"]["observe"] = {
+        "rs1_port": "ReadData1", "rs2_port": "ReadData2"}
+    return m
+
+
+def test_unobserved_write_gets_auto_readback_with_proven_value():
+    m = _observing_manifest()
+    # existing program: addi x4, x0, -20  =>  x4 = -20 proven
+    t = {**_cpu_like_target(), "program_words": ["fec00213"],
+         "program_categories_missing": ["add"]}
+    # add x8, x4, x4 writes x8 = -40 and nothing reads it back
+    from dlc.l3 import manifest as mf
+    w = mf.encode_category_word(m, "add", rd=8, rs1=4, rs2=4)
+    v, r = proposer.validate_and_dedupe(
+        [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
+          "why": "w", "program_words": [f"{w:x}"]}], [t], manifest=m)
+    assert r == [] and len(v) == 1
+    g = v[0]
+    auto = mf.encode_category_word(m, "addi", rd=0, rs1=8, imm=0)
+    assert g["program_words"] == [f"{w:x}", f"{auto:x}"]
+    assert g["rows"][1] == "C (-40) 0"          # machine-derived read-back
+    assert g["word_info"][1]["auto_readback"] is True
+    assert g["word_info"][1]["observes"] == "x8"
+
+
+def test_extension_with_own_readback_is_untouched():
+    m = _observing_manifest()
+    from dlc.l3 import manifest as mf
+    t = {**_cpu_like_target(), "program_words": ["fec00213"]}
+    w = mf.encode_category_word(m, "add", rd=8, rs1=4, rs2=4)
+    rb = mf.encode_category_word(m, "addi", rd=0, rs1=8, imm=0)
+    v, r = proposer.validate_and_dedupe(
+        [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2", "C 3 4"],
+          "why": "w", "program_words": [f"{w:x}", f"{rb:x}"]}], [t], manifest=m)
+    assert r == [] and v[0]["program_words"] == [f"{w:x}", f"{rb:x}"]
+    assert len(v[0]["rows"]) == 2               # nothing auto-added
+
+
+def test_unobserved_write_without_observe_mapping_is_rejected():
+    m = _lab5rich_manifest()                     # no observe block
+    from dlc.l3 import manifest as mf
+    t = {**_cpu_like_target(), "program_words": ["fec00213"]}
+    w = mf.encode_category_word(m, "add", rd=8, rs1=4, rs2=4)
+    v, r = proposer.validate_and_dedupe(
+        [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
+          "why": "w", "program_words": [f"{w:x}"]}], [t], manifest=m)
+    assert v == [] and "unobservable" in r[0]["reason"]
+    assert proposer._classify_reason(r[0]["reason"]) == "unobserved"
+
+
+def test_replay_gate_prefers_the_reference_circuit(monkeypatch, tmp_path):
+    """With DLC_REFERENCE_DIR set and the file present there, the clocked
+    replay judges rows against the REFERENCE (intended truth), not the
+    student's circuit."""
+    import shutil
+    from dlc.l3 import coverage as cov_mod
+    ref_dir = tmp_path / "refs"
+    ref_dir.mkdir()
+    shutil.copy(_PIPE, ref_dir / "pipelined_adder_correct.dig")
+    monkeypatch.setenv("DLC_REFERENCE_DIR", str(ref_dir))
+    called = {}
+
+    def fake_replay(path, spec_name, rows, rom_words=None):
+        called["path"] = path
+        return [{"row": r, "verdict": "agrees", "detail": ""} for r in rows]
+
+    monkeypatch.setattr(cov_mod, "replay_appended_rows", fake_replay)
+    t = {"file": "pipelined_adder_correct.dig", "spec_name": "T",
+         "headers": ["A", "B", "Clk", "Sum"], "inputs": [], "outputs": [],
+         "existing_rows": [], "existing_rows_omitted": 0,
+         "has_clock": True, "clock_col": "Clk", "has_program_rom": False}
+    g = {"file": "pipelined_adder_correct.dig", "spec_name": "T",
+         "rows": ["7 8 C 0"], "why": "w"}
+    kept, rejected, _ = proposer._replay_gate(
+        [g], [], [], [t], {"pipelined_adder_correct.dig": _PIPE})
+    assert kept and not rejected
+    assert called["path"] == str(ref_dir / "pipelined_adder_correct.dig")

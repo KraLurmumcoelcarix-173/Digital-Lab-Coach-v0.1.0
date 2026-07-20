@@ -61,7 +61,7 @@ def test_manifest_discovery_by_filename(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# R3: RV32I word quality (lazy gate) + verified encoding knowledge
+# RV32I word quality (lazy gate) + verified encoding knowledge
 # ---------------------------------------------------------------------------
 
 from pathlib import Path                                     # noqa: E402

@@ -2598,7 +2598,7 @@ window.addEventListener("keydown", (e) => {
 
 // --- Layer 3 coach tab: moved to l3.js (loaded right after this file). ---
 
-const tabButtons = document.querySelectorAll(".tabs .tab");
+const tabButtons = document.querySelectorAll(".tabs .tab, .tab-gear");
 const pages = document.querySelectorAll(".page");
 
 function showTab(name) {
@@ -2620,6 +2620,9 @@ function showTab(name) {
   }
   if (name === "l3") {
     renderL3Tab();
+  }
+  if (name === "settings" && typeof renderSettings === "function") {
+    renderSettings();
   }
   logEvent("tab_switch", { tab: name });
 }

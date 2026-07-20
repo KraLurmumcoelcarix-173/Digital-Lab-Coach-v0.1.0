@@ -40,6 +40,10 @@
         <button id="key-chip" class="jar-chip" title="LLM API keys">
           API keys: <span id="key-state">checking...</span>
         </button>
+        <button class="tab tab-gear" data-tab="settings"
+                title="Settings — Digital.jar, API keys, official tests, language">
+          &#9881;
+        </button>
       </div>
     </header>
 
@@ -313,9 +317,64 @@
           <div id="drill-cy" class="drill-cy"></div>
         </div>
       </div>
+      <!-- Settings page (gear tab): local, per-machine configuration -->
+      <div class="page" data-page="settings" hidden>
+        <div class="settings-wrap">
+          <h2 class="settings-title">&#9881; Settings</h2>
+
+          <section class="settings-card">
+            <h3>Digital.jar</h3>
+            <p class="muted">DLC shells out to the real Digital simulator for
+              every verification run.</p>
+            <div class="settings-row">
+              <code id="set-jar-path" class="settings-code">checking…</code>
+              <button id="set-jar-btn" class="btn-ghost">Change…</button>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <h3>API keys</h3>
+            <p class="muted">Keys are write-only: saved locally to
+              <code>~/.dlc/config.json</code>, never displayed back.</p>
+            <div class="settings-row">
+              <span id="set-key-state" class="settings-code">checking…</span>
+              <button id="set-key-btn" class="btn-ghost">Configure…</button>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <h3>Official tests</h3>
+            <p class="muted">Register the instructor-issued testcase for any
+              file. When a student's testcase matches (comments and spacing
+              ignored), Mode B treats its rows as ground truth: a disagreement
+              means the <b>circuit</b> is wrong, never the test. Stored locally;
+              works for any lab, no manifest needed.</p>
+            <div class="settings-add">
+              <input id="ot-filename" class="text-input" type="text"
+                     placeholder="filename, e.g. cpu.dig" />
+              <textarea id="ot-content" class="text-input ot-textarea"
+                        placeholder="paste the testcase rows (the dataString: header line + data rows)"></textarea>
+              <div class="settings-row">
+                <button id="ot-add-btn" class="btn">Save official test</button>
+                <span id="ot-msg" class="modal-msg"></span>
+              </div>
+            </div>
+            <div id="ot-list" class="ot-list muted">loading…</div>
+          </section>
+
+          <section class="settings-card">
+            <h3>Language</h3>
+            <p class="muted">Interface language — more coming later.</p>
+            <select class="select" disabled>
+              <option>English</option>
+            </select>
+          </section>
+        </div>
+      </div>
     </main>
 
     <script src="/static/app.js"></script>
     <script src="/static/l3.js"></script>
+    <script src="/static/settings.js"></script>
   </body>
 </html>

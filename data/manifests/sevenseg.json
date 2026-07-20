@@ -1,0 +1,180 @@
+{
+ "lab": "sevenseg-demo",
+ "description": "Seven-segment latched display demo manifest: one category per loadable digit (A..D = value bits, MSB first, load=1) plus a 'hold' category for load=0 retention rows. Instructors copy this pattern for their own display labs \u2014 categories bind to the testcase's own column names.",
+ "applies_to": [
+  "tier3_latched_display.dig"
+ ],
+ "categories": {
+  "tier3_latched_display.dig": [
+   {
+    "name": "digit_0",
+    "when": {
+     "A": 0,
+     "B": 0,
+     "C": 0,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_1",
+    "when": {
+     "A": 0,
+     "B": 0,
+     "C": 0,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_2",
+    "when": {
+     "A": 0,
+     "B": 0,
+     "C": 1,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_3",
+    "when": {
+     "A": 0,
+     "B": 0,
+     "C": 1,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_4",
+    "when": {
+     "A": 0,
+     "B": 1,
+     "C": 0,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_5",
+    "when": {
+     "A": 0,
+     "B": 1,
+     "C": 0,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_6",
+    "when": {
+     "A": 0,
+     "B": 1,
+     "C": 1,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_7",
+    "when": {
+     "A": 0,
+     "B": 1,
+     "C": 1,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_8",
+    "when": {
+     "A": 1,
+     "B": 0,
+     "C": 0,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_9",
+    "when": {
+     "A": 1,
+     "B": 0,
+     "C": 0,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_A",
+    "when": {
+     "A": 1,
+     "B": 0,
+     "C": 1,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_B",
+    "when": {
+     "A": 1,
+     "B": 0,
+     "C": 1,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_C",
+    "when": {
+     "A": 1,
+     "B": 1,
+     "C": 0,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_D",
+    "when": {
+     "A": 1,
+     "B": 1,
+     "C": 0,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_E",
+    "when": {
+     "A": 1,
+     "B": 1,
+     "C": 1,
+     "D": 0,
+     "load": 1
+    }
+   },
+   {
+    "name": "digit_F",
+    "when": {
+     "A": 1,
+     "B": 1,
+     "C": 1,
+     "D": 1,
+     "load": 1
+    }
+   },
+   {
+    "name": "hold",
+    "when": {
+     "load": 0
+    }
+   }
+  ]
+ },
+ "official_tests": {},
+ "reference_dir": null,
+ "_note": "demonstrates that Mode B's category machinery is not RISC-V-specific: any lab can grade coverage by naming its categories in a manifest."
+}

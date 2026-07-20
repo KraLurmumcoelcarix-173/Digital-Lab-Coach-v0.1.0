@@ -115,6 +115,10 @@ class MuxBranchCoverage:
     arms_total: int
     arms_taken: list[int] = field(default_factory=list)
     arms_missing: list[int] = field(default_factory=list)
+    # what each arm actually SELECTS — deterministic wiring truth read
+    # from the netlist ("BarrelShifter 'RSA'"), so neither the student nor
+    # the proposer has to guess arm semantics from the select number.
+    arm_drivers: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -188,6 +192,96 @@ def _fmt_value(v: int | None, width: int | None, signed_hint: bool) -> str:
     return f"0x{u:X}"
 
 
+# attributes worth naming when describing what drives a mux arm
+_ARM_ATTR_HINTS = ("direction", "signed", "barrelSigned", "mode")
+
+
+_PASSTHROUGH_ELEMS = {"Splitter"}    # walked through when naming a source
+
+
+def _mux_arm_drivers(circuit: Circuit, netlist) -> dict[int, dict[int, str]]:
+    """{mux_component_index: {arm: description}} — the component whose
+    output drives each data arm (tunnels are already resolved into nets),
+    PLUS that driver's own input sources by pin name, e.g.
+
+        "BarrelShifter 'RSA' (direction=right) [in←In 'B', sh←In 'A' via Splitter]"
+
+    The pin-role part is what makes arm semantics decidable: for the lab5
+    shifter it states deterministically that the VALUE is B and the shift
+    AMOUNT is A — the exact operand-role fact expected-value predictions
+    die without. Arms whose driver can't be identified are simply absent."""
+    pin_net: dict[tuple[int, str], int] = {}
+    in_pins: dict[int, list[str]] = {}
+    driver_of_net: dict[int, int] = {}
+    for net in netlist.nets:
+        for p in net.pins:
+            pin_net[(p.component_index, p.pin_name)] = net.net_id
+            if p.direction == "out":
+                driver_of_net.setdefault(net.net_id, p.component_index)
+            elif p.direction == "in":
+                in_pins.setdefault(p.component_index, []).append(p.pin_name)
+
+    def _name(ci: int) -> str:
+        c = circuit.components[ci]
+        label = c.attributes.get("Label")
+        return c.element_name + (f" '{label}'" if label else "")
+
+    def _source_of(ci: int, pin: str) -> str | None:
+        nid = pin_net.get((ci, pin))
+        src = driver_of_net.get(nid) if nid is not None else None
+        if src is None or src == ci:
+            return None
+        via = []
+        hops = 2
+        while (circuit.components[src].element_name in _PASSTHROUGH_ELEMS
+               and hops > 0):
+            via.append(circuit.components[src].element_name)
+            nxt = None
+            for p2 in in_pins.get(src, []):
+                n2 = pin_net.get((src, p2))
+                d2 = driver_of_net.get(n2) if n2 is not None else None
+                if d2 is not None and d2 != src:
+                    nxt = d2
+                    break
+            if nxt is None:
+                break
+            src = nxt
+            hops -= 1
+        desc = _name(src)
+        if via:
+            desc += " via " + " via ".join(via)
+        return desc
+
+    out: dict[int, dict[int, str]] = {}
+    for idx, comp in enumerate(circuit.components):
+        if comp.element_name != "Multiplexer":
+            continue
+        try:
+            sel_bits = int(comp.attributes.get("Selector Bits", 1))
+        except (TypeError, ValueError):
+            sel_bits = 1
+        arms: dict[int, str] = {}
+        for k in range(1 << sel_bits):
+            nid = pin_net.get((idx, f"in{k}"))
+            ci = driver_of_net.get(nid) if nid is not None else None
+            if ci is None or ci == idx:
+                continue
+            c = circuit.components[ci]
+            desc = _name(ci)
+            extra = [f"{a}={c.attributes[a]}" for a in _ARM_ATTR_HINTS
+                     if a in c.attributes]
+            if extra:
+                desc += " (" + ", ".join(extra) + ")"
+            srcs = [(p, _source_of(ci, p)) for p in in_pins.get(ci, [])[:4]]
+            srcs = [(p, s) for p, s in srcs if s]
+            if srcs:
+                desc += " [" + ", ".join(f"{p}←{s}" for p, s in srcs) + "]"
+            arms[k] = desc
+        if arms:
+            out[idx] = arms
+    return out
+
+
 def _mux_sel_nets(circuit: Circuit, netlist) -> list[tuple[int, int, int]]:
     """(component_index, selector_bits, sel_net_id) for every Multiplexer
     whose 'sel' pin landed on a net."""
@@ -233,6 +327,7 @@ def scan_circuit_coverage(
     cov.input_bits_total = sum(in_bits.values())
 
     muxes = _mux_sel_nets(circuit, netlist)
+    arm_drivers = _mux_arm_drivers(circuit, netlist)
     arms_taken: dict[int, set[int]] = {idx: set() for idx, _b, _n in muxes}
 
     in_values: dict[str, set[int]] = {lbl: set() for lbl in in_bits}
@@ -379,6 +474,7 @@ def scan_circuit_coverage(
             arms_total=total,
             arms_taken=taken,
             arms_missing=sorted(set(range(total)) - set(taken)),
+            arm_drivers=arm_drivers.get(idx, {}),
         ))
 
     _build_notes(cov)
@@ -416,7 +512,10 @@ def _build_notes(cov: CircuitCoverage) -> None:
             )
     for mb in cov.mux_branches:
         if mb.arms_missing and mb.arms_taken:
-            arms = ", ".join(str(a) for a in mb.arms_missing)
+            def _arm_name(a: int) -> str:
+                d = mb.arm_drivers.get(a)
+                return f"{a} (← {d})" if d else str(a)
+            arms = ", ".join(_arm_name(a) for a in mb.arms_missing)
             cov.notes.append(
                 f"Multiplexer[{mb.component_index}]: input arm"
                 f"{'s' if len(mb.arms_missing) != 1 else ''} {arms} never "
@@ -601,14 +700,15 @@ def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
 
 
 def _apply_manifest(report: TreeCoverageReport) -> None:
-    """2.9: when a lab manifest covers this tree, add category-graded
-    coverage and classify official-test disagreements. No manifest =>
-    the report is untouched."""
+    """when a lab manifest covers this tree, add category-graded
+    coverage and classify official-test disagreements. The user-configured
+    official-test store (Settings ⚙ → Official tests) is checked for EVERY
+    tree, manifest or not — it is the instructor-controlled truth and wins
+    over the shipped manifest fingerprints."""
     from dlc.l3 import manifest as mf
     m = mf.find_manifest({c.file for c in report.circuits})
-    if not m:
-        return
-    report.notes.append(f"lab manifest '{m.get('lab', '?')}' applied.")
+    if m:
+        report.notes.append(f"lab manifest '{m.get('lab', '?')}' applied.")
     for cov in report.circuits:
         if not cov.has_testcases or not cov.path:
             continue
@@ -620,15 +720,34 @@ def _apply_manifest(report: TreeCoverageReport) -> None:
         cov.official_test = mf.official_status(
             m, cov.file, spec.raw_data_string,
         )
+        if not m:
+            if cov.official_test == "official" and cov.flags:
+                for f in cov.flags:
+                    f.classification = "official"
+                cov.notes.insert(0, (
+                    "this testcase matches the configured official test — "
+                    "the rows are right; the disagreements below mean the "
+                    "CIRCUIT is wrong."
+                ))
+            continue
         rom = mf.program_rom_words(circuit)
         if rom is not None:
             pc = mf.program_categories(m, rom[0])
             if pc and pc["missing"]:
                 cov.notes.insert(0, (
-                    f"the instruction ROM's program executes only "
-                    f"{', '.join(pc['present'])} — these lab instructions "
-                    f"NEVER execute: {', '.join(pc['missing'])} (decoded "
-                    f"from the program words)."
+                    f"the instruction ROM's program executes "
+                    f"{len(pc['present'])}/{len(pc['present']) + len(pc['missing'])} "
+                    f"lab instruction categories ({', '.join(pc['present'])}) "
+                    f"— these NEVER execute: {', '.join(pc['missing'])} "
+                    f"(decoded from the program words). Instructions outside "
+                    f"these categories are not in this lab's decode set — no "
+                    f"program can exercise them on this circuit."
+                ))
+            elif pc:
+                cov.notes.insert(0, (
+                    f"the instruction ROM's program executes all "
+                    f"{len(pc['present'])} lab instruction categories — "
+                    f"program-level category coverage is GREEN."
                 ))
         if cov.official_test == "official" and cov.flags:
             for f in cov.flags:

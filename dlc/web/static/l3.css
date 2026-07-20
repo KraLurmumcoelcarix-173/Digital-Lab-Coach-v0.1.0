@@ -259,4 +259,4 @@
 .l3-rej-where { font-weight: 600; color: #374151; }
 .l3-rej-raw { margin: 1px 0 6px 0; }
 .l3-rej-raw small { color: #9ca3af; display: block; }
-#l3-b-run:disabled { opacity: .45; cursor: not-allowed; }
+#l3-b-run:disabled, #l3-a-run:disabled { opacity: .45; cursor: not-allowed; }

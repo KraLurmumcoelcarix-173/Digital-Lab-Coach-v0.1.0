@@ -328,7 +328,111 @@ def _validate_program_group(
              "program_words": [f"{w:x}" for w in words]}
     if word_info:
         entry["word_info"] = word_info
+    if can_decode:
+        entry, reason = _ensure_readbacks(entry, t, manifest, existing)
+        if entry is None:
+            return None, reason
     return entry, ""
+
+
+def _ensure_readbacks(
+    entry: dict, t: dict, manifest: dict | None, existing_words: set[int],
+) -> tuple[dict | None, str]:
+    """R4 observability guarantee (Charles: "reading a reg that just got
+    edited is more important"): every register the extension WRITES must be
+    READ by a later extension word — otherwise the write is unobservable
+    and the whole group proves decode, not the datapath. For each
+    unobserved register this appends the lab's read-back idiom
+    (addi x0, xN, 0) with the expected value derived by constant
+    propagation over official program + extension — machine truth, never a
+    guess. When the manifest carries no observe mapping (or a value can't
+    be proven), the group is rejected with a readable reason instead."""
+    from dlc.l3 import manifest as mf
+    words = [int(w, 16) for w in entry["program_words"]]
+    decoded = [mf.decode_program_word(manifest, w) for w in words]
+
+    def _alu(d):
+        return d and d["category"] and d["fields"].get("opcode") in (
+            mf._OPCODE_RTYPE, mf._OPCODE_ITYPE_ALU)
+
+    unobserved: list[int] = []
+    for i, d in enumerate(decoded):
+        if not _alu(d):
+            continue
+        rd = d["fields"].get("rd") or 0
+        if rd == 0:
+            continue
+        read_later = any(
+            _alu(d2) and (
+                d2["fields"].get("rs1") == rd
+                or (d2["fields"].get("opcode") == mf._OPCODE_RTYPE
+                    and d2["fields"].get("rs2") == rd))
+            for d2 in decoded[i + 1:])
+        if not read_later and rd not in unobserved:
+            unobserved.append(rd)
+    if not unobserved:
+        return entry, ""
+
+    regs = ", ".join(f"x{r}" for r in unobserved)
+    observe = ((manifest or {}).get("program_decode") or {}).get("observe") or {}
+    rs1_col = observe.get("rs1_port")
+    headers = t["headers"]
+    if not rs1_col or rs1_col not in headers:
+        return None, (f"the extension writes {regs} but nothing ever reads "
+                      f"the result back — the write is unobservable; add a "
+                      f"read-back word (addi x0, xN, 0) per result register")
+
+    known = mf.constant_registers(
+        manifest, [int(w, 16) for w in t.get("program_words", [])] + words)
+    if any(r not in known for r in unobserved):
+        return None, (f"the extension writes {regs} without reading the "
+                      f"result back, and the read-back value could not be "
+                      f"derived deterministically — add the read-back words "
+                      f"yourself")
+
+    auto_words: list[int] = []
+    auto_rows: list[str] = []
+    auto_info: list[dict] = []
+    seen = set(existing_words) | set(words)
+    clk = t.get("clock_col")
+    rs2_col = observe.get("rs2_port")
+    for r in unobserved:
+        w = mf.encode_category_word(manifest, "addi", rd=0, rs1=r, imm=0)
+        if w is None or w in seen:
+            return None, (f"the extension writes x{r} but never reads it "
+                          f"back, and the automatic read-back word could "
+                          f"not be added — add it yourself")
+        seen.add(w)
+        v = mf._signed32(known[r])
+        cells = []
+        for h in headers:
+            if h == clk:
+                cells.append("C")
+            elif h == rs1_col:
+                cells.append(str(v) if v >= 0 else f"({v})")
+            elif rs2_col and h == rs2_col:
+                cells.append("0")
+            else:
+                cells.append("X")
+        auto_words.append(w)
+        auto_rows.append(" ".join(cells))
+        auto_info.append({"word": f"{w:x}", "category": "addi",
+                          "closes_gap": False, "auto_readback": True,
+                          "observes": f"x{r}"})
+
+    total = len(words) + len(auto_words)
+    if total > _MAX_PROGRAM_WORDS:
+        return None, (f"with read-backs for {regs} the extension needs "
+                      f"{total} words — over the {_MAX_PROGRAM_WORDS}-word "
+                      f"cap; propose fewer gap words and read each back")
+    if total > t.get("rom_capacity_left", 0):
+        return None, (f"with read-backs for {regs} the extension does not "
+                      f"fit in the ROM")
+    out = {**entry,
+           "program_words": entry["program_words"] + [f"{w:x}" for w in auto_words],
+           "rows": entry["rows"] + auto_rows,
+           "word_info": entry.get("word_info", []) + auto_info}
+    return out, ""
 
 
 def _validate_against_headers(raw: str, headers: list[str], spec_name: str) -> None:
@@ -438,6 +542,8 @@ def _classify_reason(reason: str) -> str:
     r = reason.lower()
     if "lazy test" in r:
         return "lazy"
+    if "unobservable" in r or "reads it back" in r or "read-back" in r:
+        return "unobserved"
     if "duplicate" in r or "already in the program" in r or "appears twice" in r:
         return "duplicate"
     if ("not an instruction" in r or "instruction set" in r
@@ -505,14 +611,24 @@ def _category_gate(valid, rejected, notes, targets, manifest):
 
 
 def _replay_gate(valid, rejected, notes, targets, paths):
-    """deterministic pre-check for CLOCKED targets — replay the
-    student's circuit through the official rows, then evaluate each proposed
-    row in sequence. Rows whose asserted outputs disagree with the machine
-    state at that point are dropped with the computed values in the reason
-    (it is the student's own circuit — nothing secret is revealed).
-    Program extensions are judged the same way with the ROM pre-extended;
-    they drop as a unit. A replay that errors never blocks."""
+    """deterministic pre-check for CLOCKED targets — replay through the
+    official rows, then evaluate each proposed row in sequence. Rows whose
+    asserted outputs disagree with the machine state at that point are
+    dropped with the computed values in the reason.
+
+    R4: when the lab reference circuit is configured, the replay runs on
+    the REFERENCE — intended truth — so a correct row for a student whose
+    bug hides in an untested category SURVIVES here and then fails on the
+    student's temp at Accept, which is exactly the hand-off Mode A wants.
+    Without a reference the student's own circuit is replayed (a row
+    disagreeing with a clean-scanned circuit is almost surely a wrong
+    expectation, and nothing secret is revealed). Program extensions are
+    judged the same way with the ROM pre-extended; they drop as a unit.
+    A replay that errors never blocks."""
+    from dlc.l3 import manifest as mf
     from dlc.l3.coverage import replay_appended_rows
+    m = mf.find_manifest({t["file"] for t in targets})
+    ref_dir = mf.reference_dir(m)
     by_file = {t["file"]: t for t in targets}
     kept: list[dict] = []
     checked = False
@@ -522,10 +638,20 @@ def _replay_gate(valid, rejected, notes, targets, paths):
         if t is None or path is None or not t.get("has_clock"):
             kept.append(g)
             continue
+        ref_file = ref_dir / g["file"] if ref_dir else None
         try:
-            verdicts = replay_appended_rows(
-                path, g["spec_name"], g["rows"], g.get("program_words"),
-            )
+            if ref_file is not None and ref_file.is_file():
+                try:                     # intended truth beats student state
+                    verdicts = replay_appended_rows(
+                        str(ref_file), g["spec_name"], g["rows"],
+                        g.get("program_words"))
+                except Exception:        # e.g. renamed testcase in the ref
+                    verdicts = replay_appended_rows(
+                        path, g["spec_name"], g["rows"],
+                        g.get("program_words"))
+            else:
+                verdicts = replay_appended_rows(
+                    path, g["spec_name"], g["rows"], g.get("program_words"))
         except Exception:
             kept.append(g)               # a broken replay never blocks
             continue

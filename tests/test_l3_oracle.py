@@ -339,7 +339,7 @@ def test_rerun_with_second_needs_a_program_rom_for_words():
 
 
 # ---------------------------------------------------------------------------
-# 2.11 (R3): append-mode program injection — rows join the OFFICIAL testcase
+# append-mode program injection — rows join the OFFICIAL testcase
 # ---------------------------------------------------------------------------
 
 from types import SimpleNamespace                    # noqa: E402

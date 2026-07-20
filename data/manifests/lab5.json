@@ -169,6 +169,11 @@
         5
       ]
     },
-    "note": "bit ranges [low_bit, width] of a 32-bit RV32I word; field names match the control-unit category predicate columns"
+    "note": "bit ranges [low_bit, width] of a 32-bit RV32I word; field names match the control-unit category predicate columns",
+    "observe": {
+      "rs1_port": "ReadData1",
+      "rs2_port": "ReadData2",
+      "_note": "testcase columns showing the register-file read ports; lets the proposer auto-append machine-derived read-back rows (addi x0, xN, 0) for any register an extension writes but never reads"
+    }
   }
 }

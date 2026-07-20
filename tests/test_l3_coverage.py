@@ -263,3 +263,33 @@ def test_manifest_note_filter_rewrites_undefined_value_notes():
     notes2 = ["input 'ALUOp' (4-bit) is never tested with values 0, 9."]
     out2 = _manifest_note_filter(notes2, cats, categories_complete=False)
     assert out2 == notes2
+
+
+# ---------------------------------------------------------------------------
+# mux arm drivers — deterministic wiring truth per select arm
+# ---------------------------------------------------------------------------
+
+def test_mux_arm_drivers_name_the_selected_components():
+    report = scan_tree_coverage(str(_CALC))
+    c = report.circuits[0]
+    assert c.mux_branches
+    named = [mb for mb in c.mux_branches if mb.arm_drivers]
+    assert named, "at least one mux should have identifiable arm drivers"
+    for mb in named:
+        for arm, desc in mb.arm_drivers.items():
+            assert 0 <= arm < mb.arms_total
+            assert isinstance(desc, str) and desc     # "ElementName 'Label'"
+    # the report survives JSON round-tripping (int keys become strings)
+    json.dumps(report.to_dict())
+
+
+def test_sevenseg_manifest_grades_display_digits(monkeypatch):
+    """The shipped sevenseg manifest proves category coverage is not
+    RISC-V-specific: digits are categories, holds are a category."""
+    disp = SAMPLES / "tier3_realistic" / "tier3_latched_display.dig"
+    report = scan_tree_coverage(str(disp))
+    c = report.circuits[0]
+    assert c.categories_total == 17            # 16 digits + hold
+    assert set(c.categories_touched) == {"digit_5", "digit_A", "hold"}
+    assert len(c.categories_missing) == 14
+    assert any("category gap" in n for n in c.notes)
