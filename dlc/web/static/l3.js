@@ -445,7 +445,8 @@ function l3ProposalsHtml(mb) {
     html += `<label class="l3-prop-card">
       <span class="l3-prop-pick"><input type="checkbox" data-l3-group="${gi}" checked /> include</span>
       <div class="l3-prop-body">
-        <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'</div>
+        <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'${
+          g.synthesized ? ` <span class="l3-chip l3-chip-good">machine-built — values derived, not guessed</span>` : ""}</div>
         ${prog}
         ${words}
         ${rows}

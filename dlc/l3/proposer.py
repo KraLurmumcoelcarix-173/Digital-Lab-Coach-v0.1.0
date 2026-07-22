@@ -531,7 +531,13 @@ def propose_rows(
     valid, rejected, notes = _selfcheck_gate(
         valid, rejected, notes, targets, call, used_model,
     )
-    for r in rejected:                     
+    # never-drop guarantee: a program-driven target with missing
+    # categories must not end the run empty-handed just because the
+    # model's extension died in the gates — synthesize one.
+    valid, rejected, notes = _synthesis_fallback(
+        valid, rejected, notes, targets, m, paths,
+    )
+    for r in rejected:
         r["kind"] = _classify_reason(r.get("reason", ""))
 
     return {"ok": True, "proposals": valid, "rejected": rejected,
@@ -554,6 +560,54 @@ def _classify_reason(reason: str) -> str:
             or "follows a dropped row" in r):
         return "wrong_expectation"
     return "format"
+
+
+def _synthesis_fallback(valid, rejected, notes, targets, manifest, paths):
+    """never-drop guarantee: when a
+    program-driven target still has missing categories and NO model
+    extension survived the gates, build one deterministically —
+    synthesize_program_extension derives every value by constant
+    propagation, then the group walks the SAME validation (decode, lazy,
+    auto-read-backs) and replay gates as any model group. If even the
+    machine-built group dies (e.g. a broken circuit with no reference
+    configured), its reason is reported honestly instead."""
+    if not manifest:
+        return valid, rejected, notes
+    from dlc.l3 import manifest as mf
+    for t in targets:
+        if not (t.get("has_program_rom")
+                and t.get("program_categories_missing")):
+            continue
+        if any(g["file"] == t["file"] and g.get("program_words")
+               for g in valid):
+            continue                     # a model extension survived
+        try:
+            existing = [int(w, 16) for w in t.get("program_words", [])]
+            syn = mf.synthesize_program_extension(
+                manifest, existing, t["program_categories_missing"],
+                t["headers"], t.get("clock_col"),
+            )
+        except Exception:
+            syn = None                   # a broken synthesis never blocks
+        if not syn:
+            continue
+        p = {"file": t["file"], "spec_name": t["spec_name"], **syn}
+        entry, reason = _validate_program_group(p, t, manifest)
+        if entry is None:
+            notes.append(f"machine-built fallback for {t['file']} was "
+                         f"itself rejected: {reason}")
+            continue
+        entry["synthesized"] = True
+        v2, r2, _ = _replay_gate([entry], [], [], targets, paths)
+        if v2:
+            valid.append(v2[0])
+            notes.append(
+                f"no model extension for {t['file']} survived, so the "
+                f"coach machine-built one — every value derived from the "
+                f"program by constant propagation.")
+        else:
+            rejected.extend(r2)
+    return valid, rejected, notes
 
 
 def _category_gate(valid, rejected, notes, targets, manifest):
@@ -616,7 +670,7 @@ def _replay_gate(valid, rejected, notes, targets, paths):
     asserted outputs disagree with the machine state at that point are
     dropped with the computed values in the reason.
 
-    R4: when the lab reference circuit is configured, the replay runs on
+    when the lab reference circuit is configured, the replay runs on
     the REFERENCE — intended truth — so a correct row for a student whose
     bug hides in an untested category SURVIVES here and then fails on the
     student's temp at Accept, which is exactly the hand-off Mode A wants.

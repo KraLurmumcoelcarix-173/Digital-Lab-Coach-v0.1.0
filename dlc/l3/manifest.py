@@ -503,6 +503,96 @@ def category_word_examples(
     return out
 
 
+def _fmt_signed(v: int) -> str:
+    s = _signed32(v)
+    return str(s) if s >= 0 else f"({s})"
+
+
+def synthesize_program_extension(
+    manifest: dict | None,
+    existing_words: list[int],
+    missing: list[str],
+    headers: list[str],
+    clock_col: str | None,
+) -> dict | None:
+    """never-drop fallback: a MACHINE-BUILT program extension closing the
+    missing categories, with every row cell derived deterministically —
+    zero model involvement, so it cannot carry a wrong expectation.
+
+    Words come from category_word_examples (verified encodings; sources
+    prefer registers the program provably loaded). When no nonzero sources
+    are proven, two setup loads (addi xA,x0,7 / addi xB,x0,-3) are
+    prepended so the operations compute on distinct live values. Each row
+    asserts the register-file read ports (manifest observe mapping) with
+    the values constant propagation proves at that cycle — the ports show
+    reg[rs1]/reg[rs2] of the word being executed. Read-backs are NOT added
+    here; the proposer's _ensure_readbacks pass appends them exactly like
+    for a model group. Returns {program_words, rows, why} or None when the
+    manifest can't decode/observe enough to build rows."""
+    pd = (manifest or {}).get("program_decode") or {}
+    observe = pd.get("observe") or {}
+    rs1_col = observe.get("rs1_port")
+    if not missing or not clock_col or not rs1_col or rs1_col not in headers:
+        return None
+    rs2_col = observe.get("rs2_port")
+
+    # room check: worst case every gap word needs its own read-back later
+    examples = category_word_examples(manifest, missing, existing_words)
+    if not examples:
+        return None
+    setups: list[int] = []
+    first = decode_program_word(manifest, int(examples[0]["word"], 16))
+    known0 = constant_registers(manifest, list(existing_words))
+    needs_setup = bool(examples) and not any(
+        e.get("reads") for e in examples)
+    if needs_setup and first:
+        srcs = sorted({first["fields"].get("rs1"), first["fields"].get("rs2")}
+                      - {None, 0})
+        imms = [7, -3]
+        for i, r in enumerate(srcs[:2]):
+            if known0.get(r):
+                continue               # already provably nonzero
+            w = encode_category_word(manifest, "addi", rd=r, rs1=0,
+                                     imm=imms[i % 2])
+            if w is None or w in existing_words:
+                return None
+            setups.append(w)
+    budget = 12 - len(setups)          # matches the proposer's word cap
+    max_gap = max(1, budget // 2)      # leave room for one read-back each
+    trimmed = examples[:max_gap]
+
+    words = setups + [int(e["word"], 16) for e in trimmed]
+    rows: list[str] = []
+    state_words = list(existing_words)
+    for w in words:
+        st = constant_registers(manifest, state_words)
+        f = (decode_program_word(manifest, w) or {}).get("fields", {})
+        cells = []
+        for h in headers:
+            if h == clock_col:
+                cells.append("C")
+            elif h == rs1_col:
+                v = st.get(f.get("rs1"))
+                cells.append(_fmt_signed(v) if v is not None else "X")
+            elif rs2_col and h == rs2_col:
+                v = st.get(f.get("rs2"))
+                cells.append(_fmt_signed(v) if v is not None else "X")
+            else:
+                cells.append("X")
+        rows.append(" ".join(cells))
+        state_words.append(w)
+    closed = ", ".join(e["category"] for e in trimmed)
+    dropped = len(examples) - len(trimmed)
+    why = (f"Machine-built extension closing {closed} — every expected "
+           f"value derived deterministically from the program by constant "
+           f"propagation, nothing guessed."
+           + (f" ({dropped} more missing categor"
+              f"{'y' if dropped == 1 else 'ies'} left for the next run —"
+              f" word budget.)" if dropped > 0 else ""))
+    return {"program_words": [f"{w:x}" for w in words],
+            "rows": rows, "why": why}
+
+
 # ---------------------------------------------------------------------------
 # Reference verdicts (the deterministic wrong-row killer)
 # ---------------------------------------------------------------------------

@@ -44,19 +44,35 @@ async function renderOfficialTests() {
     return;
   }
   list.classList.remove("muted");
-  list.innerHTML = tests.map((t) => `
+  list.innerHTML = tests.map((t) => {
+    const src = t.source || "user";
+    const chip = src === "default"
+      ? `<span class="ot-src ot-src-default">built-in default</span>`
+      : (src === "override"
+        ? `<span class="ot-src ot-src-override">overrides a default</span>`
+        : "");
+    // saving under the same filename creates/updates the user entry;
+    // Delete only exists for user entries (defaults are permanent, and
+    // deleting an override reverts to the shipped default)
+    const del = src === "default" ? "" :
+      `<button class="btn-ghost ot-delete" data-ot-del="${escapeHtml(t.filename)}">${
+        src === "override" ? "Delete override (revert to default)" : "Delete"}</button>`;
+    return `
     <details class="ot-item" data-ot="${escapeHtml(t.filename)}">
       <summary class="ot-bar">
         <span class="ot-name">${escapeHtml(t.filename)}</span>
         <span class="ot-sha">fingerprint ${escapeHtml((t.sha1 || "").slice(0, 10))}</span>
+        ${chip}
         <span class="ot-open muted">view / edit</span>
       </summary>
       <textarea class="text-input ot-textarea" data-ot-edit="${escapeHtml(t.filename)}">${escapeHtml(t.content)}</textarea>
       <div class="settings-row">
-        <button class="btn-ghost" data-ot-save="${escapeHtml(t.filename)}">Save changes</button>
-        <button class="btn-ghost ot-delete" data-ot-del="${escapeHtml(t.filename)}">Delete</button>
+        <button class="btn-ghost" data-ot-save="${escapeHtml(t.filename)}">${
+          src === "default" ? "Save as my override" : "Save changes"}</button>
+        ${del}
       </div>
-    </details>`).join("");
+    </details>`;
+  }).join("");
 }
 
 function otMsg(text, bad) {

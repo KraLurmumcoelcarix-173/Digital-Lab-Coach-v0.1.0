@@ -658,3 +658,41 @@ def test_replay_gate_prefers_the_reference_circuit(monkeypatch, tmp_path):
         [g], [], [], [t], {"pipelined_adder_correct.dig": _PIPE})
     assert kept and not rejected
     assert called["path"] == str(ref_dir / "pipelined_adder_correct.dig")
+
+
+# ---------------------------------------------------------------------------
+# never-drop synthesis for program-driven targets
+# ---------------------------------------------------------------------------
+
+def test_synthesis_fallback_builds_a_gate_clean_extension():
+    m = _observing_manifest()
+    t = {**_cpu_like_target(), "program_words": ["fec00213"],
+         "program_categories_missing": ["add"],
+         "headers": ["clk", "ReadData1", "ReadData2"]}
+    valid, rejected, notes = proposer._synthesis_fallback(
+        [], [], [], [t], m, {})
+    assert valid and valid[0]["synthesized"] is True
+    g = valid[0]
+    from dlc.l3 import manifest as mf
+    decoded = [mf.decode_program_word(m, int(w, 16)) for w in g["program_words"]]
+    cats = [d["category"] for d in decoded]
+    assert "add" in cats                       # the gap word is there
+    # setups load distinct nonzero constants; auto read-back was appended
+    assert cats.count("addi") >= 3             # 2 setups + >=1 read-back
+    assert g["word_info"][-1]["auto_readback"] is True
+    # the add row asserts the setup values, the read-back their sum
+    add_i = cats.index("add")
+    assert g["rows"][add_i] == "C 7 (-3)"
+    assert g["rows"][-1] == "C 4 0"            # 7 + (-3), machine-derived
+    assert any("machine-built" in n for n in notes)
+
+
+def test_synthesis_skipped_when_a_model_extension_survived():
+    m = _observing_manifest()
+    t = {**_cpu_like_target(), "program_words": ["fec00213"],
+         "program_categories_missing": ["add"]}
+    survivor = {"file": "cpu.dig", "spec_name": "Test",
+                "rows": ["C 1 2"], "why": "w", "program_words": ["940533"]}
+    valid, rejected, notes = proposer._synthesis_fallback(
+        [survivor], [], [], [t], m, {})
+    assert valid == [survivor] and notes == []
