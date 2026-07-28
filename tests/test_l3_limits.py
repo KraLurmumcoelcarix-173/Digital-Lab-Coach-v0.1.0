@@ -129,3 +129,13 @@ def test_enforced_cap_blocks_the_third_clean_scan(monkeypatch):
         assert "limit" in third["warning"].lower()
     finally:
         server._SESSIONS.pop(sid, None)
+
+
+def test_refund_gives_a_use_back_with_floor_zero():
+    limits.consume("modeB")
+    assert limits.state()["used"]["modeB"] == 1
+    st = limits.refund("modeB")
+    assert st["used"]["modeB"] == 0
+    st = limits.refund("modeB")                 # floor at zero
+    assert st["used"]["modeB"] == 0
+    limits.refund("modeZ")                      # unknown mode: noop

@@ -134,6 +134,9 @@ main {
   inset: 0;
 }
 .page[hidden] { display: none !important; }
+/* settings is a document-style page — it scrolls as a whole
+   (other pages keep their own internal pane scrolling untouched) */
+.page[data-page="settings"] { overflow-y: auto; }
 .page[data-page="main"] {
   display: grid;
   grid-template-columns: 1fr 340px;

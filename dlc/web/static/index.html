@@ -349,6 +349,12 @@
               ignored), Mode B treats its rows as ground truth: a disagreement
               means the <b>circuit</b> is wrong, never the test. Stored locally;
               works for any lab, no manifest needed.</p>
+            <p id="ot-student-note" class="muted" style="display:none">
+              Official tests are configured by your instructor — this list is
+              view-only. Your way in: after a Coverage Coach run ends
+              <b>all&nbsp;set</b>, use its <b>Adopt into official tests</b>
+              button to merge the verified rows for your own labs. If existing 
+              tests cover everything, mode B will produce nothing. </p>
             <div class="settings-add">
               <input id="ot-filename" class="text-input" type="text"
                      placeholder="filename, e.g. cpu.dig" />
@@ -368,6 +374,19 @@
             <select class="select" disabled>
               <option>English</option>
             </select>
+          </section>
+
+          <section class="settings-card">
+            <h3>Configuring new labs (instructors)</h3>
+            <p class="muted">Professors adapt DLC to their own labs by
+              forking the repo and adding a small <b>manifest</b> (a json
+              naming the lab's test categories)
+              plus the official test sets. The step-by-step guide, including
+              a copy-paste RISC-V block:
+              <a href="/api/docs/manifest_guide" target="_blank">open the
+              manifest guide</a>. Enable editing here with
+              <code>"instructor_mode": true</code> in
+              <code>~/.dlc/config.json</code>.</p>
           </section>
         </div>
       </div>

@@ -696,3 +696,70 @@ def test_synthesis_skipped_when_a_model_extension_survived():
     valid, rejected, notes = proposer._synthesis_fallback(
         [survivor], [], [], [t], m, {})
     assert valid == [survivor] and notes == []
+
+
+# ---------------------------------------------------------------------------
+# an empty run refunds the day's use — once
+# ---------------------------------------------------------------------------
+
+def _upload_paths(*paths):
+    files, handles = [], []
+    for p in paths:
+        fh = open(p, "rb")
+        handles.append(fh)
+        files.append(("files", (p.split("/")[-1], fh, "application/xml")))
+    try:
+        r = client.post("/api/circuit", files=files)
+    finally:
+        for fh in handles:
+            fh.close()
+    return r.json()["session_id"]
+
+
+def test_empty_propose_refunds_the_scan_use_once(monkeypatch):
+    from dlc.l3 import limits
+    monkeypatch.setattr(proposer, "call_llm", _fake("no json at all"))
+    sid = _upload_paths(_AND)
+    try:
+        scan = client.post("/api/l3/coverage", json={
+            "session_id": sid, "filename": "single_and.dig"}).json()
+        assert scan["consumed_use"] is True
+        assert limits.state()["used"]["modeB"] == 1
+        body = client.post("/api/l3/propose", json={
+            "session_id": sid, "filename": "single_and.dig"}).json()
+        assert body["proposals"] == []
+        assert body["refunded"] is True
+        assert body["limits"]["used"]["modeB"] == 0
+        assert any("refunded" in n for n in body["notes"])
+        # a second empty propose must NOT refund again
+        body2 = client.post("/api/l3/propose", json={
+            "session_id": sid, "filename": "single_and.dig"}).json()
+        assert "refunded" not in body2
+        assert limits.state()["used"]["modeB"] == 0
+    finally:
+        server._SESSIONS.pop(sid, None)
+
+
+def test_delivering_propose_clears_refundability(monkeypatch, tmp_path):
+    from dlc.l3 import limits
+    student = _two_row_and(tmp_path)
+    # serve the trimmed fixture through a session
+    sid = _upload_paths(str(student))
+    spec_name = proposer.build_targets(
+        scan_tree_coverage(str(student)))[0]["spec_name"]
+    text = json.dumps({"proposals": [
+        {"file": "single_and.dig", "spec_name": spec_name,
+         "rows": ["1 0 0"], "why": "boundary"}]})
+    selfcheck = json.dumps({"rows": [{"index": 0, "outputs": {"Y": "0"}}]})
+    monkeypatch.setattr(proposer, "call_llm", _fake_two(text, selfcheck))
+    try:
+        scan = client.post("/api/l3/coverage", json={
+            "session_id": sid, "filename": "single_and.dig"}).json()
+        assert scan["consumed_use"] is True
+        body = client.post("/api/l3/propose", json={
+            "session_id": sid, "filename": "single_and.dig"}).json()
+        assert body["proposals"], "fixture should deliver a row"
+        assert "refunded" not in body
+        assert limits.state()["used"]["modeB"] == 1   # delivered => kept
+    finally:
+        server._SESSIONS.pop(sid, None)

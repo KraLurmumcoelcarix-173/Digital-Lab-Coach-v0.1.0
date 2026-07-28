@@ -1085,15 +1085,25 @@ class OfficialTestRequest(BaseModel):
     content: str
 
 
+_STUDENT_OFFICIAL_MSG = (
+    "Official tests are configured by the instructor. Students adopt "
+    "verified coach tests from Mode B instead (the Adopt button after an "
+    "all-set run)."
+)
+
+
 @app.get("/api/config/official_tests")
 def list_official_tests() -> dict:
     from dlc.l3 import official_store
-    return {"ok": True, "tests": official_store.list_tests()}
+    return {"ok": True, "tests": official_store.list_tests(),
+            "instructor": official_store.instructor_mode()}
 
 
 @app.post("/api/config/official_tests")
 def save_official_test(req: OfficialTestRequest) -> dict:
     from dlc.l3 import official_store
+    if not official_store.instructor_mode():
+        raise HTTPException(status_code=403, detail=_STUDENT_OFFICIAL_MSG)
     try:
         entry = official_store.save_test(req.filename, req.content)
     except ValueError as exc:
@@ -1104,8 +1114,23 @@ def save_official_test(req: OfficialTestRequest) -> dict:
 @app.delete("/api/config/official_tests")
 def delete_official_test(filename: str) -> dict:
     from dlc.l3 import official_store
+    if not official_store.instructor_mode():
+        raise HTTPException(status_code=403, detail=_STUDENT_OFFICIAL_MSG)
     return {"ok": True, "removed": official_store.delete_test(filename),
             "filename": filename}
+
+
+@app.get("/api/docs/manifest_guide")
+def manifest_guide():
+    """the instructor guide, served as plain text so the Settings
+    link works in any deployment (fork URLs differ; this one never does)."""
+    from fastapi.responses import PlainTextResponse
+    p = Path(__file__).parent.parent.parent / "docs" / "MANIFEST_GUIDE.md"
+    try:
+        return PlainTextResponse(p.read_text(encoding="utf-8"))
+    except OSError:
+        return PlainTextResponse("Guide not found in this build.",
+                                 status_code=404)
 
 
 @app.get("/api/llm/models")

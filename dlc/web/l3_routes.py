@@ -73,6 +73,11 @@ def l3_coverage(req: CoverageRequest) -> dict:
         }
     consumed = report.total_flags == 0     # disagreements => free redirect
     lim = limits.consume("modeB") if consumed else limits.state()
+    if consumed:
+        # this use is refundable until a propose actually DELIVERS
+        session = server._SESSIONS.get(req.session_id)
+        if session is not None:
+            session.setdefault("l3_refundable", set()).add(req.filename)
     return {
         "ok": True,
         "warning": None,
@@ -102,11 +107,28 @@ def l3_propose(req: ProposeRequest) -> dict:
 
     target = server._resolve_target(req.session_id, req.filename)
     try:
-        return proposer.propose_rows(target["path"], model=req.model)
+        result = proposer.propose_rows(target["path"], model=req.model)
     except Exception as exc:         # defense in depth
-        return {"ok": False, "proposals": [], "rejected": [],
-                "model": req.model, "notes": [],
-                "error": f"Proposer failed: {type(exc).__name__}: {exc}"}
+        result = {"ok": False, "proposals": [], "rejected": [],
+                  "model": req.model, "notes": [],
+                  "error": f"Proposer failed: {type(exc).__name__}: {exc}"}
+    # a run that delivers NO new tests must not cost a
+    # use — refund the scan's tick, once, and say so in plain language.
+    # A delivering run clears refundability so a later empty retry can't
+    # refund a use that already bought something.
+    session = server._SESSIONS.get(req.session_id)
+    refundable = (session is not None
+                  and req.filename in session.get("l3_refundable", set()))
+    if refundable:
+        session["l3_refundable"].discard(req.filename)
+        if not result.get("proposals"):
+            result["limits"] = limits.refund("modeB")
+            result["refunded"] = True
+            result.setdefault("notes", []).append(
+                "No usable new tests this time — that can be a coach "
+                "limitation, not proof your tests are complete. Today's "
+                "Coverage Coach use was refunded.")
+    return result
 
 
 class InjectRequest(BaseModel):
@@ -235,3 +257,57 @@ def l3_uninject(req: UninjectRequest) -> dict:
         if lt and lt.get("name") == temp_filename:
             session["l3_temp"] = None
     return {"ok": True, "removed": removed, "temp_filename": temp_filename}
+
+
+class AdoptRequest(BaseModel):
+    session_id: str
+    filename: str
+
+
+@router.post("/api/l3/adopt_official")
+def l3_adopt_official(req: AdoptRequest) -> dict:
+    """the ONE student write-path into the official-test store:
+    merge the machine-verified coach rows into this lab's local official
+    test. Server-side by design: the content saved is read from the
+    registered coach TEMP circuit (original rows + verified coach rows),
+    never from request text — a student cannot inject arbitrary rows here.
+    Future scans then hold the circuit to the merged, higher bar."""
+    from dlc.l3 import official_store
+    from dlc.web import server   # late binding; see module docstring
+
+    server._resolve_target(req.session_id, req.filename)   # 404 on unknown
+    session = server._SESSIONS.get(req.session_id)
+    temp_filename = f"{Path(req.filename).stem}__coach.dig"
+    entry = next((f for f in (session or {}).get("files", [])
+                  if f["name"] == temp_filename), None)
+    if entry is None:
+        return {"ok": False, "warning": ("No verified coach temp for this "
+                                         "file — run Mode B and Accept "
+                                         "first.")}
+    try:
+        specs = extract_test_specs(parse_dig_file(entry["path"]))
+    except Exception as exc:
+        return {"ok": False,
+                "warning": f"Could not read the temp circuit: {exc}"}
+    if not specs:
+        return {"ok": False, "warning": "The temp circuit has no testcase."}
+    saved = official_store.save_test(req.filename, specs[0].raw_data_string)
+    return {"ok": True, "filename": req.filename, "sha1": saved["sha1"],
+            "rows": specs[0].row_count()}
+
+
+@router.get("/api/l3/configured")
+def l3_configured() -> dict:
+    """which lab files this deployment is configured for — union of
+    manifest applies_to / fingerprints and the official-test store (shipped
+    defaults + user entries). The L3 tab shows this so students know which
+    labs get full coaching and which await instructor configuration."""
+    from dlc.l3 import manifest as mf
+    from dlc.l3 import official_store
+
+    files: set[str] = set()
+    for m in mf.load_manifests():
+        files |= set(m.get("applies_to") or [])
+        files |= set((m.get("official_tests") or {}).keys())
+    files |= {t["filename"] for t in official_store.list_tests()}
+    return {"ok": True, "files": sorted(files)}

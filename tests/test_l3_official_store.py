@@ -80,6 +80,7 @@ def test_scan_classifies_official_from_store_without_manifest(monkeypatch, tmp_p
 def test_official_tests_endpoints_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setenv("DLC_OFFICIAL_DEFAULTS_PATH",
                        str(tmp_path / "no_defaults.json"))
+    monkeypatch.setenv("DLC_INSTRUCTOR", "1")     
     r = client.post("/api/config/official_tests", json={
         "filename": "alu.dig", "content": "A B Out\n1 2 3"})
     assert r.status_code == 200 and r.json()["ok"] is True
@@ -134,3 +135,103 @@ def test_defaults_layer_override_and_revert():
     # the default itself can never be deleted
     assert ost.delete_test("cpu.dig") is False
     assert "cpu.dig" in {t["filename"] for t in ost.list_tests()}
+
+
+# ---------------------------------------------------------------------------
+# instructor split, the adopt path, configured labs
+# ---------------------------------------------------------------------------
+
+def test_students_cannot_write_official_tests(monkeypatch):
+    monkeypatch.delenv("DLC_INSTRUCTOR", raising=False)
+    monkeypatch.setattr(ost, "instructor_mode", lambda: False)
+    r = client.post("/api/config/official_tests", json={
+        "filename": "x.dig", "content": "A Y\n0 0"})
+    assert r.status_code == 403
+    assert "instructor" in r.json()["detail"].lower()
+    r = client.delete("/api/config/official_tests?filename=cpu.dig")
+    assert r.status_code == 403
+    body = client.get("/api/config/official_tests").json()
+    assert body["instructor"] is False             # UI reads this flag
+
+
+def test_instructor_mode_flag_sources(monkeypatch):
+    monkeypatch.setenv("DLC_INSTRUCTOR", "1")
+    assert ost.instructor_mode() is True
+    monkeypatch.setenv("DLC_INSTRUCTOR", "false")
+    assert ost.instructor_mode() is False
+    monkeypatch.delenv("DLC_INSTRUCTOR", raising=False)
+    # falls back to ~/.dlc/config.json's instructor_mode field
+    import dlc.llm.client as lc
+    monkeypatch.setattr(lc, "_load_config", lambda: {"instructor_mode": True})
+    assert ost.instructor_mode() is True
+
+
+def _upload(*paths):
+    files, handles = [], []
+    for p in paths:
+        fh = open(p, "rb")
+        handles.append(fh)
+        files.append(("files", (p.split("/")[-1], fh, "application/xml")))
+    try:
+        r = client.post("/api/circuit", files=files)
+    finally:
+        for fh in handles:
+            fh.close()
+    assert r.status_code == 200
+    return r.json()["session_id"]
+
+
+def test_adopt_official_requires_a_verified_temp(monkeypatch, tmp_path):
+    monkeypatch.setenv("DLC_LIMITS_PATH", str(tmp_path / "limits.json"))
+    monkeypatch.setenv("DLC_TELEMETRY_DB", str(tmp_path / "telemetry.db"))
+    sid = _upload(_AND)
+    try:
+        r = client.post("/api/l3/adopt_official", json={
+            "session_id": sid, "filename": "single_and.dig"})
+        body = r.json()
+        assert body["ok"] is False and "Mode B" in body["warning"]
+    finally:
+        server._SESSIONS.pop(sid, None)
+
+
+def test_adopt_official_merges_the_temp_spec(monkeypatch, tmp_path):
+    """The student write-path: server reads the VERIFIED temp circuit and
+    saves its spec as the merged official test — no client text involved.
+    Jar-free: the temp is registered by hand exactly as inject does."""
+    import shutil
+    from dlc.parser.dig_parser import parse_dig_file
+    from dlc.testing.spec import extract_test_specs
+    from dlc.l3.oracle import InjectedRow, write_temp_with_rows
+    monkeypatch.setenv("DLC_LIMITS_PATH", str(tmp_path / "limits.json"))
+    monkeypatch.setenv("DLC_TELEMETRY_DB", str(tmp_path / "telemetry.db"))
+    sid = _upload(_AND)
+    try:
+        session = server._SESSIONS[sid]
+        src = next(f["path"] for f in session["files"]
+                   if f["name"] == "single_and.dig")
+        spec_name = extract_test_specs(parse_dig_file(src))[0].name
+        temp_path, _spec = write_temp_with_rows(
+            src, spec_name, [InjectedRow("1 0 0")])
+        session["files"].append(
+            {"name": "single_and__coach.dig", "path": temp_path})
+        r = client.post("/api/l3/adopt_official", json={
+            "session_id": sid, "filename": "single_and.dig"})
+        body = r.json()
+        assert body["ok"] is True and body["rows"] == 5   # 4 official + 1
+        merged = extract_test_specs(parse_dig_file(temp_path))[0]
+        assert ost.status_for("single_and.dig",
+                              merged.raw_data_string) == "official"
+        # the pre-merge official content is now 'modified' — the bar rose
+        orig = extract_test_specs(parse_dig_file(src))[0]
+        assert ost.status_for("single_and.dig",
+                              orig.raw_data_string) == "modified"
+    finally:
+        server._SESSIONS.pop(sid, None)
+
+
+def test_configured_labs_endpoint_unions_manifests_and_store():
+    body = client.get("/api/l3/configured").json()
+    files = set(body["files"])
+    # shipped defaults + manifest applies_to entries all present
+    assert {"cpu.dig", "alu.dig", "register-file.dig",
+            "bidirectional-shifter.dig", "tier3_latched_display.dig"} <= files

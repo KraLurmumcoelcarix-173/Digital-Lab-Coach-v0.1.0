@@ -103,3 +103,14 @@ def consume(mode: str) -> dict:
         data["used"][mode] = data["used"].get(mode, 0) + 1
         _save(data)
     return state()
+
+
+def refund(mode: str) -> dict:
+    """give one use of `mode` back (floor 0) and return the fresh
+    state(). Ratified rule: a run that delivers NO new tests must not cost
+    the student a use — the propose endpoint refunds the scan's tick."""
+    if mode in CAPS:
+        data = _load()
+        data["used"][mode] = max(0, data["used"].get(mode, 0) - 1)
+        _save(data)
+    return state()

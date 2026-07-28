@@ -72,10 +72,27 @@ function l3ResetDom() {
   renderL3Boards(null);
 }
 
+// which labs this deployment is configured for (manifests +
+// official-test store) — fetched once, shown under the Mode B limits bar.
+let l3ConfiguredFiles = null;
+
 function renderL3Tab() {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   renderL3Graph(file);
   renderL3Boards(file);
+  if (l3ConfiguredFiles === null) {
+    l3ConfiguredFiles = [];                  // one fetch per page load
+    fetch("/api/l3/configured")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (b && b.ok) {
+          l3ConfiguredFiles = b.files || [];
+          const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+          if (l3PageVisible()) renderL3Boards(cur);
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 // The mirror is its own Cytoscape instance over a DEEP COPY of the exported
@@ -328,6 +345,12 @@ function l3ModeBBodyHtml(savedB) {
         ? ""
         : `<span class="l3-chip l3-chip-warn" title="DLC_ENFORCE_LIMITS is off — counters tick but nothing blocks. Release flips this on.">dev mode — limit not enforced</span>`) +
       `</div>`;
+  }
+  if ((l3ConfiguredFiles || []).length) {
+    html += `<div class="l3-prop-hint l3-configured">Instructor-configured
+      labs in this deployment: <b>${l3ConfiguredFiles.map(escapeHtml).join(", ")}</b>
+      — other files still scan, but category grading and official-test
+      protection need instructor configuration (see Settings ⚙).</div>`;
   }
   for (const c of rep.circuits || []) {
     html += `<div class="l3-cov-circuit">`;
@@ -591,6 +614,12 @@ function l3InjectHtml(mb) {
              ? " and replace the Instruction Memory Data with the full ROM program"
              : ""}.</span></div>`
         : ""}
+      ${out.outcome === "all_set" && (out.rows || []).some((r) => r.added)
+        ? (out._adopted
+          ? `<div class="l3-prop-bar"><span class="l3-prop-hint l3-added-note">official test updated ✓ — fingerprint ${escapeHtml(out._adopted)}; future scans hold this circuit to the merged bar.</span></div>`
+          : `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="adopt" data-l3-file="${escapeHtml(file)}">Adopt into official tests</button>
+             <span class="l3-prop-hint">Adds the verified rows to this lab's official test <b>on this computer</b> — from then on, scans treat the merged set as the bar to pass.</span></div>`)
+        : ""}
       ${out.outcome !== "all_set"
         ? (out._rom_words
           ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="discardfail" data-l3-file="${escapeHtml(file)}">Discard the program extension</button>
@@ -626,7 +655,12 @@ async function l3ProposeClick() {
   slot.modeB.proposing = false;
   slot.modeB.proposals = body.ok
     ? body
-    : { proposals: [], notes: [], model: body.model, error: body.error };
+    : { proposals: [], notes: body.notes || [], model: body.model,
+        error: body.error };
+  // an empty run refunds the day's use — refresh the limits bar
+  if (body.limits && slot.modeB.report) {
+    slot.modeB.report.limits = body.limits;
+  }
   logEvent("l3_modeB_proposed", {
     filename: file.filename, ok: !!body.ok,
     n_rows: (body.proposals || []).reduce((n, g) => n + g.rows.length, 0),
@@ -918,6 +952,42 @@ async function l3CopyRows(file, btn) {
   logEvent("l3_modeB_rows_copied", { file, n: lines.length });
 }
 
+// merge the verified coach rows into this lab's LOCAL official test.
+// Double-confirm, then the server reads the temp circuit itself — the
+// content saved is the machine-verified spec, never client text.
+async function l3AdoptOfficial(file) {
+  const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!cur || !sessionId) return;
+  const mb = l3Slot(cur.filename).modeB;
+  const out = mb && mb.inject && mb.inject[file];
+  if (!out || !out.ok || out.outcome !== "all_set") return;
+  if (!confirm(
+    `Adopt the verified coach rows into '${file}'s official test on THIS ` +
+    `computer?\n\nFuture scans will hold the circuit to the merged, ` +
+    `higher bar. Your .dig file itself is not touched.`)) return;
+  let body = null;
+  try {
+    const res = await fetch("/api/l3/adopt_official", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, filename: file }),
+    });
+    body = await res.json();
+  } catch (err) {
+    body = { ok: false, warning: `Network error: ${err}` };
+  }
+  if (body && body.ok) {
+    out._adopted = (body.sha1 || "").slice(0, 10);
+    logEvent("l3_modeB_adopted_official", { file, rows: body.rows });
+  } else {
+    alert(body && body.warning ? body.warning : "Adopt failed.");
+  }
+  if (l3PageVisible() && loaded[currentIdx]
+      && loaded[currentIdx].filename === cur.filename) {
+    renderL3Boards(loaded[currentIdx]);
+  }
+}
+
 async function l3CopyRom(file, btn) {
   const cur = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!cur) return;
@@ -1023,6 +1093,7 @@ async function l3DiscardFail(file) {
       if (btn.dataset.l3Act === "discardfail") l3DiscardFail(btn.dataset.l3File);
       if (btn.dataset.l3Act === "copyrows") l3CopyRows(btn.dataset.l3File, btn);
       if (btn.dataset.l3Act === "copyrom") l3CopyRom(btn.dataset.l3File, btn);
+      if (btn.dataset.l3Act === "adopt") l3AdoptOfficial(btn.dataset.l3File);
       return;
     }
     const trWarm = evt.target.closest("tr[data-l3-warmtoggle]");

@@ -39,6 +39,22 @@ def store_path() -> Path:
     return Path(env) if env else Path.home() / ".dlc" / "official_tests.json"
 
 
+def instructor_mode() -> bool:
+    """official tests are INSTRUCTOR-configured.
+    Students get a view-only settings list plus the one adopt path (merge
+    Mode-B-verified rows). Instructors flip this on in their fork or
+    machine: "instructor_mode": true in ~/.dlc/config.json, or the
+    DLC_INSTRUCTOR env var."""
+    env = os.environ.get("DLC_INSTRUCTOR", "").strip().lower()
+    if env:
+        return env not in ("0", "false", "no", "off")
+    try:
+        from dlc.llm.client import _load_config
+        return bool(_load_config().get("instructor_mode"))
+    except Exception:
+        return False
+
+
 def _defaults() -> dict[str, dict]:
     env = os.environ.get("DLC_OFFICIAL_DEFAULTS_PATH")
     p = Path(env) if env else _DEFAULTS_PATH

@@ -39,6 +39,15 @@ async function renderOfficialTests() {
     body = await r.json();
   } catch {}
   const tests = (body && body.tests) || [];
+  // : official tests are INSTRUCTOR-configured. Students get
+  // a view-only list; their one write-path is the Adopt button after an
+  // all-set Mode B run. Instructors (instructor_mode in ~/.dlc/config.json
+  // or DLC_INSTRUCTOR=1) keep full add/edit/delete.
+  const instructor = !!(body && body.instructor);
+  const addForm = document.querySelector(".settings-add");
+  if (addForm) addForm.style.display = instructor ? "" : "none";
+  const note = document.getElementById("ot-student-note");
+  if (note) note.style.display = instructor ? "none" : "";
   if (!tests.length) {
     list.innerHTML = `<span class="muted">No official tests registered yet.</span>`;
     return;
@@ -57,20 +66,23 @@ async function renderOfficialTests() {
     const del = src === "default" ? "" :
       `<button class="btn-ghost ot-delete" data-ot-del="${escapeHtml(t.filename)}">${
         src === "override" ? "Delete override (revert to default)" : "Delete"}</button>`;
+    const editor = instructor
+      ? `<textarea class="text-input ot-textarea" data-ot-edit="${escapeHtml(t.filename)}">${escapeHtml(t.content)}</textarea>
+      <div class="settings-row">
+        <button class="btn-ghost" data-ot-save="${escapeHtml(t.filename)}">${
+          src === "default" ? "Save as my override" : "Save changes"}</button>
+        ${del}
+      </div>`
+      : `<textarea class="text-input ot-textarea" readonly>${escapeHtml(t.content)}</textarea>`;
     return `
     <details class="ot-item" data-ot="${escapeHtml(t.filename)}">
       <summary class="ot-bar">
         <span class="ot-name">${escapeHtml(t.filename)}</span>
         <span class="ot-sha">fingerprint ${escapeHtml((t.sha1 || "").slice(0, 10))}</span>
         ${chip}
-        <span class="ot-open muted">view / edit</span>
+        <span class="ot-open muted">${instructor ? "view / edit" : "view"}</span>
       </summary>
-      <textarea class="text-input ot-textarea" data-ot-edit="${escapeHtml(t.filename)}">${escapeHtml(t.content)}</textarea>
-      <div class="settings-row">
-        <button class="btn-ghost" data-ot-save="${escapeHtml(t.filename)}">${
-          src === "default" ? "Save as my override" : "Save changes"}</button>
-        ${del}
-      </div>
+      ${editor}
     </details>`;
   }).join("");
 }

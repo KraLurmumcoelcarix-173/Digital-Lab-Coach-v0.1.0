@@ -141,8 +141,13 @@ text before the JSON risks truncation and wastes the whole call.
   ]
 }
 - "program_words" appears ONLY on program-driven groups; omit it otherwise.
-- 1 to 4 proposal groups, at most 6 rows TOTAL across normal groups
+- 1 to 4 proposal groups, at most 50 rows TOTAL across normal groups
   (program-extension groups are capped separately at 12 words = 12 rows —
   room to close every missing category AND read the results back).
+  50 is a ceiling, NOT a target: propose the number of rows the gaps
+  genuinely need — most runs need only a handful. In a larger batch,
+  every row must exercise a DIFFERENT case, not the same behavior with
+  different constants; two rows that test the same thing are one row
+  wasted.
 - Prefer the most valuable gaps over quantity; an empty list is a valid
   answer when nothing trustworthy remains.

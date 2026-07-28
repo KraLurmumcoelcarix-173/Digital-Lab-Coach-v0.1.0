@@ -29,7 +29,10 @@ _PROMPT_DIR = Path(__file__).parent.parent.parent / "prompts"
 _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
 
 _MAX_EXISTING_ROWS_SHOWN = 40    # keep the prompt lean on loop-heavy specs
-_MAX_TOTAL_ROWS = 6              # hard cap across all accepted proposals
+# — a gutted testcase (register-file down to 2 rows) must
+# be rebuildable in one run. A safety ceiling, never a target: the prompt
+# tells the model to use the number the gaps genuinely need.
+_MAX_TOTAL_ROWS = 50             # hard cap across all accepted proposals
 # a cpu missing all five R-type categories needs 5 gap
 # words + 5 read-backs; 8 forced the model to choose coverage OVER proof.
 _MAX_PROGRAM_WORDS = 12          # cap per program-extension proposal
