@@ -104,7 +104,7 @@ def test_shipped_defaults_match_the_manifest_fingerprints():
     from pathlib import Path
     defaults = json.loads(Path("data/official_tests_defaults.json")
                           .read_text(encoding="utf-8"))
-    lab5 = json.loads(Path("data/manifests/lab5.json")
+    lab5 = json.loads(Path("data/manifests/cpu.json")
                       .read_text(encoding="utf-8"))["official_tests"]
     for name in ("cpu.dig", "register-file.dig"):
         e = defaults[name]

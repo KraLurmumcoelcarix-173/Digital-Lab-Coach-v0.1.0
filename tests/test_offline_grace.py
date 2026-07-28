@@ -60,7 +60,7 @@ def test_deterministic_paths_work_fully_offline(_offline):
     report = scan_tree_coverage(
         "data/sample_circuits/tier1_minimal/single_and.dig")
     assert report.circuits and report.circuits[0].has_testcases
-    lab5 = json.loads(Path("data/manifests/lab5.json").read_text())
+    lab5 = json.loads(Path("data/manifests/cpu.json").read_text())
     syn = mf.synthesize_program_extension(
         lab5, [0xFEC00213], ["add"], ["clk", "ReadData1", "ReadData2"], "clk")
     assert syn and syn["program_words"]

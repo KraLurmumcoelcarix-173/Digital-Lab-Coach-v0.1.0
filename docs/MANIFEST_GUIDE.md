@@ -33,8 +33,9 @@ no wiring, no solution content.
    add entries to `data/official_tests_defaults.json`
    (`{"file.dig": {"content": "...", "sha1": "<normalized hash>"}}` —
    start the server once and copy the fingerprint the Settings list shows).
-4. **Write the manifest** — copy `data/manifests/sevenseg.json` as a
-   template and edit (details below). Drop it in `data/manifests/`.
+4. **Write the manifest** — copy `data/manifests/tier3_latched_display.json` as a
+   template and edit (details below). Drop it in `data/manifests/`,
+   **named after the lab's top-level `.dig`**.
 5. **Validate**: upload the lab, open L3 Coach, run the Coverage Coach.
    You should see `lab manifest '<name>' applied` in the whole-tree notes
    and a `categories N/M` chip on the file. If not, see Troubleshooting.
@@ -108,7 +109,7 @@ Adjust only two things:
 - `categories_from`: the file whose `categories` list enumerates the
   instructions your lab implements (typically your control/decode unit —
   categories written over `opcode`/`funct3`/`funct7` columns, see
-  `data/manifests/lab5.json` for all eight of ours).
+  `data/manifests/cpu.json` as example).
 - `observe`: the CPU testcase's column names that show the register-file
   read ports. This is what lets the coach add machine-derived read-back
   rows (`addi x0, xN, 0`) so every value an extension writes is actually

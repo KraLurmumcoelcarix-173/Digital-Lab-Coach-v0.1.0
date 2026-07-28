@@ -67,7 +67,7 @@ def test_manifest_discovery_by_filename(tmp_path, monkeypatch):
 from pathlib import Path                                     # noqa: E402
 
 _LAB5 = json.loads(
-    Path("data/manifests/lab5.json").read_text(encoding="utf-8"))
+    Path("data/manifests/cpu.json").read_text(encoding="utf-8"))
 
 
 def test_lazy_word_reason_flags_only_the_certain_cases():
