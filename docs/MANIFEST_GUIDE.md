@@ -3,7 +3,7 @@
 DLC works on any Digital (`.dig`) circuit out of the box: structural
 coverage (mux arms, boundaries, constant outputs and any structural circuit
 health detections) needs **zero configuration**. What this guide adds is the
-*intent* layer — the small amount of course knowledge that turns "arm 2 is 
+*intent* layer — the small amount of course knowledge that turns "arm 2 is
 never selected" into "the `sub` instruction is never tested", protects your
 official tests, and unlocks the RISC-V program coach.
 
@@ -20,23 +20,34 @@ no wiring, no solution content.
 
 ---
 
-## Quickstart: a new lab in five steps
+## Quickstart: a new lab in six steps
 
 1. **Fork the repo** (or work in your local clone).
 2. **Enable instructor mode** on your machine: add
    `"instructor_mode": true` to `~/.dlc/config.json` (or run the server
-   with `DLC_INSTRUCTOR=1`). Students never need this.
+   with `DLC_INSTRUCTOR=1`). Students never need this. (Note: DLC's
+   "server" is just the tool itself, running locally on each user's own
+   machine — there is no shared server.)
 3. **Register the official tests**: Settings ⚙ → Official tests → filename
    + paste the testcase rows (the header line + data rows exactly as in
    the `.dig`'s test editor). Comments and spacing are ignored by the
-   match, changed rows are not. To *ship* them with your fork instead,
-   add entries to `data/official_tests_defaults.json`
-   (`{"file.dig": {"content": "...", "sha1": "<normalized hash>"}}` —
-   start the server once and copy the fingerprint the Settings list shows).
-4. **Write the manifest** — copy `data/manifests/tier3_latched_display.json` as a
+   match, changed rows are not.
+4. **(Forks & built in manifest Only) Ship the official tests as built-in defaults** — generate
+   ready-made entries straight from your `.dig` files with the
+   fingerprint helper:
+
+       uv run python -m dlc.fingerprint cpu.dig register-file.dig -o defaults.json
+
+   It reads each file's first testcase and emits
+   `{"<file>.dig": {"content": "...", "sha1": "..."}}` — merge those
+   entries into `data/official_tests_defaults.json` in your fork, done.
+   The sha1 is the same normalized fingerprint the Settings list shows;
+   `--hashes-only` prints the `{filename: sha1}` shape used by a
+   manifest's `official_tests` block instead.
+5. **Write the manifest** — copy `data/manifests/tier3_latched_display.json` as a
    template and edit (details below). Drop it in `data/manifests/`,
    **named after the lab's top-level `.dig`**.
-5. **Validate**: upload the lab, open L3 Coach, run the Coverage Coach.
+6. **Validate**: upload the lab, open L3 Coach, run the Coverage Coach.
    You should see `lab manifest '<name>' applied` in the whole-tree notes
    and a `categories N/M` chip on the file. If not, see Troubleshooting.
 
