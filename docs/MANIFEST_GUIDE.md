@@ -20,19 +20,21 @@ no wiring, no solution content.
 
 ---
 
-## Quickstart: a new lab in six steps
+## Quickstart: a new lab in five steps
+
+(Note: DLC's "server" is just the tool itself, running locally on each
+user's own machine — there is no shared server. And a manifest is only
+needed when the lab requires semantic interpretation — opcode / RISC-V
+standard decode, display-digit classes etc.; the shipped defaults already
+cover the 311 course labs.)
 
 1. **Fork the repo** (or work in your local clone).
-2. **Enable instructor mode** on your machine: add
-   `"instructor_mode": true` to `~/.dlc/config.json` (or run the server
-   with `DLC_INSTRUCTOR=1`). Students never need this. (Note: DLC's
-   "server" is just the tool itself, running locally on each user's own
-   machine — there is no shared server.)
-3. **Register the official tests**: Settings ⚙ → Official tests → filename
+2. **Register the official tests**: Settings ⚙ → Official tests → filename
    + paste the testcase rows (the header line + data rows exactly as in
-   the `.dig`'s test editor). Comments and spacing are ignored by the
-   match, changed rows are not.
-4. **(Forks & built in manifest Only) Ship the official tests as built-in defaults** — generate
+   the `.dig`'s test editor; content must be valid Digital test format —
+   the tool rejects anything else). Comments and spacing are ignored by
+   the match, changed rows are not.
+3. **(Forks) Ship the official tests as built-in defaults** — generate
    ready-made entries straight from your `.dig` files with the
    fingerprint helper:
 
@@ -44,10 +46,10 @@ no wiring, no solution content.
    The sha1 is the same normalized fingerprint the Settings list shows;
    `--hashes-only` prints the `{filename: sha1}` shape used by a
    manifest's `official_tests` block instead.
-5. **Write the manifest** — copy `data/manifests/tier3_latched_display.json` as a
+4. **Write the manifest** — copy `data/manifests/tier3_latched_display.json` as a
    template and edit (details below). Drop it in `data/manifests/`,
    **named after the lab's top-level `.dig`**.
-6. **Validate**: upload the lab, open L3 Coach, run the Coverage Coach.
+5. **Validate**: upload the lab, open L3 Coach, run the Coverage Coach.
    You should see `lab manifest '<name>' applied` in the whole-tree notes
    and a `categories N/M` chip on the file. If not, see Troubleshooting.
 
@@ -134,16 +136,18 @@ offline).
 
 ---
 
-## What students can and cannot do
+## What anyone can and cannot do in Settings
 
-- Students' Settings is view-only for official tests; they can set the
-  Digital.jar path and language, and read everything.
-- Their one write-path: after a Coverage Coach run ends **all set**, the
-  *Adopt into official tests* button merges the machine-verified rows
-  into the local official test for that file (server-side, from the
-  verified temp circuit — no free-form editing).
-- The L3 tab lists which labs the deployment is configured for, so
-  students know when a lab is still awaiting instructor configuration.
+- **Built-in defaults are view-only for everyone** — the only way to
+  raise a default's standard is *Adopt into official tests* after a
+  Coverage Coach run ends **all set** (server-side, from the verified
+  temp circuit — no free-form editing). An Adopt override can always be
+  deleted to revert to the shipped default.
+- **Anyone may add official tests for their own labs as test standards** (filename +
+  testcase content); content is validated as Digital test format and
+  rejected otherwise. These entries stay fully editable and deletable.
+- Manifests are repo/fork files — configuring a NEW lab's semantics is
+  the instructor's (fork owner's) job, per the quickstart above.
 
 ## Troubleshooting
 
