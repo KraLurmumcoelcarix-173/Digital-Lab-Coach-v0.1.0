@@ -684,8 +684,8 @@ def test_synthesis_fallback_builds_a_gate_clean_extension():
     add_i = cats.index("add")
     assert g["rows"][add_i] == "C 7 (-3)"
     assert g["rows"][-1] == "C 4 0"            # 7 + (-3), machine-derived
-    assert notes == []          # R9: the card's why says it — no extra note
-    # R9: the replay gate pairs each dropped row with its own detail when
+    assert notes == []          # the card's why says it — no extra note
+    # the replay gate pairs each dropped row with its own detail when
     # a program group dies — spot-check the shape on a synthetic rejection
     m2 = _observing_manifest()
     t2 = {**_cpu_like_target(), "program_words": ["fec00213"]}

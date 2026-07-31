@@ -256,7 +256,7 @@ def test_manifest_note_filter_rewrites_undefined_value_notes():
         "at another value.",
     ]
     out, hidden = _manifest_note_filter(notes, cats, categories_complete=True)
-    # R9: the true-but-noisy rewrite is HIDDEN from students (the model
+    # the true-but-noisy rewrite is HIDDEN from students (the model
     # still reads it from the report)
     assert len(hidden) == 1
     assert "not part of this lab's instruction set" in hidden[0]
