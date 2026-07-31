@@ -80,7 +80,6 @@ def test_scan_classifies_official_from_store_without_manifest(monkeypatch, tmp_p
 def test_official_tests_endpoints_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setenv("DLC_OFFICIAL_DEFAULTS_PATH",
                        str(tmp_path / "no_defaults.json"))
-    monkeypatch.setenv("DLC_INSTRUCTOR", "1")     
     r = client.post("/api/config/official_tests", json={
         "filename": "alu.dig", "content": "A B Out\n1 2 3"})
     assert r.status_code == 200 and r.json()["ok"] is True
@@ -122,8 +121,8 @@ def test_defaults_layer_override_and_revert():
                          .read_text(encoding="utf-8"))["cpu.dig"]["content"]
     assert ost.status_for("cpu.dig", content) == "official"
     assert ost.status_for("cpu.dig", content + "\n9 9 9") == "modified"
-    # a user save overrides the default...
-    ost.save_test("cpu.dig", "clk R1 R2\nC 1 2")
+    # an Adopt-path save overrides the default...
+    ost.save_test("cpu.dig", "clk R1 R2\nC 1 2", allow_default_override=True)
     assert ost.status_for("cpu.dig", "clk R1 R2\nC 1 2") == "official"
     assert {t["filename"]: t["source"] for t in ost.list_tests()}[
         "cpu.dig"] == "override"
@@ -138,32 +137,50 @@ def test_defaults_layer_override_and_revert():
 
 
 # ---------------------------------------------------------------------------
-# instructor split, the adopt path, configured labs
+# R9 rules: defaults never hand-edited, everyone else free — with a
+# Digital-format bouncer on the door
 # ---------------------------------------------------------------------------
 
-def test_students_cannot_write_official_tests(monkeypatch):
-    monkeypatch.delenv("DLC_INSTRUCTOR", raising=False)
-    monkeypatch.setattr(ost, "instructor_mode", lambda: False)
+def test_defaults_cannot_be_hand_edited_but_adopt_can():
+    with pytest.raises(ValueError, match="built-in default"):
+        ost.save_test("cpu.dig", "clk R1 R2\nC 1 2")
     r = client.post("/api/config/official_tests", json={
-        "filename": "x.dig", "content": "A Y\n0 0"})
-    assert r.status_code == 403
-    assert "instructor" in r.json()["detail"].lower()
-    r = client.delete("/api/config/official_tests?filename=cpu.dig")
-    assert r.status_code == 403
-    body = client.get("/api/config/official_tests").json()
-    assert body["instructor"] is False             # UI reads this flag
+        "filename": "cpu.dig", "content": "clk R1 R2\nC 1 2"})
+    assert r.status_code == 400
+    assert "built-in default" in r.json()["detail"]
+    # the Adopt path (machine-verified content) is the one override door
+    saved = ost.save_test("cpu.dig", "clk R1 R2\nC 1 2",
+                          allow_default_override=True)
+    assert saved["sha1"]
+    assert {t["filename"]: t["source"] for t in ost.list_tests()}[
+        "cpu.dig"] == "override"
 
 
-def test_instructor_mode_flag_sources(monkeypatch):
-    monkeypatch.setenv("DLC_INSTRUCTOR", "1")
-    assert ost.instructor_mode() is True
-    monkeypatch.setenv("DLC_INSTRUCTOR", "false")
-    assert ost.instructor_mode() is False
-    monkeypatch.delenv("DLC_INSTRUCTOR", raising=False)
-    # falls back to ~/.dlc/config.json's instructor_mode field
-    import dlc.llm.client as lc
-    monkeypatch.setattr(lc, "_load_config", lambda: {"instructor_mode": True})
-    assert ost.instructor_mode() is True
+def test_content_must_be_digital_test_format():
+    # pasted prose: unrecognized cells
+    with pytest.raises(ValueError, match="Digital test format"):
+        ost.save_test("my.dig", "hello world\nthis is not a test")
+    # value row first: no header
+    with pytest.raises(ValueError, match="first line must be the header"):
+        ost.save_test("my.dig", "0 1 0\n1 1 1")
+    # header but no rows
+    with pytest.raises(ValueError, match="no test rows"):
+        ost.save_test("my.dig", "A B Y")
+    # column-count mismatch
+    with pytest.raises(ValueError, match="columns"):
+        ost.save_test("my.dig", "A B Y\n1 0")
+    # filename must be a .dig name
+    with pytest.raises(ValueError, match=".dig"):
+        ost.save_test("cpu.txt", "A B\n1 0")
+    # the good shapes all pass: plain rows, comments, X/Z/C cells,
+    # Digital's program-style lines
+    ost.save_test("my.dig", "A B Y  # header\n0 0 0\nC X Z\n(-3) 0x1F 0b10")
+    ost.save_test("my2.dig", "A B\nrepeat(3) 1 0\nloop(i,4) (i) (i*2)\n1 1")
+    assert {t["filename"] for t in ost.list_tests()} >= {"my.dig", "my2.dig"}
+    r = client.post("/api/config/official_tests", json={
+        "filename": "my.dig", "content": "garbage !!"})
+    assert r.status_code == 400
+    assert "Digital test format" in r.json()["detail"]
 
 
 def _upload(*paths):

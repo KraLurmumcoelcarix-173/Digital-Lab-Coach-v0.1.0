@@ -64,6 +64,7 @@ def load_manifests() -> list[dict]:
         try:
             m = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(m, dict) and m.get("applies_to"):
+                m["_file"] = p.name       # so notes can say WHICH json
                 out.append(m)
         except Exception:
             continue                      # a broken manifest never breaks scans
@@ -585,7 +586,7 @@ def synthesize_program_extension(
     dropped = len(examples) - len(trimmed)
     why = (f"Machine-built extension closing {closed} — every expected "
            f"value derived deterministically from the program by constant "
-           f"propagation, nothing guessed."
+           f"propagation."
            + (f" ({dropped} more missing categor"
               f"{'y' if dropped == 1 else 'ies'} left for the next run —"
               f" word budget.)" if dropped > 0 else ""))

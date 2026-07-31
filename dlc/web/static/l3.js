@@ -72,27 +72,10 @@ function l3ResetDom() {
   renderL3Boards(null);
 }
 
-// which labs this deployment is configured for (manifests +
-// official-test store) — fetched once, shown under the Mode B limits bar.
-let l3ConfiguredFiles = null;
-
 function renderL3Tab() {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   renderL3Graph(file);
   renderL3Boards(file);
-  if (l3ConfiguredFiles === null) {
-    l3ConfiguredFiles = [];                  // one fetch per page load
-    fetch("/api/l3/configured")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((b) => {
-        if (b && b.ok) {
-          l3ConfiguredFiles = b.files || [];
-          const cur = loaded.length > 0 ? loaded[currentIdx] : null;
-          if (l3PageVisible()) renderL3Boards(cur);
-        }
-      })
-      .catch(() => {});
-  }
 }
 
 // The mirror is its own Cytoscape instance over a DEEP COPY of the exported
@@ -158,7 +141,6 @@ function l3BuildMirror(file) {
     },
     wheelSensitivity: 0.2,
     minZoom: 0.15, maxZoom: 3,
-    autoungrabify: true,
     boxSelectionEnabled: false,
     autounselectify: true,
   });
@@ -166,7 +148,108 @@ function l3BuildMirror(file) {
   inst.once("layoutstop", () => {
     setTimeout(() => { try { inst.resize(); inst.fit(undefined, 40); } catch {} }, 0);
   });
+  l3WireMirrorInteractions(inst);
   l3GraphFilename = file.filename;
+}
+
+// the mirror interacts like the Layer-1 board — grabbable
+// nodes, hover fade/highlight, and the same node/edge detail popups (the
+// L3 pane has its own popup element; app.js's lives inside the hidden
+// Dashboard page). Row-driven extras (clock ticking, sub-hint drill) stay
+// L1-only; Mode A will lock interaction during its animations.
+function l3WireMirrorInteractions(inst) {
+  inst.on("mouseover", "node", (evt) => {
+    const node = evt.target;
+    inst.elements().addClass("faded");
+    const nb = node.closedNeighborhood();
+    nb.removeClass("faded");
+    nb.edges().addClass("highlight");
+    l3ShowNodePopup(node);
+  });
+  inst.on("mouseout", "node", () => {
+    inst.elements().removeClass("faded");
+    inst.edges().removeClass("highlight");
+    l3HidePopup();
+  });
+  inst.on("mouseover", "edge", (evt) => {
+    const edge = evt.target;
+    const keep = edge.union(edge.connectedNodes());
+    inst.elements().not(keep).addClass("hover-dim");
+    edge.addClass("wire-focus");
+    l3ShowEdgePopup(edge, inst);
+  });
+  inst.on("mouseout", "edge", (evt) => {
+    inst.elements().removeClass("hover-dim");
+    evt.target.removeClass("wire-focus");
+    l3HidePopup();
+  });
+}
+
+function _l3Popup() {
+  return {
+    el: document.getElementById("l3-hover-popup"),
+    title: document.getElementById("l3-hover-popup-title"),
+    body: document.getElementById("l3-hover-popup-body"),
+  };
+}
+
+function l3ShowNodePopup(node) {
+  const p = _l3Popup();
+  if (!p.el) return;
+  const d = node.data();
+  p.title.textContent = d.comp_label
+    ? `${d.element_name} - ${d.comp_label}` : d.element_name;
+  const bits = (d.attributes && d.attributes.Bits !== undefined)
+    ? d.attributes.Bits : null;
+  const bitsRow = bits !== null
+    ? `<tr><td class="k">bits</td><td class="v">${escapeHtml(String(bits))}</td></tr>`
+    : "";
+  const attrRows = Object.entries(d.attributes || {})
+    .filter(([k]) => k !== "Label" && k !== "Bits")
+    .map(([k, v]) =>
+      `<tr><td class="k">${escapeHtml(k)}</td><td class="v">${escapeHtml(String(v))}</td></tr>`
+    ).join("");
+  const inputsHtml = renderPinList(
+    groupBy(node.incomers("edge"), (e) => e.data("sink_pin") || "?"), "input");
+  const outputsHtml = renderPinList(
+    groupBy(node.outgoers("edge"), (e) => e.data("driver_pin") || "?"), "output");
+  p.body.innerHTML = `
+    <table>
+      <tr><td class="k">family</td><td class="v">${escapeHtml(d.family_display || d.family)}</td></tr>
+      <tr><td class="k">index</td><td class="v">${escapeHtml(d.id)}</td></tr>
+      ${bitsRow}
+      <tr><td class="k">.dig pos</td><td class="v">(${d.x_dig}, ${d.y_dig})</td></tr>
+      ${attrRows}
+    </table>
+    ${inputsHtml}
+    ${outputsHtml}
+  `;
+  p.el.classList.remove("hidden");
+}
+
+function l3ShowEdgePopup(edge, inst) {
+  const p = _l3Popup();
+  if (!p.el) return;
+  const d = edge.data();
+  p.title.textContent = `Net ${d.net_id ?? "?"}`;
+  const sourceNode = inst.getElementById(d.source);
+  const targetNode = inst.getElementById(d.target);
+  const sourceLabel = sourceNode.data("comp_label") || sourceNode.data("element_name");
+  const targetLabel = targetNode.data("comp_label") || targetNode.data("element_name");
+  p.body.innerHTML = `
+    <table>
+      <tr><td class="k">net id</td><td class="v">${escapeHtml(d.net_id ?? "?")}</td></tr>
+      <tr><td class="k">bits</td><td class="v">${escapeHtml(d.bits ?? "?")}</td></tr>
+      <tr><td class="k">from</td><td class="v">${escapeHtml(sourceLabel)} [${escapeHtml(d.source)}] . ${escapeHtml(d.driver_pin || "?")}</td></tr>
+      <tr><td class="k">to</td><td class="v">${escapeHtml(targetLabel)} [${escapeHtml(d.target)}] . ${escapeHtml(d.sink_pin || "?")}</td></tr>
+    </table>
+  `;
+  p.el.classList.remove("hidden");
+}
+
+function l3HidePopup() {
+  const p = _l3Popup();
+  if (p.el) p.el.classList.add("hidden");
 }
 
 // Mode A analyzes the per-row failures of the selected file, so its readiness
@@ -346,12 +429,6 @@ function l3ModeBBodyHtml(savedB) {
         : `<span class="l3-chip l3-chip-warn" title="DLC_ENFORCE_LIMITS is off — counters tick but nothing blocks. Release flips this on.">dev mode — limit not enforced</span>`) +
       `</div>`;
   }
-  if ((l3ConfiguredFiles || []).length) {
-    html += `<div class="l3-prop-hint l3-configured">Instructor-configured
-      labs in this deployment: <b>${l3ConfiguredFiles.map(escapeHtml).join(", ")}</b>
-      — other files still scan, but category grading and official-test
-      protection need instructor configuration (see Settings ⚙).</div>`;
-  }
   for (const c of rep.circuits || []) {
     html += `<div class="l3-cov-circuit">`;
     html += `<div class="l3-cov-head">` +
@@ -468,8 +545,7 @@ function l3ProposalsHtml(mb) {
     html += `<label class="l3-prop-card">
       <span class="l3-prop-pick"><input type="checkbox" data-l3-group="${gi}" checked /> include</span>
       <div class="l3-prop-body">
-        <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'${
-          g.synthesized ? ` <span class="l3-chip l3-chip-good">machine-built — values derived, not guessed</span>` : ""}</div>
+        <div class="l3-prop-target">${escapeHtml(g.file)} · '${escapeHtml(g.spec_name)}'</div>
         ${prog}
         ${words}
         ${rows}
@@ -477,10 +553,6 @@ function l3ProposalsHtml(mb) {
         ${progHint}
       </div></label>`;
   });
-  if (p.proposals.length > 1) {
-    html += `<div class="l3-prop-hint">Untick a card to leave that file's rows
-      out — Accept only verifies the ticked cards.</div>`;
-  }
   if ((p.notes || []).length) {
     html += `<div class="l3-prop-hint">${escapeHtml(p.notes.join(" "))}</div>`;
   }
@@ -493,11 +565,21 @@ function l3ProposalsHtml(mb) {
       unobserved: "computes a result nothing ever reads back — the write could silently fail and no row would notice",
       format: "not a legal row for that testcase",
     };
-    const items = p.rejected.map((r) =>
-      `<li><span class="l3-rej-where">${escapeHtml(r.file || "?")} · '${escapeHtml(r.spec_name || "?")}'</span>
-       — ${escapeHtml(friendly[r.kind] || friendly.format)}
-       <div class="l3-rej-raw"><code>${escapeHtml((r.rows || []).join(" | "))}</code>
-       <small>${escapeHtml(r.reason || "")}</small></div></li>`).join("");
+    const items = p.rejected.map((r) => {
+      // when the gate paired each dropped row with ITS mismatch,
+      // show one line per row instead of a wall of semicolons
+      const raw = (r.details && r.details.length)
+        ? r.details.map((d) =>
+            `<div class="l3-rej-pair"><code>${escapeHtml(d.row)}</code>
+             <small>${escapeHtml(d.detail)}</small></div>`).join("")
+        : `<div class="l3-rej-raw"><code>${escapeHtml((r.rows || []).join(" | "))}</code>
+           <small>${escapeHtml(r.reason || "")}</small></div>`;
+      return `<li><span class="l3-rej-where">${escapeHtml(r.file || "?")} · '${escapeHtml(r.spec_name || "?")}'</span>
+       — ${escapeHtml(friendly[r.kind] || friendly.format)}${
+         (r.details && r.details.length)
+           ? ` <small class="muted">(${escapeHtml(r.reason || "")})</small>` : ""}
+       ${raw}</li>`;
+    }).join("");
     html += `<details class="l3-rej-details"><summary>${p.rejected.length} idea(s)
       the coach dropped</summary><ul>${items}</ul></details>`;
   }
@@ -616,9 +698,9 @@ function l3InjectHtml(mb) {
         : ""}
       ${out.outcome === "all_set" && (out.rows || []).some((r) => r.added)
         ? (out._adopted
-          ? `<div class="l3-prop-bar"><span class="l3-prop-hint l3-added-note">official test updated ✓ — fingerprint ${escapeHtml(out._adopted)}; future scans hold this circuit to the merged bar.</span></div>`
+          ? `<div class="l3-prop-bar"><span class="l3-prop-hint l3-added-note">official test updated ✓ — fingerprint ${escapeHtml(out._adopted)}; future scans hold this circuit to the merged standard.</span></div>`
           : `<div class="l3-prop-bar"><button class="btn-ghost" data-l3-act="adopt" data-l3-file="${escapeHtml(file)}">Adopt into official tests</button>
-             <span class="l3-prop-hint">Adds the verified rows to this lab's official test <b>on this computer</b> — from then on, scans treat the merged set as the bar to pass.</span></div>`)
+             <span class="l3-prop-hint">Adds the verified rows to this lab's official test <b>on this computer</b> — from then on, scans treat the merged set as the standard to pass.</span></div>`)
         : ""}
       ${out.outcome !== "all_set"
         ? (out._rom_words

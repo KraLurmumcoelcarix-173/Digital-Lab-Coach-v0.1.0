@@ -255,14 +255,17 @@ def test_manifest_note_filter_rewrites_undefined_value_notes():
         "output 'FlagZ' is only ever expected to be 1 — no row checks it "
         "at another value.",
     ]
-    out = _manifest_note_filter(notes, cats, categories_complete=True)
-    assert "not part of this lab's instruction set" in out[0]
-    assert out[1] == notes[1]                     # non-category column: kept
-    assert "consistent with this lab's instruction set" in out[2]
+    out, hidden = _manifest_note_filter(notes, cats, categories_complete=True)
+    # R9: the true-but-noisy rewrite is HIDDEN from students (the model
+    # still reads it from the report)
+    assert len(hidden) == 1
+    assert "not part of this lab's instruction set" in hidden[0]
+    assert out[0] == notes[1]                     # non-category column: kept
+    assert "consistent with this lab's instruction set" in out[1]
     # a value INSIDE the defined set keeps the original honest note
     notes2 = ["input 'ALUOp' (4-bit) is never tested with values 0, 9."]
-    out2 = _manifest_note_filter(notes2, cats, categories_complete=False)
-    assert out2 == notes2
+    out2, hidden2 = _manifest_note_filter(notes2, cats, categories_complete=False)
+    assert out2 == notes2 and hidden2 == []
 
 
 # ---------------------------------------------------------------------------

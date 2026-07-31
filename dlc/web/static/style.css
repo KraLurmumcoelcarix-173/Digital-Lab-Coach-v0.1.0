@@ -134,9 +134,47 @@ main {
   inset: 0;
 }
 .page[hidden] { display: none !important; }
-/* settings is a document-style page — it scrolls as a whole
-   (other pages keep their own internal pane scrolling untouched) */
-.page[data-page="settings"] { overflow-y: auto; }
+/* settings floats over the current page — blurred backdrop, large
+   centered panel that scrolls as a whole, closed only by its X */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(30, 41, 59, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-overlay.hidden { display: none; }
+.settings-panel {
+  position: relative;
+  width: min(940px, 92vw);
+  height: 88vh;
+  overflow-y: auto;
+  background: var(--bg, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.25);
+}
+.settings-close {
+  position: sticky;
+  top: 10px;
+  float: right;
+  margin: 10px 14px 0 0;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  color: #374151;
+}
+.settings-close:hover { background: #fee2e2; color: #991b1b; }
 .page[data-page="main"] {
   display: grid;
   grid-template-columns: 1fr 340px;

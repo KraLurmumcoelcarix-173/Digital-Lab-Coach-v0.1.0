@@ -39,20 +39,61 @@ def store_path() -> Path:
     return Path(env) if env else Path.home() / ".dlc" / "official_tests.json"
 
 
-def instructor_mode() -> bool:
-    """official tests are INSTRUCTOR-configured.
-    Students get a view-only settings list plus the one adopt path (merge
-    Mode-B-verified rows). Instructors flip this on in their fork or
-    machine: "instructor_mode": true in ~/.dlc/config.json, or the
-    DLC_INSTRUCTOR env var."""
-    env = os.environ.get("DLC_INSTRUCTOR", "").strip().lower()
-    if env:
-        return env not in ("0", "false", "no", "off")
-    try:
-        from dlc.llm.client import _load_config
-        return bool(_load_config().get("instructor_mode"))
-    except Exception:
-        return False
+# Digital's test language also allows program-like lines besides plain
+# value rows; lines opening with these keywords pass through (kept
+# permissive — the goal is to reject pasted garbage, not to re-implement
+# Digital's parser). \b so "repeat(3)" and "loop(i,4)" match too.
+import re as _re
+
+_TEST_KEYWORD_RE = _re.compile(
+    r"(?i)^(let|repeat|loop|while|init|declare|memory|program|"
+    r"resetrandom|end)\b")
+
+
+def validate_test_content(content: str) -> None:
+    """Reject content that is not Digital test format BEFORE it can
+    become an official test. Mirrors our spec tokenizer (which mirrors
+    Digital's): first non-comment line = the header (signal names), then
+    value rows whose cells all tokenize to known kinds (0/1/hex/binary/
+    (-n)/C/X/Z or loop expressions) and match the header's column count;
+    Digital's program-style lines (let/repeat/loop/…) pass through.
+    Raises ValueError with a readable reason."""
+    from dlc.testing.spec import _strip_inline_comment, _tokenize
+    header: list[str] | None = None
+    data_rows = 0
+    for i, line in enumerate((content or "").splitlines(), start=1):
+        text = _strip_inline_comment(line).strip()
+        if not text:
+            continue
+        cells = text.split()
+        if header is None:
+            kinds = {_tokenize(c).kind for c in cells}
+            if kinds <= {"int", "clock", "highZ", "dontcare", "loop_expr"}:
+                raise ValueError(
+                    "not Digital test format: the first line must be the "
+                    "header (signal names), but line "
+                    f"{i} looks like a value row: {text!r}")
+            header = cells
+            continue
+        if _TEST_KEYWORD_RE.match(cells[0]):
+            data_rows += 1               # program-style line: Digital's own
+            continue
+        bad = [c for c in cells if _tokenize(c).kind == "unknown"]
+        if bad:
+            raise ValueError(
+                f"not Digital test format: line {i} has unrecognized "
+                f"cell{'s' if len(bad) > 1 else ''} "
+                f"{', '.join(repr(b) for b in bad)}: {text!r}")
+        if len(cells) != len(header):
+            raise ValueError(
+                f"not Digital test format: line {i} has {len(cells)} "
+                f"cells but the header has {len(header)} columns: {text!r}")
+        data_rows += 1
+    if header is None:
+        raise ValueError("not Digital test format: no header line found.")
+    if data_rows == 0:
+        raise ValueError("not Digital test format: a header but no test "
+                         "rows.")
 
 
 def _defaults() -> dict[str, dict]:
@@ -101,14 +142,30 @@ def list_tests() -> list[dict]:
             for name, e in sorted(merged.items())]
 
 
-def save_test(filename: str, content: str) -> dict:
-    """Add or update one official test set. Returns the stored entry."""
+def save_test(filename: str, content: str, *,
+              allow_default_override: bool = False) -> dict:
+    """Add or update one official test set. Returns the stored entry.
+
+    anyone may add
+    tests for their own labs, but content must BE Digital test format
+    (validate_test_content), the filename must be a .dig name, and a
+    shipped DEFAULT can never be edited by hand — the only way to change
+    a default's bar is the Adopt flow (which passes
+    allow_default_override=True with machine-verified content)."""
     from dlc.l3.manifest import normalized_test_hash
     name = (filename or "").strip()
     if not name:
         raise ValueError("Filename is required.")
+    if "/" in name or "\\" in name or not name.lower().endswith(".dig"):
+        raise ValueError("Filename must be a plain .dig name, e.g. cpu.dig")
     if not (content or "").strip():
         raise ValueError("Testcase content is required.")
+    if name in _defaults() and not allow_default_override:
+        raise ValueError(
+            f"'{name}' is a built-in default and can't be edited by hand — "
+            f"run Mode B to all-set and use 'Adopt into official tests' to "
+            f"extend it.")
+    validate_test_content(content)
     data = _load()
     entry = {"content": content, "sha1": normalized_test_hash(content)}
     data[name] = entry

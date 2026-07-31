@@ -139,7 +139,11 @@ class CircuitCoverage:
     mux_branches: list[MuxBranchCoverage] = field(default_factory=list)
     clock_edge_rows: int = 0
     notes: list[str] = field(default_factory=list)
-    # 2.9 category-graded coverage (populated only when a lab manifest
+    # true-but-noisy notes ("…not part of this lab's instruction set")
+    # move here — still in the report JSON (the model reads them), never
+    # rendered to students.
+    hidden_notes: list[str] = field(default_factory=list)
+    # category-graded coverage (populated only when a lab manifest
     # binds categories to this file; GREEN iff categories_missing is empty)
     categories_total: int = 0
     categories_touched: list[str] = field(default_factory=list)
@@ -708,7 +712,8 @@ def _apply_manifest(report: TreeCoverageReport) -> None:
     from dlc.l3 import manifest as mf
     m = mf.find_manifest({c.file for c in report.circuits})
     if m:
-        report.notes.append(f"lab manifest '{m.get('lab', '?')}' applied.")
+        src = f" ({m['_file']})" if m.get("_file") else ""
+        report.notes.append(f"lab manifest '{m.get('lab', '?')}'{src} applied.")
     for cov in report.circuits:
         if not cov.has_testcases or not cov.path:
             continue
@@ -775,7 +780,7 @@ def _apply_manifest(report: TreeCoverageReport) -> None:
                 f"category coverage is GREEN (raw vector % is informational "
                 f"only)."
             ))
-        cov.notes = _manifest_note_filter(
+        cov.notes, cov.hidden_notes = _manifest_note_filter(
             cov.notes, (m.get("categories") or {}).get(cov.file) or [],
             categories_complete=not cc["missing"],
         )
@@ -788,7 +793,7 @@ _CONST_OUTPUT_RE = re.compile(r"output '([^']+)' is only ever expected")
 
 def _manifest_note_filter(
     notes: list[str], cats: list[dict], *, categories_complete: bool,
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Category-aware note rewrite: a raw "input 'X' never tested with
     values ..." note is an INVITATION to test those values — but when every
     listed value lies outside the lab's defined categories, those values are
@@ -804,8 +809,9 @@ def _manifest_note_filter(
             if val is not None:
                 defined.setdefault(col, set()).add(val)
     if not defined:
-        return notes
+        return notes, []
     out: list[str] = []
+    hidden: list[str] = []
     for note in notes:
         m2 = _NEVER_TESTED_RE.search(note)
         if m2 and m2.group(1) in defined:
@@ -814,7 +820,9 @@ def _manifest_note_filter(
             except ValueError:
                 listed = []
             if listed and all(v not in defined[m2.group(1)] for v in listed):
-                out.append(
+                # true but noise for students ("what CAN I still
+                # test?" is the question) — keep it for the model only
+                hidden.append(
                     f"input '{m2.group(1)}': every lab-defined value is "
                     f"tested; the untested values "
                     f"({', '.join(str(v) for v in listed)}) are not part of "
@@ -825,4 +833,4 @@ def _manifest_note_filter(
                               "set — every defined category is tested)")
             continue
         out.append(note)
-    return out
+    return out, hidden

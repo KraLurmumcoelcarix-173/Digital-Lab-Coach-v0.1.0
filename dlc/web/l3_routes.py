@@ -291,7 +291,8 @@ def l3_adopt_official(req: AdoptRequest) -> dict:
                 "warning": f"Could not read the temp circuit: {exc}"}
     if not specs:
         return {"ok": False, "warning": "The temp circuit has no testcase."}
-    saved = official_store.save_test(req.filename, specs[0].raw_data_string)
+    saved = official_store.save_test(req.filename, specs[0].raw_data_string,
+                                     allow_default_override=True)
     return {"ok": True, "filename": req.filename, "sha1": saved["sha1"],
             "rows": specs[0].row_count()}
 

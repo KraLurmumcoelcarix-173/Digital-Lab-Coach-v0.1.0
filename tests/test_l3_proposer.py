@@ -684,7 +684,32 @@ def test_synthesis_fallback_builds_a_gate_clean_extension():
     add_i = cats.index("add")
     assert g["rows"][add_i] == "C 7 (-3)"
     assert g["rows"][-1] == "C 4 0"            # 7 + (-3), machine-derived
-    assert any("machine-built" in n for n in notes)
+    assert notes == []          # R9: the card's why says it — no extra note
+    # R9: the replay gate pairs each dropped row with its own detail when
+    # a program group dies — spot-check the shape on a synthetic rejection
+    m2 = _observing_manifest()
+    t2 = {**_cpu_like_target(), "program_words": ["fec00213"]}
+    from dlc.l3 import manifest as mfm
+    w_bad = mfm.encode_category_word(m2, "add", rd=8, rs1=4, rs2=4)
+    grp = {"file": "cpu.dig", "spec_name": "Test",
+           "rows": ["C 9 9"], "why": "w", "program_words": [f"{w_bad:x}"]}
+
+    def fake_replay(path, spec_name, rows, rom_words=None):
+        return [{"row": r, "verdict": "disagrees",
+                 "detail": f"ReadData1 mismatch on {r}"} for r in rows]
+
+    import dlc.l3.coverage as covm
+    old = covm.replay_appended_rows
+    covm.replay_appended_rows = fake_replay
+    try:
+        kept, rej, _ = proposer._replay_gate(
+            [grp], [], [], [t2], {"cpu.dig": "/tmp/nope.dig"})
+    finally:
+        covm.replay_appended_rows = old
+    assert kept == [] and rej
+    assert rej[0]["details"] == [
+        {"row": "C 9 9", "detail": "ReadData1 mismatch on C 9 9"}]
+    assert "—" not in rej[0]["reason"]      # short reason, no joined wall
 
 
 def test_synthesis_skipped_when_a_model_extension_survived():

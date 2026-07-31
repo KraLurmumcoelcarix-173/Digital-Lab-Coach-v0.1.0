@@ -260,3 +260,6 @@
 .l3-rej-raw { margin: 1px 0 6px 0; }
 .l3-rej-raw small { color: #9ca3af; display: block; }
 #l3-b-run:disabled, #l3-a-run:disabled { opacity: .45; cursor: not-allowed; }
+.l3-rej-pair { margin: 3px 0 5px 0; }
+.l3-rej-pair code { background: #f3f4f6; padding: 0 4px; border-radius: 4px; }
+.l3-rej-pair small { color: #9ca3af; display: block; margin-top: 1px; }

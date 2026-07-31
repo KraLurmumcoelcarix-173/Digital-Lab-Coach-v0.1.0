@@ -40,7 +40,7 @@
         <button id="key-chip" class="jar-chip" title="LLM API keys">
           API keys: <span id="key-state">checking...</span>
         </button>
-        <button class="tab tab-gear" data-tab="settings"
+        <button id="settings-gear" class="tab-gear"
                 title="Settings — Digital.jar, API keys, official tests, language">
           &#9881;
         </button>
@@ -191,6 +191,12 @@
               above &mdash; the coach works on the file selected there.
             </div>
             <div id="l3-file-chip" class="l3-file-chip hidden"></div>
+            <!-- mirror interacts like the L1 board — its own popup
+                 element (app.js's lives inside the hidden Dashboard page) -->
+            <div id="l3-hover-popup" class="hover-popup hidden">
+              <div class="hover-popup-title" id="l3-hover-popup-title">&nbsp;</div>
+              <div class="hover-popup-body" id="l3-hover-popup-body"></div>
+            </div>
           </section>
 
           <aside id="l3-boards">
@@ -318,7 +324,12 @@
         </div>
       </div>
       <!-- Settings page (gear tab): local, per-machine configuration -->
-      <div class="page" data-page="settings" hidden>
+      <!-- settings is a floating overlay — the page behind stays put
+           (blurred); only the X closes it -->
+      <div id="settings-overlay" class="settings-overlay hidden">
+        <div class="settings-panel">
+          <button id="settings-close" class="settings-close"
+                  title="Close settings">&times;</button>
         <div class="settings-wrap">
           <h2 class="settings-title">&#9881; Settings</h2>
 
@@ -349,12 +360,13 @@
               ignored), Mode B treats its rows as ground truth: a disagreement
               means the <b>circuit</b> is wrong, never the test. Stored locally;
               works for any lab, no manifest needed.</p>
-            <p id="ot-student-note" class="muted" style="display:none">
-              Official tests are configured by your instructor — this list is
-              view-only. Your way in: after a Coverage Coach run ends
-              <b>all&nbsp;set</b>, use its <b>Adopt into official tests</b>
-              button to merge the verified rows for your own labs. If existing 
-              tests cover everything, mode B will produce nothing. </p>
+            <p class="muted">
+              Built-in defaults are view-only — the only way to raise a
+              default's standard is <b>Adopt into official tests</b> after a
+              Coverage Coach run ends <b>all&nbsp;set</b>. Your own labs'
+              tests can be added and edited freely below (content must be
+              valid Digital test format). If existing tests cover
+              everything, mode B will produce nothing.</p>
             <div class="settings-add">
               <input id="ot-filename" class="text-input" type="text"
                      placeholder="filename, e.g. cpu.dig" />
@@ -378,16 +390,18 @@
 
           <section class="settings-card">
             <h3>Configuring new labs (instructors)</h3>
-            <p class="muted">Professors adapt DLC to their own labs by
+            <p class="muted">A manifest is only needed when a lab requires
+              semantic interpretation — opcode / RISC-V standard decode, or
+              display-digit classes. The shipped defaults already cover the
+              current course labs. Professors adapt DLC to their own labs by
               forking the repo and adding a small <b>manifest</b> (a json
               naming the lab's test categories)
               plus the official test sets. The step-by-step guide, including
               a copy-paste RISC-V block:
               <a href="/api/docs/manifest_guide" target="_blank">open the
-              manifest guide</a>. Enable editing here with
-              <code>"instructor_mode": true</code> in
-              <code>~/.dlc/config.json</code>.</p>
+              manifest guide</a>.</p>
           </section>
+        </div>
         </div>
       </div>
     </main>

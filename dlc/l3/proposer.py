@@ -603,11 +603,8 @@ def _synthesis_fallback(valid, rejected, notes, targets, manifest, paths):
         entry["synthesized"] = True
         v2, r2, _ = _replay_gate([entry], [], [], targets, paths)
         if v2:
+            # the card's own "why" says machine-built — no extra note
             valid.append(v2[0])
-            notes.append(
-                f"no model extension for {t['file']} survived, so the "
-                f"coach machine-built one — every value derived from the "
-                f"program by constant propagation.")
         else:
             rejected.extend(r2)
     return valid, rejected, notes
@@ -721,8 +718,11 @@ def _replay_gate(valid, rejected, notes, targets, paths):
                     "rows": [v["row"] for v in bad],
                     "why": g.get("why", ""),
                     "reason": ("expected values don't match the machine "
-                               "state at that point in the program — "
-                               + "; ".join(v["detail"] for v in bad)),
+                               "state at that point in the program"),
+                    # per-row pairing so the UI can show each dropped
+                    # row WITH its own mismatch instead of one wall of text
+                    "details": [{"row": v["row"], "detail": v["detail"]}
+                                for v in bad],
                 })
             else:
                 kept.append(g)

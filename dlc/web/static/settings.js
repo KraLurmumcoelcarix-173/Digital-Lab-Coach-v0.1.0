@@ -39,15 +39,6 @@ async function renderOfficialTests() {
     body = await r.json();
   } catch {}
   const tests = (body && body.tests) || [];
-  // : official tests are INSTRUCTOR-configured. Students get
-  // a view-only list; their one write-path is the Adopt button after an
-  // all-set Mode B run. Instructors (instructor_mode in ~/.dlc/config.json
-  // or DLC_INSTRUCTOR=1) keep full add/edit/delete.
-  const instructor = !!(body && body.instructor);
-  const addForm = document.querySelector(".settings-add");
-  if (addForm) addForm.style.display = instructor ? "" : "none";
-  const note = document.getElementById("ot-student-note");
-  if (note) note.style.display = instructor ? "none" : "";
   if (!tests.length) {
     list.innerHTML = `<span class="muted">No official tests registered yet.</span>`;
     return;
@@ -60,27 +51,28 @@ async function renderOfficialTests() {
       : (src === "override"
         ? `<span class="ot-src ot-src-override">overrides a default</span>`
         : "");
-    // saving under the same filename creates/updates the user entry;
-    // Delete only exists for user entries (defaults are permanent, and
-    // deleting an override reverts to the shipped default)
-    const del = src === "default" ? "" :
-      `<button class="btn-ghost ot-delete" data-ot-del="${escapeHtml(t.filename)}">${
-        src === "override" ? "Delete override (revert to default)" : "Delete"}</button>`;
-    const editor = instructor
-      ? `<textarea class="text-input ot-textarea" data-ot-edit="${escapeHtml(t.filename)}">${escapeHtml(t.content)}</textarea>
+    let editor;
+    if (src === "user") {
+      editor = `<textarea class="text-input ot-textarea" data-ot-edit="${escapeHtml(t.filename)}">${escapeHtml(t.content)}</textarea>
       <div class="settings-row">
-        <button class="btn-ghost" data-ot-save="${escapeHtml(t.filename)}">${
-          src === "default" ? "Save as my override" : "Save changes"}</button>
-        ${del}
-      </div>`
-      : `<textarea class="text-input ot-textarea" readonly>${escapeHtml(t.content)}</textarea>`;
+        <button class="btn-ghost" data-ot-save="${escapeHtml(t.filename)}">Save changes</button>
+        <button class="btn-ghost ot-delete" data-ot-del="${escapeHtml(t.filename)}">Delete</button>
+      </div>`;
+    } else if (src === "override") {
+      editor = `<textarea class="text-input ot-textarea" readonly>${escapeHtml(t.content)}</textarea>
+      <div class="settings-row">
+        <button class="btn-ghost ot-delete" data-ot-del="${escapeHtml(t.filename)}">Delete override (revert to default)</button>
+      </div>`;
+    } else {
+      editor = `<textarea class="text-input ot-textarea" readonly>${escapeHtml(t.content)}</textarea>`;
+    }
     return `
     <details class="ot-item" data-ot="${escapeHtml(t.filename)}">
       <summary class="ot-bar">
         <span class="ot-name">${escapeHtml(t.filename)}</span>
         <span class="ot-sha">fingerprint ${escapeHtml((t.sha1 || "").slice(0, 10))}</span>
         ${chip}
-        <span class="ot-open muted">${instructor ? "view / edit" : "view"}</span>
+        <span class="ot-open muted">${src === "user" ? "view / edit" : "view"}</span>
       </summary>
       ${editor}
     </details>`;
@@ -162,4 +154,19 @@ async function otSave(filename, content) {
     const chip = document.getElementById("key-chip");
     if (chip) chip.click();
   });
+  // settings floats OVER the current page (blurred behind); only the
+  // X closes it — no backdrop click, no Escape.
+  const gear = document.getElementById("settings-gear");
+  const overlay = document.getElementById("settings-overlay");
+  if (gear && overlay) {
+    gear.addEventListener("click", () => {
+      overlay.classList.remove("hidden");
+      renderSettings();
+      logEvent("settings_opened", {});
+    });
+  }
+  const closeBtn = document.getElementById("settings-close");
+  if (closeBtn && overlay) {
+    closeBtn.addEventListener("click", () => overlay.classList.add("hidden"));
+  }
 })();

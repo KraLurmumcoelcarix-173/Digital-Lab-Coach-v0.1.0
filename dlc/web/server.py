@@ -1085,25 +1085,18 @@ class OfficialTestRequest(BaseModel):
     content: str
 
 
-_STUDENT_OFFICIAL_MSG = (
-    "Official tests are configured by the instructor. Students adopt "
-    "verified coach tests from Mode B instead (the Adopt button after an "
-    "all-set run)."
-)
-
-
 @app.get("/api/config/official_tests")
 def list_official_tests() -> dict:
     from dlc.l3 import official_store
-    return {"ok": True, "tests": official_store.list_tests(),
-            "instructor": official_store.instructor_mode()}
+    return {"ok": True, "tests": official_store.list_tests()}
 
 
 @app.post("/api/config/official_tests")
 def save_official_test(req: OfficialTestRequest) -> dict:
+    """open to everyone — the store itself enforces the rules
+    (Digital-test-format content, .dig filename, shipped defaults never
+    hand-editable; Adopt is the only way to move a default's standard)."""
     from dlc.l3 import official_store
-    if not official_store.instructor_mode():
-        raise HTTPException(status_code=403, detail=_STUDENT_OFFICIAL_MSG)
     try:
         entry = official_store.save_test(req.filename, req.content)
     except ValueError as exc:
@@ -1114,23 +1107,28 @@ def save_official_test(req: OfficialTestRequest) -> dict:
 @app.delete("/api/config/official_tests")
 def delete_official_test(filename: str) -> dict:
     from dlc.l3 import official_store
-    if not official_store.instructor_mode():
-        raise HTTPException(status_code=403, detail=_STUDENT_OFFICIAL_MSG)
     return {"ok": True, "removed": official_store.delete_test(filename),
             "filename": filename}
 
 
 @app.get("/api/docs/manifest_guide")
 def manifest_guide():
-    """the instructor guide, served as plain text so the Settings
-    link works in any deployment (fork URLs differ; this one never does)."""
-    from fastapi.responses import PlainTextResponse
+    """The instructor guide, served with a minimal readable wrapper so the
+    Settings link works in any deployment (fork URLs differ; this one
+    never does). Proper markdown rendering is a cosmetic backlog item."""
+    from fastapi.responses import HTMLResponse, PlainTextResponse
+    from xml.sax.saxutils import escape as _esc
     p = Path(__file__).parent.parent.parent / "docs" / "MANIFEST_GUIDE.md"
     try:
-        return PlainTextResponse(p.read_text(encoding="utf-8"))
+        text = p.read_text(encoding="utf-8")
     except OSError:
         return PlainTextResponse("Guide not found in this build.",
                                  status_code=404)
+    return HTMLResponse(
+        "<title>DLC — configuring new labs</title>"
+        "<pre style=\"max-width:860px;margin:24px auto;padding:0 16px;"
+        "white-space:pre-wrap;font:13.5px/1.55 ui-monospace,Consolas,"
+        "monospace;color:#1f2937\">" + _esc(text) + "</pre>")
 
 
 @app.get("/api/llm/models")
