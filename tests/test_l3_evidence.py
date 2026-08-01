@@ -204,8 +204,8 @@ def test_payload_matches_frozen_contract_shape():
     res = assemble_evidence_for_file(_BUG3, use_manifest=False)
     payload = res.payloads[0]
     assert set(payload) == {"contract", "circuit", "testcase", "cluster",
-                            "suspects"}
-    assert payload["contract"] == "l3.debug.v1"
+                            "suspects", "suspect_wiring"}
+    assert payload["contract"] == "l3.debug.v1.1"
     assert payload["testcase"] == {"name": "Testcase_12",
                                    "headers": ["A", "B", "Clk", "Sum"]}
     assert {"inventory", "selectors", "inputs", "outputs"} <= set(
@@ -225,6 +225,18 @@ def test_payload_matches_frozen_contract_shape():
             assert set(out) == {"label", "expected", "found", "ok"}
     assert payload["suspects"]["failing_outputs"] == ["Sum"]
     assert payload["suspects"]["suspects"], "merged suspects must be present"
+
+
+def test_suspect_wiring_names_the_true_driver():
+    # bug3 has FOUR identical Consts; only #16 feeds the adder's carry-in.
+    # The wiring block must say so, or the sub-agent is left guessing.
+    res = assemble_evidence_for_file(_BUG3, use_manifest=False)
+    wiring = res.payloads[0]["suspect_wiring"]
+    assert any(w["component_index"] == 16 for w in wiring)
+    w16 = next(w for w in wiring if w["component_index"] == 16)
+    ends = [(e["component_index"], e["pin"])
+            for p in w16["pins"] for e in p["connects_to"]]
+    assert (5, "c_i") in ends, "Const #16 must be shown driving Add.c_i"
 
 
 def test_jar_verdict_is_authoritative_when_evaluator_disagrees():

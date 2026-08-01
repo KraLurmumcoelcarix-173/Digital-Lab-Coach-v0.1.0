@@ -297,6 +297,68 @@ def l3_adopt_official(req: AdoptRequest) -> dict:
             "rows": specs[0].row_count()}
 
 
+class DebugRequest(BaseModel):
+    session_id: str
+    filename: str
+    spec_index: int = 0
+    model: str | None = None
+
+
+@router.post("/api/llm/debug")
+def llm_debug(req: DebugRequest) -> dict:
+    """Mode A coordinator (explicit trigger only): per-row verdict →
+    evidence clusters → one single-shot sub-agent per cluster → verified
+    hypothesis cards (docs/l3_debug_contract.md).
+
+    Scope: when this session holds a coach TEMP for the file
+    (Mode B injected rows), the analysis targets THAT temp and its spec —
+    the "Mode A operates on the CURRENT TEMP CIRCUIT" hand-off.
+
+    Use limits: clear and lazy runs are free; an analysis run books one
+    Mode A use ONLY when at least one verified card is delivered — an
+    empty run must not cost the student a use (it says so in notes).
+    """
+    from dlc.l3 import debugger      # late import keeps startup lean
+    from dlc.web import server       # late binding; see module docstring
+
+    target = server._resolve_target(req.session_id, req.filename)
+    if not limits.allowed("modeA"):
+        return {
+            "ok": False,
+            "limited": True,
+            "warning": "Daily debug-analysis limit reached — try again "
+                       "tomorrow.",
+            "limits": limits.state(),
+        }
+
+    path, spec_name, on_temp = target["path"], None, False
+    session = server._SESSIONS.get(req.session_id)
+    lt = (session or {}).get("l3_temp") or None
+    if (lt and lt.get("for") == req.filename and lt.get("path")
+            and os.path.exists(lt["path"])):
+        path, spec_name, on_temp = lt["path"], lt.get("spec_name"), True
+
+    try:
+        result = debugger.debug_circuit(
+            path, spec_name=spec_name, spec_index=req.spec_index,
+            model=req.model,
+        )
+    except Exception as exc:         # defense in depth
+        return {"ok": False, "mode": "error",
+                "warning": f"Debug run failed: {type(exc).__name__}: {exc}"}
+
+    consumed = (result.get("mode") == "analysis"
+                and bool(result.get("cards")))
+    result["limits"] = limits.consume("modeA") if consumed else limits.state()
+    result["consumed_use"] = consumed
+    if result.get("mode") == "analysis" and not result.get("cards"):
+        result.setdefault("notes", []).append(
+            "No verified fix survived this run — it did not count against "
+            "today's debug-analysis uses.")
+    result["on_coach_temp"] = on_temp
+    return result
+
+
 @router.get("/api/l3/configured")
 def l3_configured() -> dict:
     """which lab files this deployment is configured for — union of

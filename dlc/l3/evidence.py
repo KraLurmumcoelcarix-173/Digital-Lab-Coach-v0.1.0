@@ -41,7 +41,7 @@ from dlc.parser.netlist import build_netlist
 from dlc.sim.simulator import SimResult, simulate_sequential
 from dlc.testing.spec import TestSpec, extract_test_specs, match_variables_to_io
 
-CONTRACT = "l3.debug.v1"
+CONTRACT = "l3.debug.v1.1"
 
 # More failing rows than this is a structural problem, not a localizable
 # bug — Mode A answers with the suggestion branch instead of burning a
@@ -443,10 +443,47 @@ def compact_circuit_facts(circuit, netlist=None, graph=None) -> dict:
     return _compact_facts(extract_facts(circuit, netlist, graph).to_dict())
 
 
+def suspect_wiring(circuit, netlist, indices: list[int]) -> list[dict]:
+    """Pin-level connection truth for the suspect components — for every
+    suspect, each pin and the far ends of its net (the netlist already
+    merges across tunnels). This is what lets the sub-agent tell WHICH of
+    four identical Consts feeds the adder's c_i instead of guessing."""
+    out: list[dict] = []
+    for idx in indices:
+        if not (0 <= idx < len(circuit.components)):
+            continue
+        comp = circuit.components[idx]
+        pins: list[dict] = []
+        for net in netlist.nets:
+            mine = [p for p in net.pins if p.component_index == idx]
+            if not mine:
+                continue
+            others = []
+            for q in net.pins:
+                if q.component_index == idx:
+                    continue
+                qc = circuit.components[q.component_index]
+                others.append({
+                    "component_index": q.component_index,
+                    "element": qc.element_name,
+                    "label": qc.label,
+                    "pin": q.pin_name,
+                    "direction": q.direction,
+                })
+            for p in mine:
+                pins.append({"pin": p.pin_name, "direction": p.direction,
+                             "net_id": net.net_id,
+                             "connects_to": others[:6]})
+        out.append({"component_index": idx, "element": comp.element_name,
+                    "label": comp.label, "pins": pins})
+    return out
+
+
 def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
+                  circuit=None, netlist=None,
                   max_representatives: int = _MAX_REPRESENTATIVES) -> dict:
     reps = cluster.rows[:max_representatives]
-    return {
+    payload = {
         "contract": CONTRACT,
         "circuit": compact_circuit,
         "testcase": {"name": spec.name, "headers": list(spec.headers)},
@@ -466,6 +503,10 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
         },
         "suspects": cluster.merged.to_dict(),
     }
+    if circuit is not None and netlist is not None:
+        payload["suspect_wiring"] = suspect_wiring(
+            circuit, netlist, cluster.merged.suspect_indices())
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +598,8 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     if compact_circuit is None:
         compact_circuit = compact_circuit_facts(circuit, netlist, graph)
     res.payloads = [
-        build_payload(compact_circuit, spec, c,
+        build_payload(compact_circuit, spec, c, circuit=circuit,
+                      netlist=netlist,
                       max_representatives=max_representatives)
         for c in clusters
     ]

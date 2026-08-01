@@ -137,7 +137,7 @@ def test_defaults_layer_override_and_revert():
 
 
 # ---------------------------------------------------------------------------
-# R9 rules: defaults never hand-edited, everyone else free — with a
+# defaults never hand-edited, everyone else free — with a
 # Digital-format bouncer on the door
 # ---------------------------------------------------------------------------
 
