@@ -197,7 +197,7 @@ def test_cluster_cap_folds_overflow_instead_of_dropping():
 
 
 # ---------------------------------------------------------------------------
-# Payload shape (frozen l3.debug.v1 §3)
+# Payload shape (frozen l3.debug.v1.1 §3)
 # ---------------------------------------------------------------------------
 
 def test_payload_matches_frozen_contract_shape():

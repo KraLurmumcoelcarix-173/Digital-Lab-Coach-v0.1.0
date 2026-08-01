@@ -92,10 +92,9 @@ or values.
 
 ## 4. Sub-agent OUTPUT (frozen shape — v1.1: the two-level ladder)
 
-ONE call returns BOTH ladder levels: step 1 of the UI shows only `hint`; step 2 ("show me more")
-reveals `fix`. The split IS the spoiler guard's structural half — the F13
-wording rules bind `hint.*` (must not state the concrete repair) and
-`fix.explanation_for_student` (teaches, never taunts).
+ONE call returns BOTH ladder levels: disclosure: at hint_level 1 the UI shows only `hint`; hint_level 2
+("show me more") reveals `fix`. The split IS the spoiler guard's structural half — the F13
+wording rules bind `hint.*` (must not state the concrete repair) and `fix.explanation_for_student` (teaches, never taunts).
 
 ```json
 {
