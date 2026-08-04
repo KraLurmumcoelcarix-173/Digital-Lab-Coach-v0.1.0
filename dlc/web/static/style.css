@@ -148,6 +148,68 @@ main {
   justify-content: center;
 }
 .settings-overlay.hidden { display: none; }
+
+/* In-overlay manual view: the guide replaces the settings sections until
+   "Back to settings" — no navigation, so the packaged (non-web) build
+   never leaves the app window. */
+.settings-wrap.hidden { display: none; }
+.guide-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px 0;
+}
+.guide-doc {
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: #1f2937;
+}
+.guide-doc h1 { font-size: 20px; margin: 4px 0 12px 0; }
+.guide-doc h2 { font-size: 16px; margin: 22px 0 8px 0;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.guide-doc h3 { font-size: 14px; margin: 16px 0 6px 0; }
+.guide-doc p { margin: 8px 0; }
+.guide-doc ul, .guide-doc ol { margin: 8px 0; padding-left: 24px; }
+.guide-doc li { margin: 3px 0; }
+.guide-doc code {
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 0 5px;
+  font: 12.5px ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.guide-doc pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.guide-doc pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.guide-doc table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 12.5px;
+}
+.guide-doc th, .guide-doc td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.guide-doc th { background: #f8fafc; }
+.guide-doc blockquote {
+  border-left: 3px solid var(--border);
+  margin: 10px 0;
+  padding: 2px 12px;
+  color: var(--muted);
+}
 .settings-panel {
   position: relative;
   width: min(940px, 92vw);
@@ -703,7 +765,9 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  /* above the settings overlay (300): the jar/key dialogs are opened FROM
+     settings and must float over it, not under */
+  z-index: 400;
 }
 .modal.hidden { display: none; }
 .modal-card {
@@ -850,6 +914,15 @@ main {
   padding-left: 10px;
   /* headroom so the first row's hover lift + shadow isn't clipped */
   padding-top: 8px;
+}
+/* empty-state line: span the grid and cancel its hover padding so the
+   text left-aligns with the intro paragraph above */
+.library-grid > .muted {
+  grid-column: 1 / -1;
+  margin-left: -10px;
+  margin-top: -8px;
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 .library-card {

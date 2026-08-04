@@ -314,22 +314,43 @@ function renderL3Boards(file) {
   }
 
   // Mode A (upper): needs failing rows from a finished per-row run. When
-  // Mode B's accepted rows fail on the temp circuit, say so here — that is
-  // the ratified hand-off hint (NO auto-run; the engine lands in Phase 3).
+  // Mode B's accepted rows fail on the temp circuit, the run targets the
+  // registered coach temp.
   const failing = l3FailingRowCount(file.filename);
   const mbA = saved.modeB;
   const coachHint = (mbA && mbA.injectFailing > 0)
     ? ` ALSO: ${mbA.injectFailing} coach row${mbA.injectFailing === 1 ? "" : "s"} ` +
       `disagree with the temp circuit '${mbA.tempName || "coach copy"}' — ` +
       `either the row is wrong (discard it on the lower board) or your ` +
-      `circuit has a bug there (Mode A debugs the temp file; engine lands ` +
-      `in Phase 3).`
+      `circuit has a bug there (Analyze runs on the temp file).`
     : "";
-  if (!file.summary || !file.summary.has_testcases) {
+  const ma = saved.modeA;
+  if (l3RunState.a) {
+    _l3PaintBoard("a", {
+      status: "Analyzing… clustering failing rows, hypothesizing, " +
+        "verifying every fix on a temp copy.",
+      cls: "muted",
+      bodyHtml:
+        `<div class="l3-note-card"><span class="l3-spinner"></span> ` +
+        `One model call per failure cluster; nothing unverified is ever ` +
+        `shown. This usually takes a few seconds per cluster.</div>`,
+    });
+  } else if (ma && ma.result) {
+    const st = l3ModeAStatus(ma.result);
+    _l3PaintBoard("a", {
+      status: st.status + coachHint,
+      cls: st.cls,
+      // a finished run grays the button — a delivered analysis costs a
+      // daily use and re-running the same upload cannot change the answer.
+      // Re-uploading (which resets the store) re-enables it.
+      enabled: false,
+      bodyHtml: l3ModeABodyHtml(ma),
+    });
+  } else if (!file.summary || !file.summary.has_testcases) {
     _l3PaintBoard("a", {
       status: "This file has no testcases, so there are no failing rows to analyze." + coachHint,
       cls: "muted",
-      bodyHtml: savedCard(saved.modeA),
+      bodyHtml: l3ModeABodyHtml(ma),
     });
   } else if (failing === null) {
     _l3PaintBoard("a", {
@@ -337,7 +358,7 @@ function renderL3Boards(file) {
         `Run tests in per-row mode on the Dashboard first — Mode A picks ` +
         `up the failing rows from there.` + coachHint,
       cls: coachHint ? "blocked" : "muted",
-      bodyHtml: savedCard(saved.modeA),
+      bodyHtml: l3ModeABodyHtml(ma),
     });
   } else if (failing === 0) {
     _l3PaintBoard("a", {
@@ -345,7 +366,7 @@ function renderL3Boards(file) {
         "All rows pass — nothing to debug here. Try the Coverage Coach " +
         "below for gaps your tests might be missing." + coachHint,
       cls: coachHint ? "blocked" : "ready",
-      bodyHtml: savedCard(saved.modeA),
+      bodyHtml: l3ModeABodyHtml(ma),
     });
   } else {
     _l3PaintBoard("a", {
@@ -354,7 +375,7 @@ function renderL3Boards(file) {
         `ready to analyze.` + coachHint,
       cls: "ready",
       enabled: true,
-      bodyHtml: savedCard(saved.modeA),
+      bodyHtml: l3ModeABodyHtml(ma),
     });
   }
 
@@ -404,6 +425,175 @@ function renderL3Boards(file) {
     });
   }
 }
+
+// --- Mode A: analysis render -------------------------------------------------
+// The board body for a finished /api/llm/debug run. Cards follow the ladder
+// (l3.debug.v1.1 §6): hint_level 1 shows only the hint; "Show me more"
+// reveals the verified fix + explanation. Falls back to the legacy stub
+// note shape for cards stored by older builds.
+
+function l3ModeAStatus(res) {
+  if (res.mode === "clear") {
+    return { status: "Every row of this testcase passes — nothing to debug.",
+             cls: "ready" };
+  }
+  if (res.mode === "lazy") {
+    return { status: "Analysis says: fundamentals first — see the " +
+             "suggestions below. This run was free.", cls: "blocked" };
+  }
+  if (res.mode === "analysis") {
+    const n = (res.cards || []).length;
+    if (!n) {
+      return { status: "No verified fix survived this run — the ideas it " +
+               "tried are below. It did not count against today's uses.",
+               cls: "blocked" };
+    }
+    return { status: `${n} verified hypothesis card${n === 1 ? "" : "s"} — ` +
+             `every fix below passed the full re-run before you saw it.`,
+             cls: "ready" };
+  }
+  return { status: res.warning || "Analysis failed.", cls: "blocked" };
+}
+
+function _l3OpDesc(op) {
+  switch (op.op) {
+    case "change_attribute":
+      return `set [${op.component_index}] attribute ${op.name} = ${JSON.stringify(op.value)}`;
+    case "replace_element":
+      return `replace [${op.component_index}] with ${op.new_element}`;
+    case "swap_pins":
+      return `swap wires on [${op.component_index}] pins ${op.pin_a} ↔ ${op.pin_b}`;
+    case "rewire_pin":
+      return `rewire [${op.component_index}].${op.pin} → ` +
+        `[${op.to && op.to.component_index}].${op.to && op.to.pin}`;
+    case "add_wire":
+      return `add wire (${(op.p1 || []).join(",")}) → (${(op.p2 || []).join(",")})`;
+    case "delete_wire":
+      return `delete wire (${(op.p1 || []).join(",")}) → (${(op.p2 || []).join(",")})`;
+    case "add_component":
+      return `add ${op.element_name} at (${(op.position || []).join(",")})`;
+    case "delete_component":
+      return `delete component [${op.component_index}]`;
+    default:
+      return JSON.stringify(op);
+  }
+}
+
+function _l3CardHtml(ma, c) {
+  const lvl = (ma.levels && ma.levels[c.rank]) || 1;
+  const hint = c.hint || {};
+  const fix = c.fix || {};
+  const runner = (c.verified && c.verified.runner) || "";
+  let html = `<div class="l3-cov-circuit">` +
+    `<div class="l3-cov-head">` +
+    `<span class="l3-chip">hypothesis #${c.rank}</span>` +
+    `<span class="l3-chip l3-chip-good" title="The fix was applied to a temp copy and the whole testcase re-run (${escapeHtml(runner)}) before display — the original file is untouched.">verified fix ✓</span>` +
+    `<span class="l3-chip">confidence ${Math.round((c.confidence || 0) * 100)}%</span>` +
+    `<span class="l3-chip l3-chip-none">row${(c.cluster_rows || []).length === 1 ? "" : "s"} ${(c.cluster_rows || []).join(", ")}</span>` +
+    `</div>`;
+  html += `<div class="l3-hint-block"><b>Where to look:</b> ` +
+    escapeHtml(hint.suspect_region || "") +
+    ((hint.suspect_signals || []).length
+      ? `<div class="l3-hint-signals">watch: ` +
+        hint.suspect_signals.map((s) => `<span class="l3-prop-row">${escapeHtml(s)}</span>`).join(" ") + `</div>`
+      : "") +
+    (hint.why ? `<div class="l3-prop-why">${escapeHtml(hint.why)}</div>` : "") +
+    `</div>`;
+  if (lvl < 2) {
+    html += `<div class="l3-prop-bar">` +
+      `<button class="btn-ghost" data-l3a-more="${c.rank}">Show me more — reveal the verified fix</button>` +
+      `<span class="l3-prop-hint">try to find it yourself first; the full fix + explanation is one click away</span>` +
+      `</div>`;
+  } else {
+    html += `<div class="l3-fix-block">` +
+      (fix.ops || []).map((op) => `<div class="l3-op">${escapeHtml(_l3OpDesc(op))}</div>`).join("") +
+      (fix.explanation_for_student
+        ? `<div class="l3-prop-why">${escapeHtml(fix.explanation_for_student)}</div>` : "") +
+      `<div class="l3-prop-hint">these ops are exactly what the verifier ` +
+      `applied${runner === "digital" ? " and Digital re-ran green" : ""}; ` +
+      `the played-back fix animation lands in the next round.</div>` +
+      `</div>`;
+  }
+  return html + `</div>`;
+}
+
+function l3ModeABodyHtml(ma) {
+  if (!ma) return "";
+  if (!ma.result) {
+    return ma.note
+      ? `<div class="l3-note-card">${escapeHtml(ma.note)}</div>`
+      : "";
+  }
+  const res = ma.result;
+  let html = "";
+  const lim = res.limits;
+  if (lim && lim.caps && lim.caps.modeA != null) {
+    const used = (lim.used && lim.used.modeA) || 0;
+    html += `<div class="l3-lim-bar">` +
+      `<span class="l3-chip">Debug analysis today: ${used}/${lim.caps.modeA} used</span>` +
+      (res.mode === "analysis" && res.consumed_use === false
+        ? `<span class="l3-chip l3-chip-warn">this run was free</span>` : "") +
+      (lim.enforced
+        ? ""
+        : `<span class="l3-chip l3-chip-warn" title="DLC_ENFORCE_LIMITS is off — counters tick but nothing blocks. Release flips this on.">dev mode — limit not enforced</span>`) +
+      `</div>`;
+  }
+  if (res.on_coach_temp) {
+    html += `<div class="l3-note-card">Analyzed your coach temp copy ` +
+      `(original + accepted rows) — the Mode B hand-off.</div>`;
+  }
+  if (res.mode === "clear") {
+    return html + `<div class="l3-note-card">Every row passes on this ` +
+      `circuit — if you expected failures, re-run tests on the Dashboard ` +
+      `first.</div>`;
+  }
+  if (res.mode === "lazy") {
+    for (const s of res.suggestions || []) {
+      html += `<div class="l3-flag">` +
+        `<div class="l3-flag-title">${escapeHtml(s.question || "")}</div>` +
+        `<div class="l3-flag-body">${escapeHtml(s.hint || "")}` +
+        ((s.terms || []).length
+          ? `<div class="l3-hint-signals">` +
+            s.terms.map((t) => `<span class="l3-chip">${escapeHtml(t)}</span>`).join(" ") + `</div>`
+          : "") +
+        `</div></div>`;
+    }
+    return html;
+  }
+  for (const line of res.diagnosis_lines || []) {
+    html += `<div class="l3-diag">${escapeHtml(line)}</div>`;
+  }
+  for (const c of res.cards || []) html += _l3CardHtml(ma, c);
+  const dropped = res.dropped_ideas || [];
+  if (dropped.length) {
+    html += `<details class="l3-rej-details">` +
+      `<summary>${dropped.length} idea${dropped.length === 1 ? "" : "s"} tried and dropped</summary>` +
+      dropped.map((d) =>
+        `<div class="l3-rej-pair"><span class="l3-rej-where">${escapeHtml(d.reason || "")}</span>` +
+        ` — ${escapeHtml(d.why || d.detail || "no detail")}</div>`).join("") +
+      `</details>`;
+  }
+  if ((res.notes || []).length) html += _l3NotesHtml(res.notes);
+  return html;
+}
+
+// "Show me more" — reveal a card's fix level (per-card, sticky in the slot).
+(function wireL3BoardA() {
+  const body = document.getElementById("l3-a-body");
+  if (!body) return;
+  body.addEventListener("click", (evt) => {
+    const btn = evt.target.closest("[data-l3a-more]");
+    if (!btn) return;
+    const file = loaded.length > 0 ? loaded[currentIdx] : null;
+    if (!file) return;
+    const ma = l3Slot(file.filename).modeA;
+    if (!ma) return;
+    ma.levels = ma.levels || {};
+    ma.levels[btn.dataset.l3aMore] = 2;
+    logEvent("l3_hint_level", { rank: Number(btn.dataset.l3aMore), level: 2 });
+    renderL3Boards(file);
+  });
+})();
 
 // --- Mode B: coverage scan render -------------------------------------------
 // The board body for a finished /api/l3/coverage run: one section per circuit
@@ -1187,22 +1377,61 @@ async function l3DiscardFail(file) {
   });
 })();
 
-// Skeleton run buttons: store a note card in the per-circuit slot so the
-// stickiness is testable end-to-end (switch file and back — it persists;
-// re-upload — it's gone). 
-l3ARunBtn.addEventListener("click", () => {
+// Mode A run: the real /api/llm/debug coordinator (per-row verdict →
+// cluster → one sub-agent per cluster → machine-verified fix cards). The
+// result is stored per circuit (sticky; expires on re-upload) under the
+// filename the run STARTED on, so a mid-run circuit switch can't misfile it.
+l3ARunBtn.addEventListener("click", async () => {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
-  if (!file || file.error) return;
-  logEvent("l3_modeA_stub_clicked", { filename: file.filename });
-  l3Slot(file.filename).modeA = {
-    stub: true,
-    note:
-      "Board wired and ready — the Mode A engine (cluster failing rows → " +
-      "hypothesize → verify the fix on a temp copy → animated diagnosis) " +
-      "lands in Phase 3. This card is stored per circuit: switch files and " +
-      "come back, it persists; re-upload clears it.",
-  };
+  if (!file || file.error || !sessionId || l3RunState.a) return;
+  const filename = file.filename;
+  logEvent("l3_modeA_started", { filename });
+
+  l3RunState.a = true;
+  l3ARunBtn.textContent = "Analyzing…";
   renderL3Boards(file);
+
+  let body = null;
+  let failText = null;
+  try {
+    const res = await fetch("/api/llm/debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, filename }),
+    });
+    if (!res.ok) failText = `Server error ${res.status}: ${await res.text()}`;
+    else body = await res.json();
+  } catch (err) {
+    failText = `Network error: ${err}`;
+  }
+  l3RunState.a = false;
+  l3ARunBtn.textContent = "Analyze failing rows";
+
+  if (body && body.ok) {
+    l3Slot(filename).modeA = { result: body, levels: {} };
+    logEvent("l3_modeA_run_complete", {
+      filename, mode: body.mode,
+      cards: (body.cards || []).length, llm_calls: body.llm_calls || 0,
+    });
+  } else {
+    const warn = failText || (body && (body.warning || body.error))
+      || "Analysis failed.";
+    l3Slot(filename).modeA = null;
+    logEvent("l3_modeA_run_complete", { filename, ok: false });
+    const status = document.getElementById("l3-a-status");
+    if (status && l3PageVisible()
+        && loaded[currentIdx] && loaded[currentIdx].filename === filename) {
+      renderL3Boards(loaded[currentIdx]);
+      status.textContent = `Analysis failed: ${warn}`;
+      status.className = "l3-status blocked";
+      return;
+    }
+  }
+  // re-render only if the user is still looking at the file the run was for
+  if (l3PageVisible() && loaded[currentIdx]
+      && loaded[currentIdx].filename === filename) {
+    renderL3Boards(loaded[currentIdx]);
+  }
 });
 
 // Mode B run: synchronous scan (sub-second even on a full CPU tree). The

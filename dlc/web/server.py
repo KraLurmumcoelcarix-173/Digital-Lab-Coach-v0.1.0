@@ -1112,10 +1112,11 @@ def delete_official_test(filename: str) -> dict:
 
 
 @app.get("/api/docs/manifest_guide")
-def manifest_guide():
-    """The instructor guide, served with a minimal readable wrapper so the
-    Settings link works in any deployment (fork URLs differ; this one
-    never does). Proper markdown rendering is a cosmetic backlog item."""
+def manifest_guide(raw: bool = False):
+    """The instructor guide. ``?raw=1`` returns the markdown text — the
+    Settings overlay fetches that and renders it in-app (the packaged
+    build never leaves the window). Without ``raw`` the direct URL still
+    works with a minimal readable wrapper."""
     from fastapi.responses import HTMLResponse, PlainTextResponse
     from xml.sax.saxutils import escape as _esc
     p = Path(__file__).parent.parent.parent / "docs" / "MANIFEST_GUIDE.md"
@@ -1124,6 +1125,8 @@ def manifest_guide():
     except OSError:
         return PlainTextResponse("Guide not found in this build.",
                                  status_code=404)
+    if raw:
+        return PlainTextResponse(text)
     return HTMLResponse(
         "<title>DLC — configuring new labs</title>"
         "<pre style=\"max-width:860px;margin:24px auto;padding:0 16px;"

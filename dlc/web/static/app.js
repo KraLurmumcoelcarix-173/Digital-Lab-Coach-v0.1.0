@@ -452,7 +452,7 @@ async function postAll() {
   loaded = data.files || [];
   sessionId = data.session_id || null;
   logEvent("upload", { session_id: sessionId, count: loaded.length });
-  l3ExpireAll("re-upload");   // hypothesis cards die on re-upload (l3.debug.v1 §7)
+  l3ExpireAll("re-upload");   // hypothesis cards die on re-upload (l3.debug.v1.1 §7)
   if (loaded.length === 0) {
     summaryEl.innerHTML = `<span style="color:#991b1b">No .dig files were processed.</span>`;
     return;

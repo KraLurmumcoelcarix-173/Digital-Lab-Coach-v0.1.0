@@ -181,7 +181,7 @@
       <!-- Layer 3 coach tab: read-only mirror of the selected circuit +
            two boards. Upper = Mode A (failed-test analysis), lower =
            Mode B (coverage coach). Boards lock on L1 errors; results are
-           sticky per circuit and expire on re-upload (l3.debug.v1 §7). -->
+           sticky per circuit and expire on re-upload (l3.debug.v1.1 §7). -->
       <div class="page" data-page="l3" hidden>
         <div class="l3-layout">
           <section id="l3-graph-pane">
@@ -398,9 +398,16 @@
               naming the lab's test categories)
               plus the official test sets. The step-by-step guide, including
               a copy-paste RISC-V block:
-              <a href="/api/docs/manifest_guide" target="_blank">open the
-              manifest guide</a>.</p>
+              <a href="#" id="set-guide-link">open the manifest guide</a>.</p>
           </section>
+        </div>
+        <div id="set-guide-view" class="settings-wrap hidden">
+          <div class="guide-bar">
+            <button id="set-guide-back" class="btn-ghost">&larr; Back to
+              settings</button>
+            <h2 class="settings-title" style="margin:0">Manifest guide</h2>
+          </div>
+          <div id="set-guide-doc" class="guide-doc muted">loading…</div>
         </div>
         </div>
       </div>
