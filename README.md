@@ -28,7 +28,7 @@ Active development. No release yet.
 | `prompts/` | Versioned LLM prompt templates — one file per prompt variant, consumed by `dlc/llm/`. 
 | `configs/` | Per-lab YAML configs (expected I/Os, handout context etc.). 
 | `data/sample_circuits/` | Test fixtures — public sample circuits created by authors. 
-| `docs/` | Architecture notes, design decisions, dev log, dev debug guide. 
+| `docs/` | Guides for instructors, RISC-V labs manifest guides, screenshots, architecture notes, design decisions, dev log, dev debug guide. 
 | `tests/` | pytest unit tests, one file per source module. 
 
 ## Temp Web testing (Please go over setup first)
