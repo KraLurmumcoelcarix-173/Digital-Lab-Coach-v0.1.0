@@ -376,7 +376,7 @@ function renderL3Boards(file) {
         `ready to analyze.` + coachHint,
       cls: "ready",
       enabled: true,
-      bodyHtml: l3ModeABodyHtml(ma) + _l3StandardsNote(),
+      bodyHtml: l3ModeABodyHtml(ma),
     });
   }
 
@@ -618,16 +618,6 @@ function _l3FailingRowsTable(res) {
     }
   }
   return html + `</table></div>`;
-}
-
-// Shown before a run: the tiered bars under which Mode A coaches
-// fundamentals (lazy branch) instead of hunting a single bug.
-function _l3StandardsNote() {
-  return `<div class="l3-note-card l3-standards">Analysis standards — ` +
-    `below these bars the coach teaches fundamentals instead of chasing ` +
-    `single rows:<br>&gt;10-row testcase: &le;10 failing AND &ge;90% ` +
-    `passing &middot; 6&ndash;10 rows: &ge;80% passing &middot; ` +
-    `1&ndash;5 rows: &ge;50% passing.</div>`;
 }
 
 // "Show me more" — reveal a card's fix level (per-card, sticky in the slot).

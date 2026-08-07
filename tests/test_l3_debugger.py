@@ -285,10 +285,21 @@ def test_validate_hypothesis_requires_contract_and_ops():
     assert "fix.ops" in validate_hypothesis(ok)[1]
 
 
-def test_offline_bug3_without_caller_verdict_goes_lazy():
-    # evaluator sweep fails all 4 of 4 rows -> under the 50% bar for a
-    # 1-5 row suite -> suggestion branch, zero model calls
-    res = debug_circuit(_BUG3, call=_never, use_manifest=False)
+def test_small_circuit_stays_analyzable_even_when_every_row_fails():
+    # bug3 has 17 components (<= 30): the rate bars are off, so the
+    # evaluator's 4-of-4 failing verdict still runs the full pipeline
+    call = _fake([_reply(GOOD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    assert res["mode"] == "analysis"
+    assert res["cards"][0]["cluster_rows"] == [0, 1, 2, 3]
+    assert res["cards"][0]["verified"]["confirmed"] is True
+
+
+def test_big_circuit_below_its_bar_goes_lazy_with_suggestions():
+    led = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+           f"wrong_bool_LED1.dig")
+    res = debug_circuit(led, call=_never, use_manifest=False,
+                        failing_indices=[0, 1, 2])
     assert res["mode"] == "lazy"
     assert [s["kind"] for s in res["suggestions"]] == ["low_pass_rate"]
     assert "truth table" in res["suggestions"][0]["terms"]

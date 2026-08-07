@@ -48,6 +48,12 @@ CONTRACT = "l3.debug.v1.1"
 # hypothesis hunt (and a daily use) on a doomed circuit.
 GROSS_MAX_FAILING = 10
 
+# The tiered pass-rate bars only judge BIG circuits. A small circuit that
+# is otherwise Layer-3-ready is exactly the "close to the answer"
+# audience, whatever its pass rate — every row can fail on a 20-part
+# adder and one wrong constant still explains all of it.
+RATE_GATE_MIN_COMPONENTS = 30
+
 _MAX_CLUSTERS = 4          # one sub-agent per cluster, never one per row
 _MAX_REPRESENTATIVES = 2   # full per-net evidence for at most 2 rows/cluster
 _TOP_SUSPECTS = 5          # signature part 3 compares this many top suspects
@@ -263,7 +269,9 @@ def _holds_state(circuit) -> bool:
 
 
 def gross_check(circuit, spec: TestSpec, failing_count: int, *,
-                max_failing: int = GROSS_MAX_FAILING) -> list[dict]:
+                max_failing: int = GROSS_MAX_FAILING,
+                rate_gate_min_components: int = RATE_GATE_MIN_COMPONENTS,
+                ) -> list[dict]:
     """Deterministic checks that mean the circuit needs fundamentals, not
     a per-bug hypothesis hunt. Any flag → mode "lazy" (suggestion-only
     branch). Returns [{kind, detail}] in a fixed order."""
@@ -274,7 +282,10 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
     #   > 10 rows:  lazy when failing > max_failing AND pass rate < 90%
     #   6-10 rows:  lazy when pass rate < 80%
     #   1-5  rows:  lazy when pass rate < 50%
-    n_rows = spec.well_formed_row_count()
+    if len(circuit.components) <= rate_gate_min_components:
+        n_rows = 0             # bars off: small circuit, always analyzable
+    else:
+        n_rows = spec.well_formed_row_count()
     passing = max(0, n_rows - failing_count)
     rate = passing / n_rows if n_rows else 0.0
     if n_rows >= 11:

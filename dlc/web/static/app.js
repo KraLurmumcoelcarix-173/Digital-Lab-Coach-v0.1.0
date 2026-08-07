@@ -942,6 +942,8 @@ function renderSummary(s, issues) {
     .map(([name, count]) =>
       `<tr><td class="k">${escapeHtml(name)}</td><td class="v">${count}</td></tr>`
     ).join("");
+  const inventoryTotal = Object.values(s.inventory || {})
+    .reduce((a, b) => a + b, 0);
 
   const inputsList = (s.inputs || [])
     .map((p) => `<li>${escapeHtml(p.label)} <span class="muted">${p.bits} bit${p.bits === 1 ? "" : "s"}</span></li>`)
@@ -972,7 +974,7 @@ function renderSummary(s, issues) {
     <h2>Subcircuits (${(s.subcircuits || []).length})</h2>
     ${subsList ? `<ul>${subsList}</ul>` : `<div class="muted">(none)</div>`}
 
-    <h2>Inventory</h2>
+    <h2>Inventory (${inventoryTotal})</h2>
     <table>${inventoryRows || '<tr><td class="muted">(empty)</td></tr>'}</table>
   `;
 }

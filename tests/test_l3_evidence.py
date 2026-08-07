@@ -36,6 +36,8 @@ _BENCH = "data/sample_circuits/30_bug_benchmark"
 _BUG1 = f"{_BENCH}/bug1_meaningless_mux_in3/tier3_calculator.dig"
 _BUG3 = f"{_BENCH}/bug3_wrong_cin/Wrong_cin.dig"
 _BUG4 = f"{_BENCH}/bug4_missing_pipeline/Missing_pipeline.dig"
+_BUG5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+         f"wrong_bool_LED1.dig")
 _CLEAN = "data/sample_circuits/tier3_realistic/pipelined_adder_correct.dig"
 _ROM = "data/sample_circuits/tier1_minimal/rom_lookup.dig"
 
@@ -70,14 +72,15 @@ def test_bug3_is_analysis_with_one_cluster_and_the_const_suspect():
     assert 16 in idxs, "the Const driving c_i (the seeded bug) must survive"
 
 
-def test_offline_sweep_of_bug3_hits_the_low_pass_rate_bar():
-    # every one of the 4 rows fails the evaluator -> 0% pass, under the
-    # 50% bar for a 1-5 row testcase -> lazy, no evidence spent
+def test_small_circuit_is_exempt_from_the_rate_bars():
+    # bug3 has 17 components (<= 30): even 0% passing stays analyzable —
+    # a small Layer-3-ready circuit is exactly the close-to-answer case
     res = assemble_evidence_for_file(_BUG3, use_manifest=False)
-    assert res.mode == "lazy"
+    assert res.mode == "analysis"
     assert res.failing_count == 4
-    assert [f["kind"] for f in res.gross_flags] == ["low_pass_rate"]
-    assert res.clusters == [] and res.payloads == []
+    assert [r.row_index for r in res.clusters[0].rows] == [0, 1, 2, 3]
+    idxs = res.clusters[0].merged.suspect_indices()
+    assert 5 in idxs and 16 in idxs
 
 
 def test_bug1_cluster_signature_carries_op_and_pins_the_mux():
@@ -113,14 +116,24 @@ def test_bug4_missing_pipeline_goes_lazy():
     assert res.clusters == [] and res.payloads == []
 
 
-def test_way_too_many_failures_goes_lazy_before_any_evidence():
+def test_big_circuit_below_its_bar_goes_lazy_before_any_evidence():
+    # the LED lab has 160+ components, so the bars apply: 3 of its 5
+    # rows failing (40% pass) is under the 1-5 row bar
     res = assemble_evidence_for_file(
-        _BUG3, use_manifest=False, failing_indices=list(range(12)),
+        _BUG5, use_manifest=False, failing_indices=[0, 1, 2],
     )
     assert res.mode == "lazy"
     kinds = [f["kind"] for f in res.gross_flags]
     assert "low_pass_rate" in kinds
     assert res.clusters == [] and res.payloads == []
+
+
+def test_big_circuit_on_or_above_its_bar_is_analyzable():
+    res = assemble_evidence_for_file(
+        _BUG5, use_manifest=False, failing_indices=[1, 2],
+    )
+    assert res.mode == "analysis"
+    assert res.failing_count == 2
 
 
 def _rows(n):
@@ -135,22 +148,27 @@ def _spec_of(n):
 
 
 def test_tiered_pass_rate_bars():
+    # exercised with the bars forced on (bug3 itself is a small circuit,
+    # exempt by default — asserted at the end)
     c, _nl, _g = _parsed(_BUG3)
+    on = {"rate_gate_min_components": 0}
     # big suite: >10 failing alone is fine while >=90% still passes
-    assert gross_check(c, _spec_of(200), failing_count=15) == []
+    assert gross_check(c, _spec_of(200), failing_count=15, **on) == []
     # big suite: >10 failing AND under 90% -> structural
-    kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 11)]
+    kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 11, **on)]
     assert kinds == ["too_many_failures"]
     # big suite: many rows failing but <=10 absolute -> still analyzable
-    assert gross_check(c, _spec_of(12), failing_count=2) == []
+    assert gross_check(c, _spec_of(12), failing_count=2, **on) == []
     # 6-10 rows: 80% bar
-    assert gross_check(c, _spec_of(8), failing_count=1) == []
-    assert [f["kind"] for f in gross_check(c, _spec_of(8), 2)] == [
+    assert gross_check(c, _spec_of(8), failing_count=1, **on) == []
+    assert [f["kind"] for f in gross_check(c, _spec_of(8), 2, **on)] == [
         "low_pass_rate"]
-    # 1-5 rows: 50% bar (bug3's Digital verdict sits exactly on it)
-    assert gross_check(c, _spec_of(4), failing_count=2) == []
-    assert [f["kind"] for f in gross_check(c, _spec_of(4), 3)] == [
+    # 1-5 rows: 50% bar
+    assert gross_check(c, _spec_of(4), failing_count=2, **on) == []
+    assert [f["kind"] for f in gross_check(c, _spec_of(4), 3, **on)] == [
         "low_pass_rate"]
+    # default threshold: bug3's 17 components sit under 30 -> bars off
+    assert gross_check(c, _spec_of(4), failing_count=4) == []
 
 
 # ---------------------------------------------------------------------------
