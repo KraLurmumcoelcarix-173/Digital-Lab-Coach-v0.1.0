@@ -92,6 +92,26 @@ const CY_STYLE = [
       "width": 2.5,
     },
   },
+  // Net-id overlay (the "net IDs" toggle on both graph panes): every wire
+  // shows the id of the net it belongs to — the same ids the hover popups
+  // and Mode A's hint evidence speak. Label pixels are part of the edge,
+  // so hovering the number highlights/pops exactly like the wire itself.
+  {
+    selector: "edge.show-netid[net_id]",
+    style: {
+      "label": "data(net_id)",
+      "font-size": 10,
+      "font-weight": 700,
+      "color": "#334155",
+      "text-background-color": "#ffffff",
+      "text-background-opacity": 0.85,
+      "text-background-padding": 2,
+      "text-background-shape": "roundrectangle",
+      "text-border-color": "#9aa1ab",
+      "text-border-width": 1,
+      "text-border-opacity": 0.6,
+    },
+  },
   {
     selector: "node.issue-target",
     style: {
@@ -539,6 +559,8 @@ function renderGraph(graph) {
     minZoom: 0.15,
     maxZoom: 3,
   });
+
+  applyNetIdsL1();               // keep the net-id toggle across rebuilds
 
   // If the container was still settling when dagre ran (e.g. graph
   // built while another tab was active), re-measure and re-fit once
@@ -2629,3 +2651,23 @@ tabButtons.forEach((b) => {
 });
 
 function returnToMain() { showTab("main"); }
+/* --- Net-id overlay toggle (Layer 1 graph) ------------------------------ */
+
+let netIdsOnL1 = false;
+
+function applyNetIdsL1() {
+  if (!cy) return;
+  cy.edges()[netIdsOnL1 ? "addClass" : "removeClass"]("show-netid");
+  const btn = document.getElementById("netid-toggle");
+  if (btn) btn.classList.toggle("active", netIdsOnL1);
+}
+
+(function wireNetIdToggleL1() {
+  const btn = document.getElementById("netid-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    netIdsOnL1 = !netIdsOnL1;
+    applyNetIdsL1();
+    logEvent("netids_toggled", { on: netIdsOnL1 });
+  });
+})();

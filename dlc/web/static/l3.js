@@ -149,6 +149,7 @@ function l3BuildMirror(file) {
     setTimeout(() => { try { inst.resize(); inst.fit(undefined, 40); } catch {} }, 0);
   });
   l3WireMirrorInteractions(inst);
+  l3ApplyNetIds();               // keep the net-id toggle across rebuilds
   l3GraphFilename = file.filename;
 }
 
@@ -332,8 +333,8 @@ function renderL3Boards(file) {
       cls: "muted",
       bodyHtml:
         `<div class="l3-note-card"><span class="l3-spinner"></span> ` +
-        `One model call per failure cluster; nothing unverified is ever ` +
-        `shown. This usually takes a few seconds per cluster.</div>`,
+        `Nothing unverified is ever shown. This usually takes a few ` +
+        `seconds per cluster.</div>`,
     });
   } else if (ma && ma.result) {
     const st = l3ModeAStatus(ma.result);
@@ -375,7 +376,7 @@ function renderL3Boards(file) {
         `ready to analyze.` + coachHint,
       cls: "ready",
       enabled: true,
-      bodyHtml: l3ModeABodyHtml(ma),
+      bodyHtml: l3ModeABodyHtml(ma) + _l3StandardsNote(),
     });
   }
 
@@ -464,7 +465,8 @@ function _l3OpDesc(op) {
     case "swap_pins":
       return `swap wires on [${op.component_index}] pins ${op.pin_a} ↔ ${op.pin_b}`;
     case "rewire_pin":
-      return `rewire [${op.component_index}].${op.pin} → ` +
+      // arrow = signal direction: the pin RECEIVES from its new source
+      return `rewire [${op.component_index}].${op.pin} ← ` +
         `[${op.to && op.to.component_index}].${op.to && op.to.pin}`;
     case "add_wire":
       return `add wire (${(op.p1 || []).join(",")}) → (${(op.p2 || []).join(",")})`;
@@ -501,17 +503,22 @@ function _l3CardHtml(ma, c) {
     `</div>`;
   if (lvl < 2) {
     html += `<div class="l3-prop-bar">` +
-      `<button class="btn-ghost" data-l3a-more="${c.rank}">Show me more — reveal the verified fix</button>` +
-      `<span class="l3-prop-hint">try to find it yourself first; the full fix + explanation is one click away</span>` +
+      `<button class="btn-ghost" data-l3a-more="${c.rank}">Show me more</button>` +
       `</div>`;
   } else {
+    const opLines = (fix.ops_pretty && fix.ops_pretty.length)
+      ? fix.ops_pretty
+      : (fix.ops || []).map(_l3OpDesc);
     html += `<div class="l3-fix-block">` +
-      (fix.ops || []).map((op) => `<div class="l3-op">${escapeHtml(_l3OpDesc(op))}</div>`).join("") +
+      opLines.map((line) => `<div class="l3-op">${escapeHtml(line)}</div>`).join("") +
       (fix.explanation_for_student
         ? `<div class="l3-prop-why">${escapeHtml(fix.explanation_for_student)}</div>` : "") +
-      `<div class="l3-prop-hint">these ops are exactly what the verifier ` +
-      `applied${runner === "digital" ? " and Digital re-ran green" : ""}; ` +
-      `the played-back fix animation lands in the next round.</div>` +
+      (ma.result && ma.result.on_coach_temp
+        ? `<div class="l3-warn-note">If the circuit still looks right to ` +
+          `you after this, remember: some failing rows were coach-added ` +
+          `tests — a Mode B row itself could be the mistake (discard it ` +
+          `on the lower board and re-run).</div>`
+        : "") +
       `</div>`;
   }
   return html + `</div>`;
@@ -531,7 +538,7 @@ function l3ModeABodyHtml(ma) {
     const used = (lim.used && lim.used.modeA) || 0;
     html += `<div class="l3-lim-bar">` +
       `<span class="l3-chip">Debug analysis today: ${used}/${lim.caps.modeA} used</span>` +
-      (res.mode === "analysis" && res.consumed_use === false
+      (res.consumed_use === false && res.mode !== "clear"
         ? `<span class="l3-chip l3-chip-warn">this run was free</span>` : "") +
       (lim.enforced
         ? ""
@@ -574,7 +581,53 @@ function l3ModeABodyHtml(ma) {
       `</details>`;
   }
   if ((res.notes || []).length) html += _l3NotesHtml(res.notes);
+  // The failing rows themselves, wordless, so the student can stare at
+  // them next to the hint. Gone once any fix is revealed — from there the
+  // fix (and, next round, its animation) carries the attention.
+  const revealed = Object.values(ma.levels || {}).some((v) => v >= 2);
+  if (!revealed && !res.on_coach_temp) {
+    html += _l3FailingRowsTable(res);
+  }
   return html;
+}
+
+function _l3FailingRowsTable(res) {
+  const file = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!file) return "";
+  const st = testState[file.filename];
+  if (!st || !st.payload || st.mode !== "per_row") return "";
+  const spec = (st.payload.specs || []).find((s) => s.name === res.spec_name)
+    || (st.payload.specs || [])[0];
+  if (!spec) return "";
+  const failing = (spec.rows || []).filter((r) => r.status === "failed");
+  if (!failing.length) return "";
+  const headers = spec.headers || [];
+  let html = `<div class="l3-inj-wrap"><table class="l3-inj-table">` +
+    `<tr><td class="l3-idx">row</td>` +
+    headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") + `</tr>`;
+  for (const row of failing) {
+    const toks = (row.raw || "").split(/\s+/).filter(Boolean);
+    html += `<tr class="l3-row-fail"><td class="l3-idx">${row.index}</td>` +
+      headers.map((_, i) => `<td>${escapeHtml(toks[i] ?? "")}</td>`).join("") +
+      `</tr>`;
+    if (Array.isArray(row.mismatches) && row.mismatches.length) {
+      const parts = row.mismatches.map((m) =>
+        `${escapeHtml(m.column ?? "?")}: expected ${escapeHtml(m.expected)}, got ${escapeHtml(m.found)}`);
+      html += `<tr class="l3-mm-row"><td></td>` +
+        `<td colspan="${headers.length}">${parts.join(" &middot; ")}</td></tr>`;
+    }
+  }
+  return html + `</table></div>`;
+}
+
+// Shown before a run: the tiered bars under which Mode A coaches
+// fundamentals (lazy branch) instead of hunting a single bug.
+function _l3StandardsNote() {
+  return `<div class="l3-note-card l3-standards">Analysis standards — ` +
+    `below these bars the coach teaches fundamentals instead of chasing ` +
+    `single rows:<br>&gt;10-row testcase: &le;10 failing AND &ge;90% ` +
+    `passing &middot; 6&ndash;10 rows: &ge;80% passing &middot; ` +
+    `1&ndash;5 rows: &ge;50% passing.</div>`;
 }
 
 // "Show me more" — reveal a card's fix level (per-card, sticky in the slot).
@@ -1346,6 +1399,7 @@ async function l3DiscardFail(file) {
   if (allSet && mb.injectFailing === 0 && mb.inject) {
     mb.locked = true;
     logEvent("l3_modeB_all_set", { filename: cur.filename });
+    l3ShowAdoptPopup(cur.filename);
   }
   if (l3PageVisible() && loaded[currentIdx]
       && loaded[currentIdx].filename === cur.filename) {
@@ -1487,3 +1541,93 @@ l3BRunBtn.addEventListener("click", async () => {
     renderL3Boards(loaded[currentIdx]);
   }
 });
+/* --- Net-id overlay + adopt popup ---------------------------------------
+   The net-id toggle labels every wire with the net id it belongs to (the
+   same ids the hint evidence and hover popups speak), on both the L1 and
+   the L3 graph. The adopt popup is the proactive Accept follow-up: every
+   accepted row passes, so offer to save the merged testcase as the lab's
+   official test right away. */
+
+let l3NetIdsOn = false;
+
+function l3ApplyNetIds() {
+  if (!l3Cy) return;
+  l3Cy.edges()[l3NetIdsOn ? "addClass" : "removeClass"]("show-netid");
+  const btn = document.getElementById("l3-netid-toggle");
+  if (btn) btn.classList.toggle("active", l3NetIdsOn);
+}
+
+(function wireL3NetIdToggle() {
+  const btn = document.getElementById("l3-netid-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    l3NetIdsOn = !l3NetIdsOn;
+    l3ApplyNetIds();
+    logEvent("l3_netids_toggled", { on: l3NetIdsOn });
+  });
+})();
+
+let _l3AdoptPending = null;    // selected filename at all-set time
+
+function l3ShowAdoptPopup(filename) {
+  const modal = document.getElementById("adopt-modal");
+  if (!modal) return;
+  _l3AdoptPending = filename;
+  const msg = document.getElementById("adopt-modal-msg");
+  if (msg) { msg.textContent = ""; msg.className = "modal-msg"; }
+  modal.classList.remove("hidden");
+  logEvent("l3_adopt_popup_shown", { filename });
+}
+
+(function wireAdoptPopup() {
+  const modal = document.getElementById("adopt-modal");
+  if (!modal) return;
+  const yes = document.getElementById("adopt-yes-btn");
+  const no = document.getElementById("adopt-no-btn");
+  const msg = document.getElementById("adopt-modal-msg");
+  if (no) no.addEventListener("click", () => {
+    modal.classList.add("hidden");
+    logEvent("l3_adopt_popup_declined", {});
+  });
+  if (yes) yes.addEventListener("click", async () => {
+    const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+    if (!cur || !sessionId || cur.filename !== _l3AdoptPending) {
+      modal.classList.add("hidden");
+      return;
+    }
+    const mb = l3Slot(cur.filename).modeB;
+    const files = Object.entries((mb && mb.inject) || {})
+      .filter(([, o]) => o && o.ok && o.outcome === "all_set")
+      .map(([f]) => f);
+    yes.disabled = true;
+    let okAll = true;
+    for (const f of files) {
+      try {
+        const res = await fetch("/api/l3/adopt_official", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, filename: f }),
+        });
+        const body = await res.json();
+        if (body.ok) {
+          if (mb.inject[f]) mb.inject[f]._adopted = body;
+        } else {
+          okAll = false;
+          if (msg) {
+            msg.textContent = `${f}: ${body.warning || "could not save"}`;
+            msg.className = "modal-msg err";
+          }
+        }
+      } catch (err) {
+        okAll = false;
+        if (msg) { msg.textContent = `Network error: ${err}`; msg.className = "modal-msg err"; }
+      }
+    }
+    yes.disabled = false;
+    logEvent("l3_adopt_popup_accepted", { files: files.length, ok: okAll });
+    if (okAll) {
+      modal.classList.add("hidden");
+      renderL3Boards(cur);
+    }
+  });
+})();

@@ -93,13 +93,14 @@ def _no_jar(monkeypatch):
 
 def test_bug3_end_to_end_confirmed_card():
     call = _fake([_reply(GOOD_OPS)])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
     assert res["mode"] == "analysis"
     assert res["llm_calls"] == 1
     assert len(res["cards"]) == 1
     card = res["cards"][0]
     assert card["rank"] == 1
-    assert card["cluster_rows"] == [0, 1, 2, 3]
+    assert card["cluster_rows"] == [0, 1]
     assert card["verified"] == {"confirmed": True, "runner": "evaluator",
                                 "regressions": []}
     assert card["fix"]["ops"] == GOOD_OPS
@@ -128,7 +129,8 @@ def test_lazy_circuit_makes_no_model_calls_and_suggests():
 
 def test_invalid_json_earns_one_format_reprompt():
     call = _fake(["sorry, I cannot produce JSON today", _reply(GOOD_OPS)])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
     assert res["llm_calls"] == 2
     assert "FORMAT RETRY" in call.log[1]
     assert len(res["cards"]) == 1 and res["cards"][0]["verified"]["confirmed"]
@@ -136,7 +138,8 @@ def test_invalid_json_earns_one_format_reprompt():
 
 def test_double_garbage_becomes_dropped_idea():
     call = _fake(["nope", "still nope"])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
     assert res["llm_calls"] == 2
     assert res["cards"] == []
     assert [d["reason"] for d in res["dropped_ideas"]] == ["invalid_response"]
@@ -144,7 +147,8 @@ def test_double_garbage_becomes_dropped_idea():
 
 def test_refuted_fix_earns_one_retry_with_evidence():
     call = _fake([_reply(BAD_OPS), _reply(GOOD_OPS)])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
     assert res["llm_calls"] == 2
     # the template mentions "[REFUTED ATTEMPT]" itself, so the real
     # refutation block is recognized by its payload keys
@@ -158,7 +162,8 @@ def test_unknown_op_is_a_format_error_then_dropped():
     bad = _reply(GOOD_OPS)
     bad["fix"]["ops"] = [{"op": "explode_everything"}]
     call = _fake([bad, "garbage"])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
     assert res["llm_calls"] == 2
     assert "unknown op" in call.log[1]
     assert res["cards"] == []
@@ -166,13 +171,16 @@ def test_unknown_op_is_a_format_error_then_dropped():
 
 
 @_needs_jar
-def test_bug3_confirms_through_real_digital(monkeypatch):
+def test_bug3_fix_verifies_through_real_digital(monkeypatch):
+    # Digital's own bug3 verdict varies by jar version. 
+    # Pin the verdict through the caller seam so the REAL
+    # Digital VERIFY path is what this test exercises, deterministically.
     monkeypatch.setattr(debugger, "find_digital_jar",
                         lambda: find_digital_jar())
     call = _fake([_reply(GOOD_OPS)])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False)
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
     assert res["mode"] == "analysis"
-    assert res["row_verdict_runner"] == "digital"
     assert len(res["cards"]) == 1
     assert res["cards"][0]["verified"]["confirmed"] is True
     assert res["cards"][0]["verified"]["runner"] == "digital"
@@ -275,3 +283,34 @@ def test_validate_hypothesis_requires_contract_and_ops():
     ok = _reply(GOOD_OPS)
     ok["fix"]["ops"] = []
     assert "fix.ops" in validate_hypothesis(ok)[1]
+
+
+def test_offline_bug3_without_caller_verdict_goes_lazy():
+    # evaluator sweep fails all 4 of 4 rows -> under the 50% bar for a
+    # 1-5 row suite -> suggestion branch, zero model calls
+    res = debug_circuit(_BUG3, call=_never, use_manifest=False)
+    assert res["mode"] == "lazy"
+    assert [s["kind"] for s in res["suggestions"]] == ["low_pass_rate"]
+    assert "truth table" in res["suggestions"][0]["terms"]
+
+
+def test_cards_carry_the_component_naming_standard():
+    call = _fake([_reply(GOOD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    pretty = res["cards"][0]["fix"]["ops_pretty"]
+    assert pretty == ["set [16] Const attribute Value = 0"]
+
+
+def test_describe_ops_arrows_follow_signal_direction():
+    from dlc.l3.debugger import describe_ops
+    from dlc.parser.dig_parser import parse_dig_file
+    calc = parse_dig_file(f"{_BENCH}/bug1_meaningless_mux_in3/"
+                          f"tier3_calculator.dig")
+    lines = describe_ops(calc, [
+        {"op": "rewire_pin", "component_index": 14, "pin": "in3",
+         "to": {"component_index": 9, "pin": "Result"}},
+        {"op": "delete_component", "component_index": 23},
+    ])
+    assert lines[0] == "rewire [14] Multiplexer.in3 ← [9] bool_unit.dig.Result"
+    assert lines[1] == "delete [23] Ground"

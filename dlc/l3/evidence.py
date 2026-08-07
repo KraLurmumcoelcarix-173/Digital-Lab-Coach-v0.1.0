@@ -268,16 +268,47 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
     a per-bug hypothesis hunt. Any flag → mode "lazy" (suggestion-only
     branch). Returns [{kind, detail}] in a fixed order."""
     flags: list[dict] = []
-    if failing_count > max_failing:
-        flags.append({
-            "kind": "too_many_failures",
-            "detail": (
-                f"{failing_count} of {spec.row_count()} rows fail — more "
-                f"than {max_failing}. That is usually a structural problem "
-                f"(wrong wiring plan, missing block), not one localized "
-                f"bug; revisit the design before chasing single rows."
-            ),
-        })
+    # Tiered pass-rate bars (ratified): a suite below its bar is a
+    # structural problem, not one localized bug. Small suites tolerate a
+    # bigger failing SHARE because two rows of four can be one bug.
+    #   > 10 rows:  lazy when failing > max_failing AND pass rate < 90%
+    #   6-10 rows:  lazy when pass rate < 80%
+    #   1-5  rows:  lazy when pass rate < 50%
+    n_rows = spec.well_formed_row_count()
+    passing = max(0, n_rows - failing_count)
+    rate = passing / n_rows if n_rows else 0.0
+    if n_rows >= 11:
+        if failing_count > max_failing and rate < 0.90:
+            flags.append({
+                "kind": "too_many_failures",
+                "detail": (
+                    f"{failing_count} of {n_rows} rows fail — more than "
+                    f"{max_failing}, with under 90% passing. That is "
+                    f"usually a structural problem (wrong wiring plan, "
+                    f"missing block), not one localized bug; revisit the "
+                    f"design before chasing single rows."
+                ),
+            })
+    elif n_rows >= 6:
+        if rate < 0.80:
+            flags.append({
+                "kind": "low_pass_rate",
+                "detail": (
+                    f"only {passing} of {n_rows} rows pass — below the 80% "
+                    f"bar for a 6-10 row testcase. Rebuild the basics "
+                    f"before hunting a single bug."
+                ),
+            })
+    elif n_rows >= 1:
+        if rate < 0.50:
+            flags.append({
+                "kind": "low_pass_rate",
+                "detail": (
+                    f"only {passing} of {n_rows} rows pass — below the 50% "
+                    f"bar for a 1-5 row testcase. Rebuild the basics "
+                    f"before hunting a single bug."
+                ),
+            })
     bindings = match_variables_to_io(spec.headers, circuit)
     unbound = [h for h in spec.headers
                if bindings[h].role == "unbound"]

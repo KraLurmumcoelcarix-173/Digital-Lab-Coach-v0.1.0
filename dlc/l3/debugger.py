@@ -314,6 +314,15 @@ _SUGGESTION_TABLE = {
                  "test each subcircuit alone with its own testcase."),
         "terms": ["truth table", "combinational logic", "subcircuit"],
     },
+    "low_pass_rate": {
+        "question": ("Pick ONE failing output: can you follow its value "
+                     "backwards, gate by gate, for a single row?"),
+        "hint": ("Too large a share of the rows fails for this to be one "
+                 "localized bug. Rebuild the truth table for one output, "
+                 "check a few rows by hand, and test each subcircuit alone "
+                 "with its own testcase before re-running the analysis."),
+        "terms": ["truth table", "combinational logic", "subcircuit"],
+    },
     "missing_clocked_logic": {
         "question": ("Your testcase steps a clock (C rows) — which element "
                      "in your circuit is supposed to REMEMBER a value "
@@ -348,6 +357,54 @@ def lazy_suggestions(gross_flags: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Coordinator
 # ---------------------------------------------------------------------------
+
+def _comp_tag(circuit, idx) -> str:
+    """The tool-wide component naming standard: [index] ElementName plus
+    the label when one exists — '[16] Const', \"[3] Register 'RegA1'\"."""
+    try:
+        comp = circuit.components[int(idx)]
+    except (TypeError, ValueError, IndexError):
+        return f"[{idx}]"
+    label = getattr(comp, "label", None)
+    return f"[{idx}] {comp.element_name}" + (f" '{label}'" if label else "")
+
+
+def describe_ops(circuit, ops: list[dict]) -> list[str]:
+    """Student-facing one-liners for fix ops. Wiring arrows point the way
+    the SIGNAL flows: a rewired pin RECEIVES from its new source (←)."""
+    out: list[str] = []
+    for op in ops:
+        kind = op.get("op")
+        tag = _comp_tag(circuit, op.get("component_index"))
+        if kind == "change_attribute":
+            out.append(f"set {tag} attribute {op.get('name')} = "
+                       f"{json.dumps(op.get('value'))}")
+        elif kind == "replace_element":
+            out.append(f"replace {tag} with {op.get('new_element')}")
+        elif kind == "swap_pins":
+            out.append(f"swap wires on {tag} pins "
+                       f"{op.get('pin_a')} ↔ {op.get('pin_b')}")
+        elif kind == "rewire_pin":
+            to = op.get("to") or {}
+            out.append(f"rewire {tag}.{op.get('pin')} ← "
+                       f"{_comp_tag(circuit, to.get('component_index'))}"
+                       f".{to.get('pin')}")
+        elif kind == "add_wire":
+            out.append(f"add wire ({','.join(map(str, op.get('p1') or []))})"
+                       f" — ({','.join(map(str, op.get('p2') or []))})")
+        elif kind == "delete_wire":
+            out.append(f"delete wire "
+                       f"({','.join(map(str, op.get('p1') or []))}) — "
+                       f"({','.join(map(str, op.get('p2') or []))})")
+        elif kind == "add_component":
+            out.append(f"add {op.get('element_name')} at "
+                       f"({','.join(map(str, op.get('position') or []))})")
+        elif kind == "delete_component":
+            out.append(f"delete {tag}")
+        else:
+            out.append(json.dumps(op))
+    return out
+
 
 def _diagnosis_line(cluster) -> str:
     rows = ", ".join(str(r.row_index) for r in cluster.rows)
@@ -409,9 +466,15 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   call=None, api_key: str | None = None,
                   jar_path: str | None = None,
                   manifest: dict | None = None, use_manifest: bool = True,
+                  failing_indices: list[int] | None = None,
+                  jar_mismatches: dict[int, list[dict]] | None = None,
                   k_cards: int = K_CARDS) -> dict:
     """Run Mode A end to end for one circuit + testcase. Returns the
-    contract §6 response dict; never raises for content-level problems."""
+    contract §6 response dict; never raises for content-level problems.
+
+    ``failing_indices`` (+ ``jar_mismatches``) overrides the per-row
+    verdict entirely — the eval-harness / test seam; without it the jar
+    decides when configured, the evaluator sweep otherwise."""
     model = model or _debug_model()
     if call is None:
         call = call_llm
@@ -446,13 +509,12 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 names.add(sub.reference)
         manifest = ev.find_manifest(names)
 
-    # Per-row verdict: Digital when configured, evaluator sweep otherwise.
+    # Per-row verdict: caller override first, then Digital when
+    # configured, then the evaluator sweep.
     jar = jar_path or find_digital_jar()
-    failing_indices = None
-    jar_mismatches = None
-    runner = "evaluator"
+    runner = "caller" if failing_indices is not None else "evaluator"
     notes: list[str] = []
-    if jar:
+    if jar and failing_indices is None:
         try:
             results = per_row_run_auto(spec, str(dig_path), jar_path=jar)
             if results and all(r.status == "error" for r in results):
@@ -583,6 +645,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             },
             "fix": {
                 "ops": h["ops"],
+                "ops_pretty": describe_ops(circuit, h["ops"]),
                 "explanation_for_student": h["explanation"],
                 "animation_script": validate_animation(
                     h["animation"], len(circuit.components)),

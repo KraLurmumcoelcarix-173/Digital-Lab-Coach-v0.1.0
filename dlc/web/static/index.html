@@ -59,6 +59,10 @@
       <div class="page" data-page="main">
         <section id="graph-pane">
           <div id="cy"></div>
+          <button id="netid-toggle" class="netid-toggle"
+                  title="Show / hide the net id carried by every wire — the same ids the hover popups and Mode A hints refer to.">
+            net IDs
+          </button>
           <div id="placeholder" class="placeholder">
             No circuit loaded. Add a .dig file from the toolbar
             above &mdash; multiple files (parent + subcircuits) supported.
@@ -191,6 +195,10 @@
               above &mdash; the coach works on the file selected there.
             </div>
             <div id="l3-file-chip" class="l3-file-chip hidden"></div>
+            <button id="l3-netid-toggle" class="netid-toggle"
+                    title="Show / hide the net id carried by every wire — the same ids the hint evidence refers to.">
+              net IDs
+            </button>
             <!-- mirror interacts like the L1 board — its own popup
                  element (app.js's lives inside the hidden Dashboard page) -->
             <div id="l3-hover-popup" class="hover-popup hidden">
@@ -283,6 +291,24 @@
             <div class="modal-spacer"></div>
             <button id="key-cancel-btn" class="btn-ghost">Close</button>
           </div>
+        </div>
+      </div>
+
+      <div id="adopt-modal" class="modal modal-blur hidden">
+        <div class="modal-card" style="width:min(500px,92vw);">
+          <h3>Coach rows verified &#10003;</h3>
+          <p class="muted" style="font-size:12.5px;">
+            Every accepted row passes on the temp copy. Save the merged
+            testcase as this lab's <b>official test</b> on this computer
+            (view in Settings &#9881;)? Future scans then hold the circuit
+            to the higher standard. Your <code>.dig</code> file itself is
+            never touched.</p>
+          <div class="modal-row">
+            <div class="modal-spacer"></div>
+            <button id="adopt-no-btn" class="btn-ghost">Not now</button>
+            <button id="adopt-yes-btn" class="btn">Yes, save as official</button>
+          </div>
+          <div id="adopt-modal-msg" class="modal-msg"></div>
         </div>
       </div>
 

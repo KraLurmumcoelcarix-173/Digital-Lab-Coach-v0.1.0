@@ -52,16 +52,32 @@ def _parsed(path):
 # ---------------------------------------------------------------------------
 
 def test_bug3_is_analysis_with_one_cluster_and_the_const_suspect():
-    res = assemble_evidence_for_file(_BUG3, use_manifest=False)
+    # Digital's per-row verdict flags 2 of bug3's 4 rows (50% pass = right
+    # at the 1-5 row bar); the evaluator-only sweep flags all 4, which the
+    # tiered gate correctly calls a low-pass-rate circuit. Analysis tests
+    # therefore feed the jar-style verdict through the caller seam.
+    res = assemble_evidence_for_file(
+        _BUG3, use_manifest=False, failing_indices=[0, 1],
+    )
     assert res.mode == "analysis"
-    assert res.failing_count == 4
+    assert res.failing_count == 2
     assert len(res.clusters) == 1
     cluster = res.clusters[0]
-    assert [r.row_index for r in cluster.rows] == [0, 1, 2, 3]
+    assert [r.row_index for r in cluster.rows] == [0, 1]
     assert cluster.signature["columns"] == ["Sum"]
     idxs = cluster.merged.suspect_indices()
     assert 5 in idxs, "the Add itself must survive the merge"
     assert 16 in idxs, "the Const driving c_i (the seeded bug) must survive"
+
+
+def test_offline_sweep_of_bug3_hits_the_low_pass_rate_bar():
+    # every one of the 4 rows fails the evaluator -> 0% pass, under the
+    # 50% bar for a 1-5 row testcase -> lazy, no evidence spent
+    res = assemble_evidence_for_file(_BUG3, use_manifest=False)
+    assert res.mode == "lazy"
+    assert res.failing_count == 4
+    assert [f["kind"] for f in res.gross_flags] == ["low_pass_rate"]
+    assert res.clusters == [] and res.payloads == []
 
 
 def test_bug1_cluster_signature_carries_op_and_pins_the_mux():
@@ -97,14 +113,44 @@ def test_bug4_missing_pipeline_goes_lazy():
     assert res.clusters == [] and res.payloads == []
 
 
-def test_too_many_failures_goes_lazy_before_any_evidence():
+def test_way_too_many_failures_goes_lazy_before_any_evidence():
     res = assemble_evidence_for_file(
         _BUG3, use_manifest=False, failing_indices=list(range(12)),
     )
     assert res.mode == "lazy"
     kinds = [f["kind"] for f in res.gross_flags]
-    assert "too_many_failures" in kinds
+    assert "low_pass_rate" in kinds
     assert res.clusters == [] and res.payloads == []
+
+
+def _rows(n):
+    from dlc.testing.spec import TestRow
+    return [TestRow(raw="0 0", values=[], line_index=i) for i in range(n)]
+
+
+def _spec_of(n):
+    return TestSpec(name="t", component_index=0, headers=["A", "Sum"],
+                    rows=_rows(n), raw_data_string="",
+                    has_unexpanded_loops=False)
+
+
+def test_tiered_pass_rate_bars():
+    c, _nl, _g = _parsed(_BUG3)
+    # big suite: >10 failing alone is fine while >=90% still passes
+    assert gross_check(c, _spec_of(200), failing_count=15) == []
+    # big suite: >10 failing AND under 90% -> structural
+    kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 11)]
+    assert kinds == ["too_many_failures"]
+    # big suite: many rows failing but <=10 absolute -> still analyzable
+    assert gross_check(c, _spec_of(12), failing_count=2) == []
+    # 6-10 rows: 80% bar
+    assert gross_check(c, _spec_of(8), failing_count=1) == []
+    assert [f["kind"] for f in gross_check(c, _spec_of(8), 2)] == [
+        "low_pass_rate"]
+    # 1-5 rows: 50% bar (bug3's Digital verdict sits exactly on it)
+    assert gross_check(c, _spec_of(4), failing_count=2) == []
+    assert [f["kind"] for f in gross_check(c, _spec_of(4), 3)] == [
+        "low_pass_rate"]
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +170,9 @@ def test_gross_check_flags_unbound_columns():
 def test_gross_check_quiet_on_registered_clocked_circuit():
     c, _nl, _g = _parsed(_BUG3)
     spec = extract_test_specs(c)[0]
-    assert gross_check(c, spec, failing_count=4) == []
+    # 2 of 4 failing sits exactly on the 50% bar; registers exist, so no
+    # missing_clocked_logic either — nothing gross about this circuit
+    assert gross_check(c, spec, failing_count=2) == []
 
 
 def test_select_columns_probe_and_hints():
@@ -201,7 +249,9 @@ def test_cluster_cap_folds_overflow_instead_of_dropping():
 # ---------------------------------------------------------------------------
 
 def test_payload_matches_frozen_contract_shape():
-    res = assemble_evidence_for_file(_BUG3, use_manifest=False)
+    res = assemble_evidence_for_file(
+        _BUG3, use_manifest=False, failing_indices=[0, 1],
+    )
     payload = res.payloads[0]
     assert set(payload) == {"contract", "circuit", "testcase", "cluster",
                             "suspects", "suspect_wiring"}
@@ -213,7 +263,7 @@ def test_payload_matches_frozen_contract_shape():
     cluster = payload["cluster"]
     assert set(cluster) == {"rows", "representative_evidence"}
     assert [set(r) for r in cluster["rows"]] == [
-        {"index", "raw", "mismatches"}] * 4
+        {"index", "raw", "mismatches"}] * 2
     reps = cluster["representative_evidence"]
     assert len(reps) == 2, "full per-net evidence for at most 2 rows"
     for rep in reps:
@@ -230,7 +280,9 @@ def test_payload_matches_frozen_contract_shape():
 def test_suspect_wiring_names_the_true_driver():
     # bug3 has FOUR identical Consts; only #16 feeds the adder's carry-in.
     # The wiring block must say so, or the sub-agent is left guessing.
-    res = assemble_evidence_for_file(_BUG3, use_manifest=False)
+    res = assemble_evidence_for_file(
+        _BUG3, use_manifest=False, failing_indices=[0, 1],
+    )
     wiring = res.payloads[0]["suspect_wiring"]
     assert any(w["component_index"] == 16 for w in wiring)
     w16 = next(w for w in wiring if w["component_index"] == 16)
