@@ -345,7 +345,8 @@ function renderL3Boards(file) {
       // answer can't change); a zero-card analysis keeps it live — the
       // re-run only counts if it delivers. Re-uploading resets anyway.
       enabled: ma.result.mode === "analysis"
-        && !(ma.result.cards || []).length,
+        && !(ma.result.cards || []).length
+        && !((ma.levels || {})["u"] >= 2),
       bodyHtml: l3ModeABodyHtml(ma),
     });
   } else if (mbA && mbA.injectFailing > 0) {
@@ -457,8 +458,8 @@ function l3ModeAStatus(res) {
     const n = (res.cards || []).length;
     if (!n) {
       return { status: "No fix passed machine verification — the best " +
-               "unverified idea is below, and Analyze stays available for " +
-               "a re-run (free unless it delivers).",
+               "unverified idea is below. Re-run stays available until " +
+               "you reveal the idea; after that, fix and re-upload.",
                cls: "blocked" };
     }
     return { status: `${n} verified hypothesis card${n === 1 ? "" : "s"} — ` +
@@ -650,6 +651,14 @@ function _l3FailingRowsTable(res) {
   const body = document.getElementById("l3-a-body");
   if (!body) return;
   body.addEventListener("click", (evt) => {
+    const rr = evt.target.closest("[data-l3a-rerun]");
+    if (rr) {
+      const file = loaded.length > 0 ? loaded[currentIdx] : null;
+      if (file) l3Slot(file.filename).modeA = null;   // fresh run
+      logEvent("l3_modeA_rerun_clicked", {});
+      l3RunModeA();
+      return;
+    }
     const net = evt.target.closest(".l3-netref");
     if (net) { l3FlashNet(net.dataset.l3Net); return; }
     const tr = evt.target.closest("tr[data-l3-simfile]");
@@ -759,7 +768,7 @@ function _l3NotesHtml(notes) {
     notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") + `</ul>`;
 }
 
-// --- Mode B: proposals + accept-flow (2.3 UI + 2.7) --------------------------
+// --- Mode B: proposals + accept-flow --------------------------
 // State lives in slot.modeB: { report, proposing, proposals, accepting,
 // inject: {file: outcomeBody}, injectFailing, tempName, locked }.
 
@@ -810,7 +819,7 @@ function l3ProposalsHtml(mb) {
          word(s); the rows run right AFTER your official rows on the coach's
          temp copy — your own file is never edited.</div>`
       : "";
-    // Deterministic decode truth (07-17): say WHICH lab instruction each
+    // Deterministic decode truth: say WHICH lab instruction each
     // ROM word is — from the manifest decode, never the model's claim.
     const words = (g.word_info || []).map((w) =>
       `<div class="l3-prop-wordinfo">${escapeHtml(w.word)} = <b>${escapeHtml(w.category)}</b>${
@@ -1472,7 +1481,7 @@ async function l3DiscardFail(file) {
 // cluster → one sub-agent per cluster → machine-verified fix cards). The
 // result is stored per circuit (sticky; expires on re-upload) under the
 // filename the run STARTED on, so a mid-run circuit switch can't misfile it.
-l3ARunBtn.addEventListener("click", async () => {
+async function l3RunModeA() {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!file || file.error || !sessionId || l3RunState.a) return;
   const filename = file.filename;
@@ -1523,7 +1532,9 @@ l3ARunBtn.addEventListener("click", async () => {
       && loaded[currentIdx].filename === filename) {
     renderL3Boards(loaded[currentIdx]);
   }
-});
+}
+
+l3ARunBtn.addEventListener("click", l3RunModeA);
 
 // Mode B run: synchronous scan (sub-second even on a full CPU tree). The
 // result is stored per circuit (sticky; expires on re-upload) under the
@@ -1614,6 +1625,27 @@ function l3ShowAdoptPopup(filename) {
   if (msg) { msg.textContent = ""; msg.className = "modal-msg"; }
   modal.classList.remove("hidden");
   logEvent("l3_adopt_popup_shown", { filename });
+  // Two flavors: RAISING an existing official standard vs CREATING the
+  // lab's first official test set — same endpoint, different words.
+  fetch("/api/config/official_tests").then((r) => r.json()).then((b) => {
+    const have = new Set((b.tests || []).map((t) => t.filename));
+    const mb = l3Slot(filename).modeB;
+    const files = Object.keys((mb && mb.inject) || {});
+    const anyExisting = files.some((f) => have.has(f));
+    const title = document.getElementById("adopt-modal-title");
+    const text = document.getElementById("adopt-modal-text");
+    const yes = document.getElementById("adopt-yes-btn");
+    if (anyExisting) return;          // default merge wording already set
+    if (title) title.innerHTML = "New lab detected &#10003;";
+    if (text) {
+      text.innerHTML = "This lab has <b>no official test</b> registered " +
+        "yet. Create one from your verified rows (stored locally on this " +
+        "computer; view in Settings &#9881;)? Future scans then treat it " +
+        "as this lab's standard. Your <code>.dig</code> file itself is " +
+        "never touched.";
+    }
+    if (yes) yes.textContent = "Yes, create the official test";
+  }).catch(() => {});
 }
 
 (function wireAdoptPopup() {
@@ -1775,7 +1807,10 @@ function _l3UnverifiedCardHtml(ma, b) {
     `</div>`;
   if (lvl < 2) {
     html += `<div class="l3-prop-bar">` +
+      `<button class="btn" data-l3a-rerun="1">Re-run analysis</button>` +
       `<button class="btn-ghost" data-l3a-more="u">Show me more</button>` +
+      `<span class="l3-prop-hint">re-running is free unless it delivers a ` +
+      `verified card; revealing the idea LOCKS re-running for this upload</span>` +
       `</div>`;
   } else {
     const opLines = (fix.ops_pretty && fix.ops_pretty.length)
@@ -1796,9 +1831,9 @@ function _l3UnverifiedCardHtml(ma, b) {
       (fix.explanation_for_student
         ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(fix.explanation_for_student))}</div>` : "") +
       `<div class="l3-unv-fail">${escapeHtml(failLine)}.</div>` +
-      `<div class="l3-prop-hint">You can try the idea manually, or hit ` +
-      `Analyze again — a re-run only counts against the daily uses when ` +
-      `it delivers a verified card.</div>` +
+      `<div class="l3-prop-hint">The idea is revealed, so analysis is ` +
+      `locked for this upload: apply it (or your own fix) in Digital, ` +
+      `then re-upload the file to analyze what remains.</div>` +
       `</div>`;
   }
   return html + `</div>`;
