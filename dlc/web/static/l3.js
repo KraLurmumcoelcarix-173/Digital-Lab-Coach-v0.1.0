@@ -347,6 +347,16 @@ function renderL3Boards(file) {
       enabled: false,
       bodyHtml: l3ModeABodyHtml(ma),
     });
+  } else if (mbA && mbA.injectFailing > 0) {
+    _l3PaintBoard("a", {
+      status:
+        `${mbA.injectFailing} accepted coach row${mbA.injectFailing === 1 ? "" : "s"} ` +
+        `fail on your coach temp copy (original + accepted rows) — ` +
+        `ready to analyze the temp.`,
+      cls: "ready",
+      enabled: true,
+      bodyHtml: l3ModeABodyHtml(ma),
+    });
   } else if (!file.summary || !file.summary.has_testcases) {
     _l3PaintBoard("a", {
       status: "This file has no testcases, so there are no failing rows to analyze." + coachHint,
@@ -499,7 +509,7 @@ function _l3CardHtml(ma, c) {
       ? `<div class="l3-hint-signals">watch: ` +
         hint.suspect_signals.map((s) => `<span class="l3-prop-row">${escapeHtml(s)}</span>`).join(" ") + `</div>`
       : "") +
-    (hint.why ? `<div class="l3-prop-why">${escapeHtml(hint.why)}</div>` : "") +
+    (hint.why ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(hint.why))}</div>` : "") +
     `</div>`;
   if (lvl < 2) {
     html += `<div class="l3-prop-bar">` +
@@ -512,7 +522,7 @@ function _l3CardHtml(ma, c) {
     html += `<div class="l3-fix-block">` +
       opLines.map((line) => `<div class="l3-op">${escapeHtml(line)}</div>`).join("") +
       (fix.explanation_for_student
-        ? `<div class="l3-prop-why">${escapeHtml(fix.explanation_for_student)}</div>` : "") +
+        ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(fix.explanation_for_student))}</div>` : "") +
       (ma.result && ma.result.on_coach_temp
         ? `<div class="l3-warn-note">If the circuit still looks right to ` +
           `you after this, remember: some failing rows were coach-added ` +
@@ -558,7 +568,7 @@ function l3ModeABodyHtml(ma) {
     for (const s of res.suggestions || []) {
       html += `<div class="l3-flag">` +
         `<div class="l3-flag-title">${escapeHtml(s.question || "")}</div>` +
-        `<div class="l3-flag-body">${escapeHtml(s.hint || "")}` +
+        `<div class="l3-flag-body">${_l3Netify(escapeHtml(s.hint || ""))}` +
         ((s.terms || []).length
           ? `<div class="l3-hint-signals">` +
             s.terms.map((t) => `<span class="l3-chip">${escapeHtml(t)}</span>`).join(" ") + `</div>`
@@ -568,7 +578,7 @@ function l3ModeABodyHtml(ma) {
     return html;
   }
   for (const line of res.diagnosis_lines || []) {
-    html += `<div class="l3-diag">${escapeHtml(line)}</div>`;
+    html += `<div class="l3-diag">${_l3Netify(escapeHtml(line))}</div>`;
   }
   for (const c of res.cards || []) html += _l3CardHtml(ma, c);
   const dropped = res.dropped_ideas || [];
@@ -601,13 +611,18 @@ function _l3FailingRowsTable(res) {
   if (!spec) return "";
   const failing = (spec.rows || []).filter((r) => r.status === "failed");
   if (!failing.length) return "";
+  const specIdx = Math.max(0, (st.payload.specs || []).indexOf(spec));
   const headers = spec.headers || [];
   let html = `<div class="l3-inj-wrap"><table class="l3-inj-table">` +
     `<tr><td class="l3-idx">row</td>` +
     headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") + `</tr>`;
   for (const row of failing) {
     const toks = (row.raw || "").split(/\s+/).filter(Boolean);
-    html += `<tr class="l3-row-fail"><td class="l3-idx">${row.index}</td>` +
+    html += `<tr class="l3-row-fail l3-row-click"` +
+      ` data-l3-simfile="${escapeHtml(file.filename)}"` +
+      ` data-l3-spec="${specIdx}" data-l3-row="${row.index}"` +
+      ` title="Click to show this row's signal flow on the mirror">` +
+      `<td class="l3-idx">${row.index}</td>` +
       headers.map((_, i) => `<td>${escapeHtml(toks[i] ?? "")}</td>`).join("") +
       `</tr>`;
     if (Array.isArray(row.mismatches) && row.mismatches.length) {
@@ -625,6 +640,10 @@ function _l3FailingRowsTable(res) {
   const body = document.getElementById("l3-a-body");
   if (!body) return;
   body.addEventListener("click", (evt) => {
+    const net = evt.target.closest(".l3-netref");
+    if (net) { l3FlashNet(net.dataset.l3Net); return; }
+    const tr = evt.target.closest("tr[data-l3-simfile]");
+    if (tr) { l3SimTempRow(tr); return; }
     const btn = evt.target.closest("[data-l3a-more]");
     if (!btn) return;
     const file = loaded.length > 0 ? loaded[currentIdx] : null;
@@ -1059,6 +1078,9 @@ async function l3AcceptClick() {
   if (allSet && mb.injectFailing === 0) {
     mb.locked = true;                        // "you're all set" — done today
     logEvent("l3_modeB_all_set", { filename: file.filename });
+    l3ShowAdoptPopup(file.filename);
+  } else if (mb.injectFailing > 0) {
+    l3ShowAcceptFailPopup(file.filename);
   }
   if (l3PageVisible() && loaded[currentIdx]
       && loaded[currentIdx].filename === file.filename) {
@@ -1085,11 +1107,13 @@ async function l3SimTempRow(tr) {
     sim = await res.json();
   } catch { return; }
   if (!sim || sim.ok === false) return;
-  document.querySelectorAll("#l3-b-body tr.l3-row-sel")
+  document.querySelectorAll("#l3-boards tr.l3-row-sel")
     .forEach((t) => t.classList.remove("l3-row-sel"));
   tr.classList.add("l3-row-sel");
   applySignalFlow(sim, l3Cy);               // same painter Layer 1 uses
-  logEvent("l3_modeB_temp_row_viewed", { filename, row: rowIdx });
+  logEvent(tr.closest("#l3-a-body") ? "l3_modeA_row_viewed"
+                                    : "l3_modeB_temp_row_viewed",
+           { filename, row: rowIdx });
 }
 
 // --- AUTO-DRILL: subcircuit-testcase rows play their own descent -------
@@ -1619,5 +1643,87 @@ function l3ShowAdoptPopup(filename) {
       modal.classList.add("hidden");
       renderL3Boards(cur);
     }
+  });
+})();
+
+
+// Net-id mentions inside Mode A text ("net 7") become interactive: click
+// turns the net-id overlay ON (if off) and flashes that net blue on the
+// mirror. Board A only — the handler lives in wireL3BoardA.
+function _l3Netify(escapedHtml) {
+  return String(escapedHtml).replace(/\bnet[\s_]*#?(\d+)\b/gi, (m, id) =>
+    `<span class="l3-netref" data-l3-net="${id}" ` +
+    `title="Click to flash net ${id} on the mirror">${m}</span>`);
+}
+
+let _l3FlashTimer = null;
+
+function l3FlashNet(id) {
+  if (!l3Cy) return;
+  if (!l3NetIdsOn) { l3NetIdsOn = true; l3ApplyNetIds(); }
+  const eles = l3Cy.edges(`[net_id = ${Number(id)}]`);
+  if (!eles.length) return;
+  if (_l3FlashTimer) {
+    clearInterval(_l3FlashTimer);
+    _l3FlashTimer = null;
+    l3Cy.edges().removeClass("netid-flash");
+  }
+  let k = 0;
+  _l3FlashTimer = setInterval(() => {
+    eles.toggleClass("netid-flash");
+    k += 1;
+    if (k >= 8) {
+      clearInterval(_l3FlashTimer);
+      _l3FlashTimer = null;
+      eles.removeClass("netid-flash");
+    }
+  }, 240);
+  logEvent("l3_netref_flashed", { net: Number(id) });
+}
+
+// Accept produced FAILING coach rows: ask before keeping them. Yes keeps
+// the temp and restarts Mode A from the fresh failing-rows state (Accept
+// never touches the official tests — only Adopt after all-set does);
+// No discards the injected rows and removes the temp copies.
+let _l3AcceptFailPending = null;
+
+function l3ShowAcceptFailPopup(filename) {
+  const modal = document.getElementById("acceptfail-modal");
+  if (!modal) return;
+  _l3AcceptFailPending = filename;
+  modal.classList.remove("hidden");
+  logEvent("l3_acceptfail_popup_shown", { filename });
+}
+
+(function wireAcceptFailPopup() {
+  const modal = document.getElementById("acceptfail-modal");
+  if (!modal) return;
+  const yes = document.getElementById("acceptfail-yes-btn");
+  const no = document.getElementById("acceptfail-no-btn");
+  if (yes) yes.addEventListener("click", () => {
+    modal.classList.add("hidden");
+    const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+    if (!cur || cur.filename !== _l3AcceptFailPending) return;
+    l3Slot(cur.filename).modeA = null;   // fresh analysis on the temp
+    logEvent("l3_acceptfail_kept", { filename: cur.filename });
+    renderL3Boards(cur);
+  });
+  if (no) no.addEventListener("click", async () => {
+    modal.classList.add("hidden");
+    const cur = loaded.length > 0 ? loaded[currentIdx] : null;
+    if (!cur || !sessionId || cur.filename !== _l3AcceptFailPending) return;
+    const mb = l3Slot(cur.filename).modeB;
+    for (const f of Object.keys((mb && mb.inject) || {})) {
+      try {
+        await fetch("/api/l3/uninject", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, filename: f }),
+        });
+      } catch {}
+    }
+    if (mb) { mb.inject = null; mb.injectFailing = 0; mb.locked = false; }
+    logEvent("l3_acceptfail_discarded", { filename: cur.filename });
+    renderL3Boards(cur);
   });
 })();

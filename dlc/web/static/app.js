@@ -112,6 +112,17 @@ const CY_STYLE = [
       "text-border-opacity": 0.6,
     },
   },
+  // Blue blink for a clicked net-id reference in Mode A (l3FlashNet).
+  {
+    selector: "edge.netid-flash",
+    style: {
+      "line-color": "#2563eb",
+      "target-arrow-color": "#2563eb",
+      "width": 3.5,
+      "color": "#1d4ed8",
+      "text-background-color": "#dbeafe",
+    },
+  },
   {
     selector: "node.issue-target",
     style: {
@@ -1311,7 +1322,8 @@ testAllBtn.addEventListener("click", async () => {
   testAllBtn.disabled = true;
   testAllBtn.textContent = "Testing...";
   testAllPanel.classList.remove("hidden");
-  testAllHeadEl.textContent = "Testing all files...";
+  testAllHeadEl.innerHTML =
+    `<span class="l3-spinner"></span> Testing all files...`;
   testAllListEl.innerHTML = "";
   logEvent("tests_run_all_started", { count: loaded.length });
 

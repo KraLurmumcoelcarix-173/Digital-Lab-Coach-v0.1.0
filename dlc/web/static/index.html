@@ -312,6 +312,23 @@
         </div>
       </div>
 
+      <div id="acceptfail-modal" class="modal modal-blur hidden">
+        <div class="modal-card" style="width:min(500px,92vw);">
+          <h3>Accepted tests have failing rows</h3>
+          <p class="muted" style="font-size:12.5px;">
+            Some accepted row(s) FAIL on the temp copy &mdash; either your
+            circuit has a bug there, or a coach row itself is wrong. Keep
+            them and debug the coach temp with Mode A? (Accept never
+            touches the official tests &mdash; only <b>Adopt</b> after an
+            all-set run does.)</p>
+          <div class="modal-row">
+            <div class="modal-spacer"></div>
+            <button id="acceptfail-no-btn" class="btn-ghost">No &mdash; discard them</button>
+            <button id="acceptfail-yes-btn" class="btn">Yes &mdash; keep &amp; debug the temp</button>
+          </div>
+        </div>
+      </div>
+
       <div id="jar-modal" class="modal hidden">
         <div class="modal-card">
           <h3>Configure Digital.jar</h3>

@@ -280,3 +280,6 @@
 .l3-mm-row td { color: #991b1b; background: #fff1f2; font-size: 10.5px;
   font-family: inherit; }
 .l3-standards { margin-top: 10px; font-size: 11.5px; }
+.l3-netref { font-weight: 700; color: #2563eb; cursor: pointer;
+  border-bottom: 1px dotted #2563eb; }
+.l3-netref:hover { background: #dbeafe; border-radius: 3px; }
