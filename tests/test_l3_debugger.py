@@ -325,3 +325,33 @@ def test_describe_ops_arrows_follow_signal_direction():
     ])
     assert lines[0] == "rewire [14] Multiplexer.in3 ← [9] bool_unit.dig.Result"
     assert lines[1] == "delete [23] Ground"
+
+
+def test_zero_card_run_earns_one_escalation_per_cluster():
+    # first answer refuted, its retry refuted again -> the run would be
+    # empty -> ONE escalation attempt with the refuted ops disclosed
+    call = _fake([_reply(BAD_OPS), _reply(BAD_OPS), _reply(GOOD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["llm_calls"] == 3
+    assert "[ESCALATION]" in call.log[2] and '"refuted_ops"' in call.log[2]
+    assert len(res["cards"]) == 1
+    assert res["cards"][0]["fix"]["ops"] == GOOD_OPS
+    assert any("escalation pass ran" in n for n in res["notes"])
+
+
+def test_led5_gate_swap_fix_confirms_offline():
+    # the seeded LED5 bug: an Or turned into an And at index 164 — the
+    # single replace_element found by exhaustive verification
+    led = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+           f"wrong_bool_LED5.dig")
+    reply = _reply([{"op": "replace_element", "component_index": 164,
+                     "new_element": "Or"}],
+                   why="Ff is 0 whenever either minterm group fires.")
+    call = _fake([reply])
+    res = debug_circuit(led, call=call, use_manifest=False,
+                        failing_indices=[1, 2])
+    assert res["mode"] == "analysis"
+    card = res["cards"][0]
+    assert card["verified"]["confirmed"] is True
+    assert card["fix"]["ops_pretty"] == ["replace [164] And with Or"]

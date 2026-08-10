@@ -626,6 +626,48 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                            "animation": clean["animation"],
                            "verdict": verdict})
 
+    # Escalation — one extra shot per cluster, ONLY when the whole run
+    # would otherwise deliver nothing: all refuted ops are disclosed and
+    # the prompt forces the gate-kind sanity check over the wiring values
+    # table ("the culprit is a DIFFERENT component"). Clusters whose
+    # replies never validated get no escalation — there is nothing to
+    # refute, and two format failures already spent their budget.
+    if hypotheses and not any(h["verdict"]["confirmed"] for h in hypotheses):
+        tried: dict[int, list] = {}
+        for h in hypotheses:
+            tried.setdefault(h["cluster_index"], []).append(h["ops"])
+        for ci, (cluster, payload) in enumerate(
+                zip(evres.clusters, evres.payloads)):
+            if ci not in tried:
+                continue
+            cluster_rows = [r.row_index for r in cluster.rows]
+            prompt = prompt_template.replace(
+                "<<PAYLOAD_JSON>>",
+                json.dumps(payload, indent=2, default=str)) + (
+                "\n\n[ESCALATION]\n"
+                + json.dumps({"refuted_ops": tried[ci]}, indent=2,
+                             default=str))
+            reply = ask(prompt)
+            if not reply.get("ok"):
+                continue
+            clean, _err = validate_hypothesis(
+                parse_agent_json(reply.get("text")))
+            if clean is None:
+                continue
+            verdict = verify_ops(str(dig_path), spec.name, clean["ops"],
+                                 cluster_rows, original_failing,
+                                 jar_path=jar_path)
+            hypotheses.append({"cluster_index": ci,
+                               "cluster_rows": cluster_rows,
+                               "confidence": clean["confidence"],
+                               "hint": clean["hint"], "ops": clean["ops"],
+                               "explanation": clean["explanation"],
+                               "animation": clean["animation"],
+                               "verdict": verdict})
+        notes.append("escalation pass ran: every first-round hypothesis "
+                     "was refuted, so each cluster got one more attempt "
+                     "with the refuted ops disclosed.")
+
     ranked = dedupe_hypotheses(hypotheses)
     cards: list[dict] = []
     carded: set[int] = set()

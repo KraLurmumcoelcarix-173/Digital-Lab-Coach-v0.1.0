@@ -485,11 +485,19 @@ def compact_circuit_facts(circuit, netlist=None, graph=None) -> dict:
     return _compact_facts(extract_facts(circuit, netlist, graph).to_dict())
 
 
-def suspect_wiring(circuit, netlist, indices: list[int]) -> list[dict]:
+def suspect_wiring(circuit, netlist, indices: list[int],
+                   rep_rows: list["RowEvidence"] | None = None) -> list[dict]:
     """Pin-level connection truth for the suspect components — for every
     suspect, each pin and the far ends of its net (the netlist already
     merges across tunnels). This is what lets the sub-agent tell WHICH of
-    four identical Consts feeds the adder's c_i instead of guessing."""
+    four identical Consts feeds the adder's c_i instead of guessing.
+
+    When representative rows are given, every pin also carries its ACTUAL
+    value on those rows (``values: {row_index: value}``) — the join
+    between wiring and net_values done FOR the model, so same-scored
+    suspects separate by behavior: the gate whose output contradicts what
+    its element kind computes from its inputs is the prime candidate
+    (the LED-lab lesson, same shape as the 4-Const lesson)."""
     out: list[dict] = []
     for idx in indices:
         if not (0 <= idx < len(circuit.components)):
@@ -512,10 +520,18 @@ def suspect_wiring(circuit, netlist, indices: list[int]) -> list[dict]:
                     "pin": q.pin_name,
                     "direction": q.direction,
                 })
+            values = {}
+            for r in rep_rows or []:
+                nv = r.net_values.get(str(net.net_id))
+                if nv is not None:
+                    values[str(r.row_index)] = nv.get("value")
             for p in mine:
-                pins.append({"pin": p.pin_name, "direction": p.direction,
-                             "net_id": net.net_id,
-                             "connects_to": others[:6]})
+                entry = {"pin": p.pin_name, "direction": p.direction,
+                         "net_id": net.net_id,
+                         "connects_to": others[:6]}
+                if values:
+                    entry["values"] = values
+                pins.append(entry)
         out.append({"component_index": idx, "element": comp.element_name,
                     "label": comp.label, "pins": pins})
     return out
@@ -547,7 +563,8 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
     }
     if circuit is not None and netlist is not None:
         payload["suspect_wiring"] = suspect_wiring(
-            circuit, netlist, cluster.merged.suspect_indices())
+            circuit, netlist, cluster.merged.suspect_indices(),
+            rep_rows=reps)
     return payload
 
 

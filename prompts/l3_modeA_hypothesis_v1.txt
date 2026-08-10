@@ -36,14 +36,27 @@ fault-localizer report: components ranked by presence on the ACTIVE signal
 path of failing outputs, with per-suspect reasons; `component_index` there
 is the index your fix ops must use. `suspect_wiring` lists, for EVERY
 suspect, each pin and the exact far ends of its net (tunnels already
-resolved) — read it before choosing ops, so you target the component that
+resolved), plus `values` — that pin's ACTUAL value on the representative
+rows. Read it before choosing ops, so you target the component that
 actually drives the suspicious pin instead of a look-alike (e.g. WHICH of
-four Consts feeds the adder's c_i).
+four Consts feeds the adder's c_i). GATE-KIND SANITY CHECK: for every
+suspect gate, compute what its element kind SHOULD output from its input
+`values` and compare with its output value — a gate is the prime suspect
+when its inputs are right but its output is only explainable by a
+DIFFERENT kind (inputs 1,0 → output 0 is correct for And but wrong for
+Or: the fix is replace_element, not rewiring).
 
 [REFUTED ATTEMPT] (present only on a retry)
 If this block appears, a previous hypothesis was applied and REFUTED by
 the re-run shown there. Propose a DIFFERENT root cause or a corrected fix;
 do not repeat the refuted ops.
+
+[ESCALATION] (present only when a whole run produced no confirmed fix)
+Every earlier hypothesis for this cluster was refuted; their ops are
+listed in the block. The culprit is almost certainly a DIFFERENT
+component than those already tried. Work strictly from the values table:
+run the gate-kind sanity check over every suspect before answering, and
+prefer the single smallest op that flips the contradicting gate.
 
 # OUTPUT — one strict JSON object, nothing else (no prose, no fences)
 {

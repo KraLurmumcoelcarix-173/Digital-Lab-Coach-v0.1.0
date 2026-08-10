@@ -283,3 +283,4 @@
 .l3-netref { font-weight: 700; color: #2563eb; cursor: pointer;
   border-bottom: 1px dotted #2563eb; }
 .l3-netref:hover { background: #dbeafe; border-radius: 3px; }
+.l3-spinner { vertical-align: -3px; margin-right: 5px; }

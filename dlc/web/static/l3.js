@@ -506,8 +506,8 @@ function _l3CardHtml(ma, c) {
   html += `<div class="l3-hint-block"><b>Where to look:</b> ` +
     escapeHtml(hint.suspect_region || "") +
     ((hint.suspect_signals || []).length
-      ? `<div class="l3-hint-signals">watch: ` +
-        hint.suspect_signals.map((s) => `<span class="l3-prop-row">${escapeHtml(s)}</span>`).join(" ") + `</div>`
+      ? `<div class="l3-hint-signals">` +
+        hint.suspect_signals.map((s) => `<span class="l3-prop-row">${_l3Netify(escapeHtml(s))}</span>`).join(" ") + `</div>`
       : "") +
     (hint.why ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(hint.why))}</div>` : "") +
     `</div>`;

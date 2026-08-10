@@ -358,3 +358,30 @@ def test_row_category_decodes_through_a_program_rom():
     assert got["category"] == "demo"
     assert got["word"] == f"{word:x}"
     assert got["fields"]["opcode"] == word & 0xF
+
+
+def test_suspect_wiring_carries_pin_values_for_representative_rows():
+    # the LED-lab lesson: same-scored suspects separate by BEHAVIOR, so
+    # every wiring pin carries its actual value on the representative rows
+    res = assemble_evidence_for_file(
+        _BUG3, use_manifest=False, failing_indices=[0, 1],
+    )
+    w16 = next(w for w in res.payloads[0]["suspect_wiring"]
+               if w["component_index"] == 16)
+    out_pin = next(p for p in w16["pins"] if p["direction"] == "out")
+    assert out_pin["values"] == {"0": 1, "1": 1}, \
+        "the carry-in Const must show value 1 on both representative rows"
+
+
+def test_case3_fixture_is_clean_but_hides_the_mux_bug():
+    # bug6: bug1's circuit with the Op=3 rows REMOVED — passes everything,
+    # so Mode B's arm-coverage note is the only trace of the hidden bug
+    path = (f"{_BENCH}/bug6_hidden_mux_case3/hidden_mux_calculator.dig")
+    res = assemble_evidence_for_file(path, use_manifest=False)
+    assert res.mode == "clear"
+    from dlc.l3.coverage import scan_tree_coverage
+    rep = scan_tree_coverage(path)
+    root = rep.circuits[0]
+    assert root.flags == []
+    assert any("arm 3" in n and "never selected" in n
+               for n in (root.notes or []))

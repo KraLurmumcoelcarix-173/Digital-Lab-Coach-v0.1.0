@@ -82,7 +82,10 @@ injected rows this session, the coordinator targets the CURRENT TEMP CIRCUIT
 `suspect_wiring` (v1.1) is the pin-level connection truth for every ranked
 suspect — the netlist's far ends per pin, tunnels resolved — so the agent
 can tell WHICH of several identical components drives the suspicious pin
-instead of guessing among look-alikes.
+instead of guessing among look-alikes. Each pin also carries `values`
+({row_index: value} on the representative rows): the wiring↔net_values
+join done FOR the model, so same-scored suspects separate by behavior
+(a gate whose output contradicts its element kind is the prime candidate).
 
 The agent reasons ONLY over these verified facts and is SINGLE-SHOT
 (v1.1, ratified): no tools, no iteration, no nested fetches — one format
@@ -149,6 +152,10 @@ For each hypothesis: `apply_patch(fix.ops)` → L1-regression guard →
 `rerun_with_patch` → **CONFIRMED** iff (a) every row of the agent's cluster
 now passes, (b) no previously-passing row regresses, (c) the guard passed.
 Refuted → one retry with the refutation evidence appended, then dropped.
+When a whole run would deliver ZERO cards, each validly-answered cluster
+gets ONE escalation attempt with every refuted op disclosed and the
+gate-kind sanity check forced ([ESCALATION] block) — still verified, still
+droppable; nothing is ever forced through unverified.
 Merge/dedupe (by normalized op list) → rank by (confirmed, rows covered,
 confidence) → top-K = 3 hypothesis cards. Cards carry ONLY confirmed
 hypotheses; everything else lands in `dropped_ideas`.
