@@ -874,20 +874,26 @@ def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
         notes.append("self-check confirmed every proposed row.")
         return valid, rejected, notes
 
-    kept: list[dict] = []
+    # This is the ONLY gate with no machine truth behind it (the model
+    # re-deriving its own rows blind), so an unconfirmed row is DELIVERED
+    # AS DISPUTED, never silently dropped: either the row is wrong or the
+    # circuit hides a bug exactly there, and only the student can decide
+    # (accept → temp rerun → the accept-failed popup → Mode A). Every gate
+    # that does hold real truth — format, duplicate, category, lazy,
+    # replay, reference — still drops as before.
+    n_disputed = 0
     for gi, g in enumerate(valid):
-        rows = [r for ri, r in enumerate(g["rows"]) if (gi, ri) not in drop]
-        for ri, r in enumerate(g["rows"]):
-            if (gi, ri) in drop:
-                rejected.append({"file": g["file"], "spec_name": g["spec_name"],
-                                 "rows": [r], "why": g.get("why", ""),
-                                 "reason": "failed the coach's self-check "
-                                           "(could not re-derive the same "
-                                           "expected outputs)"})
-        if rows:
-            kept.append({**g, "rows": rows})
-    notes.append(f"self-check dropped {len(drop)} row(s).")
-    return kept, rejected, notes
+        marks = sorted(ri for (gj, ri) in drop if gj == gi)
+        if marks:
+            g["disputed_rows"] = marks
+            n_disputed += len(marks)
+    notes.append(
+        f"self-check could not independently confirm {n_disputed} row(s) — "
+        f"delivered as DISPUTED. Accept them only if you are confident they "
+        f"match the lab's intent; a disputed row that then fails on the "
+        f"temp copy means either the row is wrong (discard it) or your "
+        f"circuit has a bug right there (Mode A).")
+    return valid, rejected, notes
 
 
 def _row_cell_value(cell) -> int | None:

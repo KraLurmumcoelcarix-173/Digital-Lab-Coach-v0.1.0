@@ -385,3 +385,22 @@ def test_case3_fixture_is_clean_but_hides_the_mux_bug():
     assert root.flags == []
     assert any("arm 3" in n and "never selected" in n
                for n in (root.notes or []))
+
+
+def test_focused_failure_exempts_the_rate_bars():
+    # LED5 under a strict jar: 5 of 5 rows fail, but every mismatch sits
+    # in ONE output column (Ff) — a single wrong gate, localizable, so
+    # the rate bars step aside. Without column info the bars still apply.
+    led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+            f"wrong_bool_LED5.dig")
+    cells = {i: [{"column": "Ff", "expected": "1", "found": "0"}]
+             for i in range(5)}
+    res = assemble_evidence_for_file(
+        led5, use_manifest=False,
+        failing_indices=[0, 1, 2, 3, 4], jar_mismatches=cells,
+    )
+    assert res.mode == "analysis"
+    res2 = assemble_evidence_for_file(
+        led5, use_manifest=False, failing_indices=[0, 1, 2, 3, 4],
+    )
+    assert res2.mode == "lazy"

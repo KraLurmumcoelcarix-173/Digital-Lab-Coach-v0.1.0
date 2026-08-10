@@ -341,10 +341,11 @@ function renderL3Boards(file) {
     _l3PaintBoard("a", {
       status: st.status + coachHint,
       cls: st.cls,
-      // a finished run grays the button — a delivered analysis costs a
-      // daily use and re-running the same upload cannot change the answer.
-      // Re-uploading (which resets the store) re-enables it.
-      enabled: false,
+      // a DELIVERED analysis grays the button (it cost a use and the
+      // answer can't change); a zero-card analysis keeps it live — the
+      // re-run only counts if it delivers. Re-uploading resets anyway.
+      enabled: ma.result.mode === "analysis"
+        && !(ma.result.cards || []).length,
       bodyHtml: l3ModeABodyHtml(ma),
     });
   } else if (mbA && mbA.injectFailing > 0) {
@@ -455,8 +456,9 @@ function l3ModeAStatus(res) {
   if (res.mode === "analysis") {
     const n = (res.cards || []).length;
     if (!n) {
-      return { status: "No verified fix survived this run — the ideas it " +
-               "tried are below. It did not count against today's uses.",
+      return { status: "No fix passed machine verification — the best " +
+               "unverified idea is below, and Analyze stays available for " +
+               "a re-run (free unless it delivers).",
                cls: "blocked" };
     }
     return { status: `${n} verified hypothesis card${n === 1 ? "" : "s"} — ` +
@@ -581,13 +583,21 @@ function l3ModeABodyHtml(ma) {
     html += `<div class="l3-diag">${_l3Netify(escapeHtml(line))}</div>`;
   }
   for (const c of res.cards || []) html += _l3CardHtml(ma, c);
+  if (!(res.cards || []).length && res.best_unverified) {
+    html += _l3UnverifiedCardHtml(ma, res.best_unverified);
+  }
   const dropped = res.dropped_ideas || [];
   if (dropped.length) {
     html += `<details class="l3-rej-details">` +
       `<summary>${dropped.length} idea${dropped.length === 1 ? "" : "s"} tried and dropped</summary>` +
       dropped.map((d) =>
         `<div class="l3-rej-pair"><span class="l3-rej-where">${escapeHtml(d.reason || "")}</span>` +
-        ` — ${escapeHtml(d.why || d.detail || "no detail")}</div>`).join("") +
+        ` — ${_l3Netify(escapeHtml(d.why || "no detail"))}` +
+        ((d.ops_pretty || []).length
+          ? `<div class="l3-rej-raw"><code>${escapeHtml(d.ops_pretty.join(" ; "))}</code>` +
+            (d.detail ? `<small>${escapeHtml(d.detail)}</small>` : "") + `</div>`
+          : (d.detail ? `<div class="l3-rej-raw"><small>${escapeHtml(d.detail)}</small></div>` : "")) +
+        `</div>`).join("") +
       `</details>`;
   }
   if ((res.notes || []).length) html += _l3NotesHtml(res.notes);
@@ -777,8 +787,20 @@ function l3ProposalsHtml(mb) {
   let html = `<div class="l3-sec-title">Coach proposals
     <span class="muted">(model: ${escapeHtml(p.model || "?")})</span></div>`;
   p.proposals.forEach((g, gi) => {
-    const rows = g.rows.map((r) =>
-      `<div class="l3-prop-row">${escapeHtml(r)}</div>`).join("");
+    const disputed = g.disputed_rows || [];
+    const rows = g.rows.map((r, ri) =>
+      `<div class="l3-prop-row${disputed.includes(ri) ? " l3-row-disputed" : ""}">${escapeHtml(r)}${
+        disputed.includes(ri)
+          ? ` <span class="l3-chip l3-chip-warn" title="The coach could not independently re-derive this row's expected outputs — no ground truth exists for it.">coach unsure</span>`
+          : ""}</div>`).join("");
+    const dispHint = disputed.length
+      ? `<div class="l3-warn-note">${disputed.length === g.rows.length ? "These rows are" : "The marked rows are"} DISPUTED — the
+         coach could not independently confirm their expected outputs.
+         Accept only if you are confident they match the lab's intent: a
+         disputed row that fails on the temp copy means either the row is
+         wrong (discard it) or your circuit has a bug right there
+         (Analyze on Mode A).</div>`
+      : "";
     const isProg = !!(g.program_words && g.program_words.length);
     const prog = isProg
       ? `<div class="l3-prop-row l3-prop-prog">+ ROM: ${escapeHtml(g.program_words.join(" "))}</div>`
@@ -801,6 +823,7 @@ function l3ProposalsHtml(mb) {
         ${prog}
         ${words}
         ${rows}
+        ${dispHint}
         <div class="l3-prop-why">${escapeHtml(g.why)}</div>
         ${progHint}
       </div></label>`;
@@ -1727,3 +1750,56 @@ function l3ShowAcceptFailPopup(filename) {
     renderL3Boards(cur);
   });
 })();
+
+// Best-unverified survivor: when nothing passed the verifier, the top-
+// ranked idea still ships — amber, honest about which rows it failed to
+// fix, behind the same Show-me-more ladder (levels key "u").
+function _l3UnverifiedCardHtml(ma, b) {
+  const lvl = (ma.levels && ma.levels["u"]) || 1;
+  const hint = b.hint || {};
+  const fix = b.fix || {};
+  const v = b.verdict || {};
+  let html = `<div class="l3-cov-circuit l3-unverified">` +
+    `<div class="l3-cov-head">` +
+    `<span class="l3-chip l3-chip-warn" title="This idea did NOT pass the machine re-run — it is the best surviving guess, not a verified fix.">best idea — NOT machine-verified</span>` +
+    `<span class="l3-chip">confidence ${Math.round((b.confidence || 0) * 100)}%</span>` +
+    `<span class="l3-chip l3-chip-none">row${(b.cluster_rows || []).length === 1 ? "" : "s"} ${(b.cluster_rows || []).join(", ")}</span>` +
+    `</div>`;
+  html += `<div class="l3-hint-block"><b>Where to look:</b> ` +
+    escapeHtml(hint.suspect_region || "") +
+    ((hint.suspect_signals || []).length
+      ? `<div class="l3-hint-signals">` +
+        hint.suspect_signals.map((s) => `<span class="l3-prop-row">${_l3Netify(escapeHtml(s))}</span>`).join(" ") + `</div>`
+      : "") +
+    (hint.why ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(hint.why))}</div>` : "") +
+    `</div>`;
+  if (lvl < 2) {
+    html += `<div class="l3-prop-bar">` +
+      `<button class="btn-ghost" data-l3a-more="u">Show me more</button>` +
+      `</div>`;
+  } else {
+    const opLines = (fix.ops_pretty && fix.ops_pretty.length)
+      ? fix.ops_pretty
+      : (fix.ops || []).map(_l3OpDesc);
+    let failLine = "This idea did NOT pass the re-run";
+    if ((v.still_failing || []).length) {
+      failLine += `: row(s) ${v.still_failing.join(", ")} still fail`;
+    }
+    if ((v.regressions || []).length) {
+      failLine += `; it also broke row(s) ${v.regressions.join(", ")}`;
+    }
+    if (v.apply_ok === false) {
+      failLine += ` (it could not even be applied: ${v.warning || "apply failed"})`;
+    }
+    html += `<div class="l3-fix-block">` +
+      opLines.map((line) => `<div class="l3-op l3-op-unv">${escapeHtml(line)}</div>`).join("") +
+      (fix.explanation_for_student
+        ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(fix.explanation_for_student))}</div>` : "") +
+      `<div class="l3-unv-fail">${escapeHtml(failLine)}.</div>` +
+      `<div class="l3-prop-hint">You can try the idea manually, or hit ` +
+      `Analyze again — a re-run only counts against the daily uses when ` +
+      `it delivers a verified card.</div>` +
+      `</div>`;
+  }
+  return html + `</div>`;
+}

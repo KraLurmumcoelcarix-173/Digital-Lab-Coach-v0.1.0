@@ -161,9 +161,12 @@ def test_propose_rows_happy_path_with_fake_model(tmp_path):
     assert out["error"] is None
 
 
-def test_selfcheck_drops_a_row_it_cannot_reproduce(tmp_path):
-    # DELIBERATELY WRONG row (1 AND 0 is NOT 1) — this test PROVES the
-    # self-check gate kills hallucinated expectations before display.
+def test_selfcheck_delivers_unconfirmed_rows_as_disputed(tmp_path):
+    # A row the coach cannot re-derive ("1 0 1" — 1 AND 0 is NOT 1) is no
+    # longer silently dropped: the self-check gate has no machine truth
+    # behind it, so the row ships as DISPUTED and the student decides.
+    # Accepting it fails on the temp copy → the accept-failed popup →
+    # either discard the row or debug the circuit with Mode A (case 3).
     student = _two_row_and(tmp_path)
     spec_name = proposer.build_targets(
         scan_tree_coverage(str(student)))[0]["spec_name"]
@@ -174,8 +177,12 @@ def test_selfcheck_drops_a_row_it_cannot_reproduce(tmp_path):
     selfcheck = json.dumps({"rows": [{"index": 0, "outputs": {"Y": "0"}}]})
     out = proposer.propose_rows(str(student), call=_fake_two(text, selfcheck))
     assert out["ok"] is True
-    assert out["proposals"] == []
-    assert any("self-check" in r["reason"] for r in out["rejected"])
+    assert len(out["proposals"]) == 1
+    assert out["proposals"][0]["rows"] == ["1 0 1"]
+    assert out["proposals"][0]["disputed_rows"] == [0]
+    assert not any("self-check" in (r.get("reason") or "")
+                   for r in out["rejected"])
+    assert any("DISPUTED" in n for n in out["notes"])
 
 
 def test_reference_gate_drops_rows_the_reference_refutes(tmp_path, monkeypatch):

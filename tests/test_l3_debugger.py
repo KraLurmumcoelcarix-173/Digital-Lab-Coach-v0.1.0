@@ -355,3 +355,32 @@ def test_led5_gate_swap_fix_confirms_offline():
     card = res["cards"][0]
     assert card["verified"]["confirmed"] is True
     assert card["fix"]["ops_pretty"] == ["replace [164] And with Or"]
+
+
+def test_best_unverified_survivor_when_everything_is_refuted():
+    # first answer, refutation retry, escalation — all three refuted →
+    # zero cards, but the top-ranked idea ships as best_unverified with
+    # exactly which rows it failed to fix; the board can offer a re-run
+    call = _fake([_reply(BAD_OPS), _reply(BAD_OPS), _reply(BAD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["llm_calls"] == 3
+    assert res["cards"] == []
+    b = res["best_unverified"]
+    assert b is not None
+    assert b["fix"]["ops"] == BAD_OPS
+    assert b["fix"]["ops_pretty"] == ["set [16] Const attribute Value = 1"]
+    assert b["verdict"]["still_failing"] == [0, 1]
+    assert b["hint"]["suspect_region"]
+    assert any("best unverified" in n.lower() or "unverified idea" in n
+               for n in res["notes"])
+    assert all((d.get("ops_pretty") or []) for d in res["dropped_ideas"]), \
+        "dropped ideas must show what they tried"
+
+
+def test_no_best_unverified_without_any_valid_hypothesis():
+    call = _fake(["nope", "still nope"])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["cards"] == []
+    assert res["best_unverified"] is None

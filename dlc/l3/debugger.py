@@ -702,17 +702,53 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             reason = "refuted"
         else:
             reason = "patch_failed"
+        det = h["verdict"]["warning"]
+        if not det and h["verdict"]["still_failing"]:
+            det = ("applied cleanly, but row(s) "
+                   + ", ".join(map(str, h["verdict"]["still_failing"]))
+                   + " still fail")
+            if h["verdict"]["regressions"]:
+                det += ("; it also broke row(s) "
+                        + ", ".join(map(str, h["verdict"]["regressions"])))
         dropped.append({
             "cluster_rows": h["cluster_rows"],
             "reason": reason,
             "why": h["hint"].get("why") or h["hint"].get("suspect_region"),
-            "detail": h["verdict"]["warning"],
+            "detail": det,
+            "ops_pretty": describe_ops(circuit, h["ops"]),
         })
+
+    # Never leave the student empty-handed: when NOTHING passed the
+    # verifier, the best-ranked surviving idea ships anyway — clearly
+    # labeled unverified, with exactly which rows it failed to fix. The
+    # run stays free, and the Analyze button stays live for a re-run
+    # (which only counts when it delivers verified cards).
+    best_unverified = None
+    if not cards and ranked:
+        b = ranked[0]
+        best_unverified = {
+            "confidence": b["confidence"],
+            "cluster_rows": b["cluster_rows"],
+            "hint": b["hint"],
+            "fix": {"ops": b["ops"],
+                    "ops_pretty": describe_ops(circuit, b["ops"]),
+                    "explanation_for_student": b["explanation"]},
+            "verdict": {"apply_ok": b["verdict"]["apply_ok"],
+                        "runner": b["verdict"]["runner"],
+                        "still_failing": b["verdict"]["still_failing"],
+                        "regressions": b["verdict"]["regressions"],
+                        "warning": b["verdict"]["warning"]},
+        }
+        notes.append("no fix passed machine verification — the best "
+                     "unverified idea is shown, clearly labeled. Analyze "
+                     "stays available; only a run that delivers a verified "
+                     "card counts against the daily uses.")
 
     return {**base, "mode": "analysis",
             "diagnosis_lines": [_diagnosis_line(c) for c in evres.clusters],
             "clusters": evres.to_dict()["clusters"],
             "cards": cards,
+            "best_unverified": best_unverified,
             "dropped_ideas": dropped,
             "verify_runner": "digital" if jar else "evaluator",
             "usage": usage, "llm_calls": calls}

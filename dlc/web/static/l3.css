@@ -283,4 +283,9 @@
 .l3-netref { font-weight: 700; color: #2563eb; cursor: pointer;
   border-bottom: 1px dotted #2563eb; }
 .l3-netref:hover { background: #dbeafe; border-radius: 3px; }
-.l3-spinner { vertical-align: -3px; margin-right: 5px; }
+.l3-spinner { vertical-align: -3px; margin-right: 5px; }.l3-row-disputed { background: #fffbeb; border: 1px solid #fde68a;
+  color: #92400e; }
+.l3-unverified { border-color: #fde68a; background: #fffbeb; }
+.l3-op-unv { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.l3-unv-fail { color: #b91c1c; font-size: 11.5px; font-weight: 600;
+  margin-top: 5px; }

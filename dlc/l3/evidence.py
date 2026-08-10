@@ -271,6 +271,7 @@ def _holds_state(circuit) -> bool:
 def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 max_failing: int = GROSS_MAX_FAILING,
                 rate_gate_min_components: int = RATE_GATE_MIN_COMPONENTS,
+                failing_columns: set | None = None,
                 ) -> list[dict]:
     """Deterministic checks that mean the circuit needs fundamentals, not
     a per-bug hypothesis hunt. Any flag → mode "lazy" (suggestion-only
@@ -284,6 +285,12 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
     #   1-5  rows:  lazy when pass rate < 50%
     if len(circuit.components) <= rate_gate_min_components:
         n_rows = 0             # bars off: small circuit, always analyzable
+    elif failing_columns is not None and 0 < len(failing_columns) <= 2:
+        # FOCUSED failure: every mismatch sits in at most two output
+        # columns. A single wrong gate can flunk a whole 5-row suite on
+        # one segment — that is localizable, not structural, so the rate
+        # bars step aside (the structural checks below still apply).
+        n_rows = 0
     else:
         n_rows = spec.well_formed_row_count()
     passing = max(0, n_rows - failing_count)
@@ -592,8 +599,10 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
 
     sims: dict[int, SimResult] = {}
+    failing_columns: set | None = None
     if failing_indices is None:
         failing: list[int] = []
+        failing_columns = set()
         for row in spec.rows:
             if row.is_malformed:
                 res.notes.append(
@@ -611,15 +620,24 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
             if mism:
                 failing.append(row.line_index)
                 sims[row.line_index] = sim
+                failing_columns.update(
+                    m.get("column") for m in mism if m.get("column"))
     else:
         failing = list(failing_indices)
+        if jar_mismatches:
+            cols = {c.get("column")
+                    for cells in jar_mismatches.values()
+                    for c in cells or [] if isinstance(c, dict)}
+            cols.discard(None)
+            failing_columns = cols or None
     res.failing_count = len(failing)
 
     if not failing:
         res.mode = "clear"
         return res
 
-    flags = gross_check(circuit, spec, len(failing), max_failing=max_failing)
+    flags = gross_check(circuit, spec, len(failing), max_failing=max_failing,
+                        failing_columns=failing_columns)
     if flags:
         res.mode = "lazy"
         res.gross_flags = flags
