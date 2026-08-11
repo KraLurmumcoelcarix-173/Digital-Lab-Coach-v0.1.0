@@ -837,8 +837,11 @@ function l3ProposalsHtml(mb) {
         ${progHint}
       </div></label>`;
   });
-  if ((p.notes || []).length) {
-    html += `<div class="l3-prop-hint">${escapeHtml(p.notes.join(" "))}</div>`;
+  const anyDisputed = p.proposals.some((g) => (g.disputed_rows || []).length);
+  const noteList = (p.notes || []).filter(
+    (n) => !(anyDisputed && /DISPUTED/.test(n)));   // the card already says it
+  if (noteList.length) {
+    html += `<div class="l3-prop-hint">${escapeHtml(noteList.join(" "))}</div>`;
   }
   if ((p.rejected || []).length) {
     const friendly = {

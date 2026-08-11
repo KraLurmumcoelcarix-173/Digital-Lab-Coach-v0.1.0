@@ -112,17 +112,6 @@ const CY_STYLE = [
       "text-border-opacity": 0.6,
     },
   },
-  // Blue blink for a clicked net-id reference in Mode A (l3FlashNet).
-  {
-    selector: "edge.netid-flash",
-    style: {
-      "line-color": "#2563eb",
-      "target-arrow-color": "#2563eb",
-      "width": 3.5,
-      "color": "#1d4ed8",
-      "text-background-color": "#dbeafe",
-    },
-  },
   {
     selector: "node.issue-target",
     style: {
@@ -163,6 +152,20 @@ const CY_STYLE = [
   { selector: "edge.sig-none", style: { "line-color": "#cbd5e1", "target-arrow-color": "#cbd5e1", "width": 1 } },
   // dim everything not touched by the active row while a row is selected.
   { selector: "edge.sig-dim", style: { "opacity": 0.15 } },
+  // Blue blink for a clicked net-id reference in Mode A (l3FlashNet) —
+  // LAST on purpose: cytoscape's cascade is stylesheet order, and the
+  // flash must win over the green/gray signal-flow classes too.
+  {
+    selector: "edge.netid-flash",
+    style: {
+      "line-color": "#2563eb",
+      "target-arrow-color": "#2563eb",
+      "width": 3.5,
+      "opacity": 1,
+      "color": "#1d4ed8",
+      "text-background-color": "#dbeafe",
+    },
+  },
   { selector: "node.sig-dim", style: { "opacity": 0.35 } },
   // failed-row output: red ring + expected/found chip in the label.
   {

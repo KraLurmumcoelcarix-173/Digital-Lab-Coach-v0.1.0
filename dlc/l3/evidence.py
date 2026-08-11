@@ -281,15 +281,16 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
     # structural problem, not one localized bug. Small suites tolerate a
     # bigger failing SHARE because two rows of four can be one bug.
     #   > 10 rows:  lazy when failing > max_failing AND pass rate < 90%
-    #   6-10 rows:  lazy when pass rate < 80%
+    #   6-10 rows:  lazy when pass rate < 75%
     #   1-5  rows:  lazy when pass rate < 50%
     if len(circuit.components) <= rate_gate_min_components:
         n_rows = 0             # bars off: small circuit, always analyzable
-    elif failing_columns is not None and 0 < len(failing_columns) <= 2:
-        # FOCUSED failure: every mismatch sits in at most two output
+    elif failing_columns is not None and 0 < len(failing_columns) <= 3:
+        # FOCUSED failure: every mismatch sits in at most three output
         # columns. A single wrong gate can flunk a whole 5-row suite on
         # one segment — that is localizable, not structural, so the rate
-        # bars step aside (the structural checks below still apply).
+        # bars step aside (4+ scattered columns stay lazy; the structural
+        # checks below always apply).
         n_rows = 0
     else:
         n_rows = spec.well_formed_row_count()
@@ -308,11 +309,11 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 ),
             })
     elif n_rows >= 6:
-        if rate < 0.80:
+        if rate < 0.75:
             flags.append({
                 "kind": "low_pass_rate",
                 "detail": (
-                    f"only {passing} of {n_rows} rows pass — below the 80% "
+                    f"only {passing} of {n_rows} rows pass — below the 75% "
                     f"bar for a 6-10 row testcase. Rebuild the basics "
                     f"before hunting a single bug."
                 ),

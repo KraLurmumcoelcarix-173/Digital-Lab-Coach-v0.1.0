@@ -159,9 +159,9 @@ def test_tiered_pass_rate_bars():
     assert kinds == ["too_many_failures"]
     # big suite: many rows failing but <=10 absolute -> still analyzable
     assert gross_check(c, _spec_of(12), failing_count=2, **on) == []
-    # 6-10 rows: 80% bar
-    assert gross_check(c, _spec_of(8), failing_count=1, **on) == []
-    assert [f["kind"] for f in gross_check(c, _spec_of(8), 2, **on)] == [
+    # 6-10 rows: 75% bar (2 of 8 failing = exactly 75% passing = ok)
+    assert gross_check(c, _spec_of(8), failing_count=2, **on) == []
+    assert [f["kind"] for f in gross_check(c, _spec_of(8), 3, **on)] == [
         "low_pass_rate"]
     # 1-5 rows: 50% bar
     assert gross_check(c, _spec_of(4), failing_count=2, **on) == []
@@ -404,3 +404,11 @@ def test_focused_failure_exempts_the_rate_bars():
         led5, use_manifest=False, failing_indices=[0, 1, 2, 3, 4],
     )
     assert res2.mode == "lazy"
+    # 4+ scattered columns is NOT focused — the bars still judge it
+    cells4 = {i: [{"column": col, "expected": "1", "found": "0"}]
+              for i, col in enumerate(["Fa", "Fb", "Fc", "Fd", "Fe"])}
+    res3 = assemble_evidence_for_file(
+        led5, use_manifest=False,
+        failing_indices=[0, 1, 2, 3, 4], jar_mismatches=cells4,
+    )
+    assert res3.mode == "lazy"

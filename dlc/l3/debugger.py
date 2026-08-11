@@ -314,6 +314,14 @@ _SUGGESTION_TABLE = {
                  "test each subcircuit alone with its own testcase."),
         "terms": ["truth table", "combinational logic", "subcircuit"],
     },
+    "subcircuit_failing": {
+        "question": ("Which subcircuit fails its OWN embedded tests — and "
+                     "can the parent possibly work before it does?"),
+        "hint": ("Debug bottom-up: upload the failing subcircuit as its own "
+                 "file, run its tests, fix it there (Mode A analyzes it "
+                 "directly), then re-upload the whole tree."),
+        "terms": ["subcircuit", "testcase", "modular design"],
+    },
     "low_pass_rate": {
         "question": ("Pick ONE failing output: can you follow its value "
                      "backwards, gate by gate, for a single row?"),
@@ -403,6 +411,55 @@ def describe_ops(circuit, ops: list[dict]) -> list[str]:
             out.append(f"delete {tag}")
         else:
             out.append(json.dumps(op))
+    return out
+
+
+def _failing_children(circuit) -> list[tuple[str, int]]:
+    """(reference, failing-row count) for every resolved subcircuit whose
+    OWN embedded testcase fails under the evaluator. Parent-level analysis
+    is noise until the children hold — the coach says so instead of
+    drowning in a giant multi-cause evidence payload."""
+    out: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for sub in circuit.subcircuits:
+        ref = getattr(sub, "reference", None)
+        path = getattr(sub, "resolved_path", None)
+        if not ref or not path or ref in seen:
+            continue
+        seen.add(ref)
+        try:
+            child = parse_dig_file(str(path))
+            n = 0
+            for spec in extract_test_specs(child):
+                if not spec.rows:
+                    continue
+                failing, _ = _offline_failing(str(path), spec.name)
+                n += len(failing)
+            if n:
+                out.append((ref, n))
+        except Exception:
+            continue
+    return out
+
+
+def _slim_payload(payload: dict) -> dict:
+    """Drop representative net values outside the suspect wiring — the
+    oversized-tree safety valve, so a messy upload degrades to slimmer
+    evidence instead of a blown context window."""
+    keep = {str(p.get("net_id"))
+            for w in payload.get("suspect_wiring", [])
+            for p in w.get("pins", [])}
+    out = dict(payload)
+    cl = dict(out.get("cluster") or {})
+    reps = []
+    for r in cl.get("representative_evidence") or []:
+        r2 = dict(r)
+        r2["net_values"] = {k: v
+                            for k, v in (r.get("net_values") or {}).items()
+                            if k in keep}
+        reps.append(r2)
+    cl["representative_evidence"] = reps
+    out["cluster"] = cl
     return out
 
 
@@ -509,6 +566,25 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 names.add(sub.reference)
         manifest = ev.find_manifest(names)
 
+    # Children first: a subcircuit failing its OWN tests gates the whole
+    # analysis into the (free) suggestion branch — fix it, re-upload.
+    broken = _failing_children(circuit)
+    if broken:
+        flags = [{
+            "kind": "subcircuit_failing",
+            "detail": (f"subcircuit {ref!r} fails {n} of its own test "
+                       f"row(s) — fix that file first, then re-upload "
+                       f"the tree."),
+        } for ref, n in broken]
+        return {
+            "ok": True, "contract": CONTRACT, "model": model,
+            "spec_name": spec.name, "failing_count": 0,
+            "row_verdict_runner": "evaluator",
+            "notes": [], "usage": {"input_tokens": 0, "output_tokens": 0},
+            "llm_calls": 0, "mode": "lazy",
+            "gross_flags": flags, "suggestions": lazy_suggestions(flags),
+        }
+
     # Per-row verdict: caller override first, then Digital when
     # configured, then the evaluator sweep.
     jar = jar_path or find_digital_jar()
@@ -580,8 +656,14 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     for ci, (cluster, payload) in enumerate(
             zip(evres.clusters, evres.payloads)):
         cluster_rows = [r.row_index for r in cluster.rows]
-        prompt = prompt_template.replace(
-            "<<PAYLOAD_JSON>>", json.dumps(payload, indent=2, default=str))
+        payload_json = json.dumps(payload, indent=2, default=str)
+        if len(payload_json) > 250_000:
+            payload = _slim_payload(payload)
+            evres.payloads[ci] = payload      # escalation reuses the slim one
+            payload_json = json.dumps(payload, indent=2, default=str)
+            notes.append("evidence payload was slimmed (net values limited "
+                         "to suspect nets) to fit the model context.")
+        prompt = prompt_template.replace("<<PAYLOAD_JSON>>", payload_json)
 
         reply = ask(prompt)
         if not reply.get("ok"):

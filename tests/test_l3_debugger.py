@@ -384,3 +384,17 @@ def test_no_best_unverified_without_any_valid_hypothesis():
                         failing_indices=[0, 1])
     assert res["cards"] == []
     assert res["best_unverified"] is None
+
+
+def test_failing_subcircuit_gates_the_parent_into_suggestions():
+    # bug7: the calculator's bool_unit child carries its OWN testcase with
+    # 2 failing rows — parent analysis is noise until the child is fixed,
+    # so the run goes to the (free) suggestion branch, zero model calls
+    parent = f"{_BENCH}/bug7_broken_child/tier3_calculator.dig"
+    res = debug_circuit(parent, call=_never, use_manifest=False)
+    assert res["mode"] == "lazy"
+    assert res["llm_calls"] == 0
+    assert [f["kind"] for f in res["gross_flags"]] == ["subcircuit_failing"]
+    assert "bool_unit.dig" in res["gross_flags"][0]["detail"]
+    assert [s["kind"] for s in res["suggestions"]] == ["subcircuit_failing"]
+    assert "bottom-up" in res["suggestions"][0]["hint"]
