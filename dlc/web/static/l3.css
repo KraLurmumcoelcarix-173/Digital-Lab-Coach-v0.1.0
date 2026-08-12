@@ -275,7 +275,7 @@
 .l3-rej-pair code { background: #f3f4f6; padding: 0 4px; border-radius: 4px; }
 .l3-rej-pair small { color: #9ca3af; display: block; margin-top: 1px; }
 /* --- Mode A analysis board (hypothesis cards + ladder) -------------------- */
-.l3-diag { font-size: 12px; color: #92400e; background: #fffbeb;
+.l3-diag { font-size: 12px; color: #904d23; background: #fffbeb;
   border-left: 3px solid #f59e0b; border-radius: 0 6px 6px 0;
   padding: 5px 9px; margin: 0 0 6px 0; }
 .l3-hint-block { font-size: 12.5px; line-height: 1.5; margin: 6px 0; }
@@ -320,7 +320,7 @@
 }
 #l3-diag-board {
   position: absolute; left: 12px; bottom: 12px; z-index: 55; max-width: 46%;
-  background: rgba(127,29,29,.96); color: #fecaca; border-radius: 10px;
+  background: rgba(156, 81, 81, 0.96); color: #fecaca; border-radius: 10px;
   padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
   box-shadow: 0 4px 14px rgba(0,0,0,.3);
 }
