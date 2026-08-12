@@ -72,6 +72,7 @@ Safety:
 from __future__ import annotations
 
 import os
+import re as _re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -158,12 +159,35 @@ def _ve_for_index(root, component_index: int):
     return ves[component_index]
 
 
+def _normalize_data_words(value) -> str:
+    """Digital's <data> format: comma-separated bare-hex words (with
+    multiplicity entries like '16*0' passed through untouched). Models
+    hand this back as JSON lists or 0x-prefixed words — normalize here
+    instead of letting a semantically CORRECT fix die on formatting
+    inside the ROM parser (a str(list) blob refutes as garbage)."""
+    if isinstance(value, (list, tuple)):
+        items = [str(v) for v in value]
+    else:
+        items = _re.split(r"[,\s]+", str(value).strip().strip("[]"))
+    out = []
+    for it in items:
+        s = it.strip().strip("'\"")
+        if not s:
+            continue
+        if _re.fullmatch(r"(?:0[xX])[0-9a-fA-F]+", s):
+            s = s[2:].lower()
+        out.append(s)
+    return ",".join(out)
+
+
 def _format_value(tag: str, value) -> tuple[str, str | None, dict]:
     """(tag, text, xml_attribs) for a new/replacement value element."""
     if tag == "boolean":
         return tag, ("true" if value else "false"), {}
     if tag == "rotation":
         return tag, None, {"rotation": str(int(value))}
+    if tag == "data":
+        return tag, _normalize_data_words(value), {}
     return tag, str(value), {}
 
 def _append_entry(attrs_el, name: str, value) -> None:

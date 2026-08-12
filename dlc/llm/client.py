@@ -28,6 +28,9 @@ MODEL_CATALOG: dict[str, dict] = {
     "claude-opus-4-8": {
         "label": "Claude Opus 4.8", "provider": "anthropic", "tier": "premium",
     },
+    "claude-opus-5": {
+        "label": "Claude Opus 5", "provider": "anthropic", "tier": "premium",
+    },
     "gpt-4o-mini": {
         "label": "GPT-4o mini", "provider": "openai", "tier": "fast",
     },

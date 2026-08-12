@@ -719,6 +719,8 @@ def assemble_evidence_for_file(dig_path, *, spec_name: str | None = None,
             ref = getattr(sub, "reference", None)
             if ref:
                 names.add(ref)
-        manifest = find_manifest(names)
+        from dlc.l3.manifest import tree_element_names
+        manifest = find_manifest(names,
+                                 element_names=tree_element_names(circuit))
     return assemble_evidence(circuit, netlist, graph, spec,
                              manifest=manifest, **kwargs)

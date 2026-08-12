@@ -357,3 +357,37 @@ def test_bug8_gapped_led_scans_clean_with_gaps_and_no_gate():
     c = r.circuits[0]
     assert c.row_count == 3
     assert any("32 possible input vectors" in n for n in c.notes)
+
+
+def test_bug8_is_graded_by_the_display_manifest_whatever_its_name():
+    r = scan_tree_coverage(str(SAMPLES / "30_bug_benchmark" /
+                               "bug8_gapped_led_minterm" / "gapped_LED1.dig"))
+    c = r.circuits[0]
+    assert c.categories_total == 17          # 16 digits + hold
+    assert "digit_5" in c.categories_touched and "hold" in c.categories_touched
+    assert "digit_1" in c.categories_missing
+    assert any("matched by circuit element Seven-Seg" in n for n in r.notes)
+
+
+def test_select_gate_ratio_allows_one_missing_arm_in_32():
+    from dlc.l3.coverage import _apply_select_gate
+
+    def rep(missing, total, bits):
+        taken = [a for a in range(total) if a not in missing]
+        r = TreeCoverageReport(root="x.dig")
+        cov = CircuitCoverage(file="x.dig", path=None, has_testcases=True)
+        cov.mux_branches.append(MuxBranchCoverage(
+            component_index=1, selector_bits=bits, arms_total=total,
+            arms_taken=taken, arms_missing=list(missing),
+            select_from_input="Sel"))
+        r.circuits.append(cov)
+        _apply_select_gate(r)
+        return r.select_gate
+
+    # a register-file-style 32-way read mux missing ONE address: coached,
+    # not blocked (31/32 >= the ratio bar)
+    assert rep([31], 32, 5) == []
+    # two missing of 32 falls below the bar -> gate
+    assert rep([30, 31], 32, 5) and rep([30, 31], 32, 5)[0]["missing"] == [30, 31]
+    # small op muxes still demand every value (3/4 < 31/32)
+    assert rep([3], 4, 2)

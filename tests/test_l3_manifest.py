@@ -175,3 +175,42 @@ def test_category_word_examples_prefer_program_proven_sources():
     f2 = mf.decode_program_word(_LAB5, int(ex2[0]["word"], 16))["fields"]
     assert 4 not in (f2["rs1"], f2["rs2"])
     assert "reads" not in ex2[0]                     # nothing proven => silent
+
+
+# ---------------------------------------------------------------------------
+# Structural (element) manifest matching — the display-lab hook
+# ---------------------------------------------------------------------------
+
+_BUG8 = ("data/sample_circuits/30_bug_benchmark/bug8_gapped_led_minterm/"
+         "gapped_LED1.dig")
+
+
+def test_find_manifest_matches_by_element_and_rekeys_categories():
+    # no filename matches, but the tree carries a Seven-Seg element -> the
+    # display manifest applies and its categories bind to THIS filename
+    m = mf.find_manifest({"whatever_i_named_it.dig"},
+                         element_names={"Seven-Seg", "And", "Register"})
+    assert m is not None and m.get("lab") == "sevenseg-demo"
+    assert m["_element_matched"] == ["Seven-Seg"]
+    assert "whatever_i_named_it.dig" in m["categories"]
+    # the canonical key survives untouched
+    assert "tier3_latched_display.dig" in m["categories"]
+
+
+def test_find_manifest_name_match_beats_element_match():
+    m = mf.find_manifest({"tier3_latched_display.dig"},
+                         element_names={"Seven-Seg"})
+    assert m is not None and "_element_matched" not in m
+
+
+def test_find_manifest_no_elements_keeps_old_behavior():
+    assert mf.find_manifest({"whatever_i_named_it.dig"}) is None
+    assert mf.find_manifest({"whatever.dig"}, element_names={"And"}) is None
+
+
+def test_tree_element_names_walks_resolved_children():
+    calc = parse_dig_file("data/sample_circuits/30_bug_benchmark/"
+                          "bug6_hidden_mux_case3/uncovered_op_calculator.dig")
+    kinds = mf.tree_element_names(calc)
+    assert "Multiplexer" in kinds            # root
+    assert "XOr" in kinds or "Or" in kinds   # inside bool_unit child

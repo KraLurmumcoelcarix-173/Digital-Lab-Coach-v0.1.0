@@ -113,7 +113,8 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
             # program already executes, and which are missing — decoded
             # from the words, never guessed by the model.
             from dlc.l3 import manifest as mf
-            m = mf.find_manifest({c.file for c in report.circuits})
+            m = mf.find_manifest({c.file for c in report.circuits},
+                                 element_names=set(report.element_names))
             pc = mf.program_categories(m, words) if m else None
             if pc is not None:
                 target["program_categories_present"] = pc["present"]
@@ -503,6 +504,21 @@ def propose_rows(
                 "error": "No testcase anywhere in this tree to extend.",
                 "notes": []}
 
+    # Category definitions ride INTO the prompt: the report's notes name
+    # missing categories, but the model needs each category's exact
+    # `when` input cells (and the lab's stated conventions) to write the
+    # row the "why" claims — re-derived bit orders were the #1 wasted row.
+    from dlc.l3 import manifest as mf
+    m = mf.find_manifest({t["file"] for t in targets},
+                         element_names=set(report.element_names))
+    if m:
+        for t in targets:
+            cats = (m.get("categories") or {}).get(t["file"])
+            if cats:
+                t["categories"] = cats
+                if m.get("description"):
+                    t["category_conventions"] = m["description"]
+
     prompt = build_prompt(report, targets)
     used_model = model or _propose_model()
     # stronger models front-load visible analysis before the JSON;
@@ -528,8 +544,6 @@ def propose_rows(
                 "model": used_model, "error": None,
                 "notes": ["The coach found nothing trustworthy to propose "
                           "this time — try Propose again."]}
-    from dlc.l3 import manifest as mf
-    m = mf.find_manifest({t["file"] for t in targets})
     valid, rejected = validate_and_dedupe(proposals, targets, manifest=m)
     notes: list[str] = []
 

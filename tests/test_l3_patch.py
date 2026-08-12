@@ -207,6 +207,37 @@ def test_change_attribute_creates_missing_entry_with_typed_tag(tmp_path):
         os.unlink(temp)
 
 
+def test_change_attribute_normalizes_rom_data_forms(tmp_path):
+    # models hand ROM Data back as JSON lists or 0x-prefixed words; the
+    # applier must write Digital's comma-separated bare-hex form, or a
+    # semantically CORRECT fix dies on formatting inside the ROM parser
+    extra = """
+    <visualElement>
+      <elementName>ROM</elementName>
+      <elementAttributes>
+        <entry><string>AddrBits</string><int>3</int></entry>
+        <entry><string>Bits</string><int>8</int></entry>
+        <entry><string>Data</string><data>82,86,80</data></entry>
+      </elementAttributes>
+      <pos x="0" y="200"/>
+    </visualElement>"""
+    src = tmp_path / "mini.dig"
+    src.write_text(_mini_circuit(_SIMPLE_WIRES, extra), encoding="utf-8")
+    for value in (["0x82", "0x86", "0xC2"],          # JSON list, 0x, casing
+                  "0x82, 0x86, 0xC2",                # prefixed string
+                  "82,86,c2"):                       # already canonical
+        temp, report = apply_patch(str(src), [
+            {"op": "change_attribute", "component_index": 4,
+             "name": "Data", "value": value},
+        ])
+        assert report.ok, report.warning
+        try:
+            text = Path(temp).read_text(encoding="utf-8")
+            assert "<data>82,86,c2</data>" in text
+        finally:
+            os.unlink(temp)
+
+
 def test_add_and_delete_wire_roundtrip(tmp_path):
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")

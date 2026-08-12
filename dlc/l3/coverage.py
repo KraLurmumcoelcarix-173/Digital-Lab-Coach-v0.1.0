@@ -30,8 +30,8 @@ coverage report
     same structure grounds the row-proposal prompt.
 
 select-coverage gate (Case 3.B)
-    When an INPUT-driven Multiplexer select value is never exercised by
-    any test row (in a circuit no manifest grades by category), the
+    When an INPUT-driven Multiplexer's exercised select values fall below
+    a 31/32 share (in a circuit no manifest grades by category), the
     report carries a `select_gate` entry and Mode B refuses to propose:
     an op the tests never define has no anchor for INTENDED semantics,
     so a proposed row would be a guess that can enshrine the very bug it
@@ -171,6 +171,10 @@ class TreeCoverageReport:
     circuits: list[CircuitCoverage] = field(default_factory=list)
     total_flags: int = 0
     notes: list[str] = field(default_factory=list)
+    # every component kind in the tree — the structural identity that
+    # lets a manifest apply by ELEMENT (e.g. Seven-Seg) when no filename
+    # matches, so a display lab is graded whatever the student named it
+    element_names: list[str] = field(default_factory=list)
     # Case 3.B gate: entries for every INPUT-driven Multiplexer select
     # value no test row ever exercises (in circuits no manifest grades by
     # category). Non-empty => Mode B refuses to propose — for an op the
@@ -753,13 +757,16 @@ def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
         return report
 
     unresolved: set[str] = set()
+    kinds: set[str] = set()
     for display, path, circ in _collect_tree(circuit, str(dig_path)):
         report.circuits.append(
             scan_circuit_coverage(circ, display=display, path=path)
         )
+        kinds |= {comp.element_name for comp in circ.components}
         for sub in circ.subcircuits:
             if sub.child_circuit is None:
                 unresolved.add(sub.reference)
+    report.element_names = sorted(kinds)
     for ref in sorted(unresolved):
         report.notes.append(
             f"subcircuit '{ref}' could not be resolved — not scanned."
@@ -782,12 +789,18 @@ def _apply_select_gate(report: TreeCoverageReport) -> None:
       * categories_total == 0 — manifest-graded labs (e.g. the cpu) are
         anchored by the instructor reference; the category machinery
         already decides what must be covered there.
+      * coverage ratio — the gate fires only when the exercised share of
+        arms falls BELOW 31/32. Small op muxes must cover every value
+        (1 missing of 4 gates), but a register-file's 32-way read mux
+        with one address never read is 31/32 covered — coached, not
+        blocked (its note still names the missing arm).
     """
     for cov in report.circuits:
         if not cov.has_testcases or cov.categories_total:
             continue
         for mb in cov.mux_branches:
-            if (mb.select_from_input and mb.arms_taken and mb.arms_missing):
+            if (mb.select_from_input and mb.arms_taken and mb.arms_missing
+                    and len(mb.arms_missing) * 32 > mb.arms_total):
                 report.select_gate.append({
                     "file": cov.file,
                     "component_index": mb.component_index,
@@ -813,10 +826,17 @@ def _apply_manifest(report: TreeCoverageReport) -> None:
     tree, manifest or not — it is the instructor-controlled truth and wins
     over the shipped manifest fingerprints."""
     from dlc.l3 import manifest as mf
-    m = mf.find_manifest({c.file for c in report.circuits})
+    m = mf.find_manifest({c.file for c in report.circuits},
+                         element_names=set(report.element_names))
     if m:
         src = f" ({m['_file']})" if m.get("_file") else ""
-        report.notes.append(f"lab manifest '{m.get('lab', '?')}'{src} applied.")
+        how = ""
+        if m.get("_element_matched"):
+            how = (" — matched by circuit element "
+                   f"{', '.join(m['_element_matched'])}, so it applies "
+                   f"whatever the file is named")
+        report.notes.append(
+            f"lab manifest '{m.get('lab', '?')}'{src} applied{how}.")
     for cov in report.circuits:
         if not cov.has_testcases or not cov.path:
             continue

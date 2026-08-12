@@ -54,6 +54,20 @@ CONTRACT = "l3.debug.v1.1"
 K_CARDS = 3
 _MAX_OPS = 6
 _MAX_TOKENS = 3000
+# premium-tier models (Opus) reason longer before the JSON: at 3000 the
+# reply truncates mid-object and validates as invalid_response, wasting
+# the cluster's only shot — give them headroom.
+_MAX_TOKENS_PREMIUM = 6000
+
+
+def _max_tokens_for(model: str) -> int:
+    try:
+        from dlc.llm.client import MODEL_CATALOG
+        if (MODEL_CATALOG.get(model) or {}).get("tier") == "premium":
+            return _MAX_TOKENS_PREMIUM
+    except Exception:
+        pass
+    return _MAX_TOKENS
 _MAX_ANIM_ACTS = 12
 
 _PROMPT_DIR = Path(__file__).parent.parent.parent / "prompts"
@@ -598,7 +612,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         for sub in circuit.subcircuits:
             if getattr(sub, "reference", None):
                 names.add(sub.reference)
-        manifest = ev.find_manifest(names)
+        from dlc.l3.manifest import tree_element_names
+        manifest = ev.find_manifest(
+            names, element_names=tree_element_names(circuit))
 
     # Children first: a subcircuit failing its OWN tests gates the whole
     # analysis into the (free) suggestion branch — fix it, re-upload.
@@ -675,7 +691,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     def ask(prompt_text: str) -> dict:
         nonlocal calls
         r = call(prompt_text, api_key=api_key, model=model,
-                 max_tokens=_MAX_TOKENS)
+                 max_tokens=_max_tokens_for(model))
         calls += 1
         u = r.get("usage") or {}
         usage["input_tokens"] += u.get("input_tokens") or 0

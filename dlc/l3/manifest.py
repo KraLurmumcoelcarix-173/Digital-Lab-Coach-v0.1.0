@@ -71,12 +71,56 @@ def load_manifests() -> list[dict]:
     return out
 
 
-def find_manifest(filenames: set[str]) -> dict | None:
-    """First manifest whose applies_to intersects the tree's file names."""
-    for m in load_manifests():
+def find_manifest(filenames: set[str],
+                  element_names: set[str] | None = None) -> dict | None:
+    """First manifest whose applies_to intersects the tree's file names.
+
+    ``element_names`` (the tree's component kinds) switches on the
+    STRUCTURAL fallback: when no filename matches, a manifest that lists
+    one of those kinds in ``applies_to_elements`` applies no matter what
+    the student named the file — the display-lab hook (every seven-seg
+    lab circuit carries a Seven-Seg element, whatever its filename). The
+    returned copy re-keys the manifest's categories onto the tree's
+    filenames, so every downstream per-file lookup works unchanged;
+    ``_element_matched`` records which kinds matched, for the scan note.
+    Name matches always win — a structural hook can never shadow a
+    manifest that claims the file explicitly."""
+    manifests = load_manifests()
+    for m in manifests:
         if filenames & set(m.get("applies_to", [])):
             return m
+    if element_names:
+        for m in manifests:
+            hooks = set(m.get("applies_to_elements") or [])
+            if not (hooks & element_names):
+                continue
+            alias = dict(m)
+            cats = m.get("categories") or {}
+            canon = next(iter(cats.values()), None)
+            if canon is not None:
+                alias["categories"] = {
+                    **cats, **{f: canon for f in filenames if f not in cats}}
+            alias["_element_matched"] = sorted(hooks & element_names)
+            return alias
     return None
+
+
+def tree_element_names(circuit) -> set[str]:
+    """Every component kind in the tree (root + resolved children) — the
+    structural identity find_manifest's element fallback matches on."""
+    out: set[str] = set()
+    stack = [circuit]
+    seen: set[int] = set()
+    while stack:
+        c = stack.pop()
+        if id(c) in seen:
+            continue
+        seen.add(id(c))
+        out |= {comp.element_name for comp in c.components}
+        for sub in getattr(c, "subcircuits", []):
+            if getattr(sub, "child_circuit", None) is not None:
+                stack.append(sub.child_circuit)
+    return out
 
 
 def reference_dir(manifest: dict | None) -> Path | None:

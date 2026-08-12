@@ -4,6 +4,9 @@
  "applies_to": [
   "tier3_latched_display.dig"
  ],
+ "applies_to_elements": [
+  "Seven-Seg"
+ ],
  "categories": {
   "tier3_latched_display.dig": [
    {
