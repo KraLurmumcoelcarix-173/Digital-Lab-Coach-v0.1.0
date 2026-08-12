@@ -13,6 +13,9 @@ One explicit trigger runs the whole ladder (docs/l3_debug_contract.md):
   verify          apply_patch → per-row rerun of the patched temp —
                   CONFIRMED iff every cluster row now passes AND no
                   previously-passing row regressed AND the L1 guard held.
+                  Rows a Mode B accept ADDED are judged by strict
+                  improvement instead (see verify_ops) — their expected
+                  cells are model guesses, not ground truth.
                   With no jar the SAME Python evaluator that judged the
                   original failure re-judges the fix (verified.runner
                   says which ran). Nothing unconfirmed is ever shown as
@@ -241,17 +244,26 @@ def _offline_failing(temp_path: str, spec_name: str) -> tuple[list[int], dict]:
 
 def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
                cluster_rows: list[int], original_failing: list[int], *,
-               jar_path: str | None = None) -> dict:
+               jar_path: str | None = None,
+               coach_targets: dict[int, set] | None = None) -> dict:
     """CONFIRMED iff the patch applies (L1 guard included), every cluster
     row now passes, and no previously-passing row fails. Runs Digital when
     a jar is configured; otherwise the same evaluator that produced the
-    original verdict re-judges the fix."""
+    original verdict re-judges the fix.
+
+    ``coach_targets`` maps a coach-ADDED row (Mode B hand-off) to the set
+    of output columns it originally failed on. Such a row is judged by
+    STRICT IMPROVEMENT instead of perfection: the fix must repair at least
+    one of those columns and break no new one. Any residual columns land
+    in ``coach_residuals`` (not ``still_failing``) — the coach's own
+    expectation for those cells is a model guess, not ground truth, so an
+    imperfect side-cell guess must not refute a correct fix."""
     jar = jar_path or find_digital_jar()
     verdict = {
         "confirmed": False, "apply_ok": False,
         "runner": "digital" if jar else "evaluator",
         "still_failing": [], "regressions": [],
-        "details": {}, "warning": None,
+        "details": {}, "coach_residuals": {}, "warning": None,
     }
     if jar:
         outcome = rerun_with_patch(dig_path, ops, spec_name=spec_name,
@@ -292,7 +304,20 @@ def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
                 pass
 
     after = set(failing_after)
-    verdict["still_failing"] = sorted(after & set(cluster_rows))
+    coach = coach_targets or {}
+    still: list[int] = []
+    for idx in sorted(after & set(cluster_rows)):
+        orig_cols = coach.get(idx)
+        cells = verdict["details"].get(idx) or []
+        res_cols = {m.get("column") for m in cells if m.get("column")}
+        # len(res_cols) == len(cells) rejects rows whose details carry an
+        # unnamed {"error": ...} entry — an errored row is never "improved".
+        if (orig_cols and len(res_cols) == len(cells)
+                and res_cols < set(orig_cols)):
+            verdict["coach_residuals"][idx] = sorted(res_cols)
+        else:
+            still.append(idx)
+    verdict["still_failing"] = still
     verdict["regressions"] = sorted(after - set(original_failing))
     verdict["confirmed"] = (not verdict["still_failing"]
                             and not verdict["regressions"])
@@ -525,13 +550,18 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   manifest: dict | None = None, use_manifest: bool = True,
                   failing_indices: list[int] | None = None,
                   jar_mismatches: dict[int, list[dict]] | None = None,
+                  coach_rows: list[int] | None = None,
                   k_cards: int = K_CARDS) -> dict:
     """Run Mode A end to end for one circuit + testcase. Returns the
     contract §6 response dict; never raises for content-level problems.
 
     ``failing_indices`` (+ ``jar_mismatches``) overrides the per-row
     verdict entirely — the eval-harness / test seam; without it the jar
-    decides when configured, the evaluator sweep otherwise."""
+    decides when configured, the evaluator sweep otherwise.
+
+    ``coach_rows`` names the spec rows that a Mode B accept ADDED (the
+    web layer reads them off the registered temp) — the verifier judges
+    those by strict improvement, not perfection (see verify_ops)."""
     model = model or _debug_model()
     if call is None:
         call = call_llm
@@ -650,6 +680,18 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
 
     original_failing = sorted(
         {r.row_index for c in evres.clusters for r in c.rows})
+    # A coach-added row's expected cells are model guesses: hold fixes to
+    # "repaired what the row originally flagged, broke nothing" instead of
+    # full-row perfection, or one imperfect side-cell guess would refute
+    # every correct fix (the bug6 case-3 failure).
+    coach_targets: dict[int, set] | None = None
+    if coach_rows:
+        want = set(coach_rows)
+        coach_targets = {
+            r.row_index: {m.get("column") for m in r.mismatches
+                          if m.get("column")}
+            for c in evres.clusters for r in c.rows
+            if r.row_index in want and r.mismatches} or None
     hypotheses: list[dict] = []
     dropped: list[dict] = []
 
@@ -687,7 +729,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
 
         verdict = verify_ops(str(dig_path), spec.name, clean["ops"],
                              cluster_rows, original_failing,
-                             jar_path=jar_path)
+                             jar_path=jar_path,
+                             coach_targets=coach_targets)
         if not verdict["confirmed"]:
             retry = ask(prompt + _refutation_block(clean["ops"], verdict))
             if retry.get("ok"):
@@ -697,7 +740,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                     verdict2 = verify_ops(str(dig_path), spec.name,
                                           clean2["ops"], cluster_rows,
                                           original_failing,
-                                          jar_path=jar_path)
+                                          jar_path=jar_path,
+                                          coach_targets=coach_targets)
                     if verdict2["confirmed"] or not verdict["apply_ok"]:
                         clean, verdict = clean2, verdict2
 
@@ -738,7 +782,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 continue
             verdict = verify_ops(str(dig_path), spec.name, clean["ops"],
                                  cluster_rows, original_failing,
-                                 jar_path=jar_path)
+                                 jar_path=jar_path,
+                                 coach_targets=coach_targets)
             hypotheses.append({"cluster_index": ci,
                                "cluster_rows": cluster_rows,
                                "confidence": clean["confidence"],
@@ -746,9 +791,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                                "explanation": clean["explanation"],
                                "animation": clean["animation"],
                                "verdict": verdict})
-        notes.append("escalation pass ran: every first-round hypothesis "
-                     "was refuted, so each cluster got one more attempt "
-                     "with the refuted ops disclosed.")
 
     ranked = dedupe_hypotheses(hypotheses)
     cards: list[dict] = []
@@ -766,6 +808,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 "confirmed": True,
                 "runner": h["verdict"]["runner"],
                 "regressions": h["verdict"]["regressions"],
+                "coach_residuals": h["verdict"].get("coach_residuals") or {},
             },
             "fix": {
                 "ops": h["ops"],
@@ -819,12 +862,10 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                         "runner": b["verdict"]["runner"],
                         "still_failing": b["verdict"]["still_failing"],
                         "regressions": b["verdict"]["regressions"],
+                        "coach_residuals":
+                            b["verdict"].get("coach_residuals") or {},
                         "warning": b["verdict"]["warning"]},
         }
-        notes.append("no fix passed machine verification — the best "
-                     "unverified idea is shown, clearly labeled. Analyze "
-                     "stays available; only a run that delivers a verified "
-                     "card counts against the daily uses.")
 
     return {**base, "mode": "analysis",
             "diagnosis_lines": [_diagnosis_line(c) for c in evres.clusters],

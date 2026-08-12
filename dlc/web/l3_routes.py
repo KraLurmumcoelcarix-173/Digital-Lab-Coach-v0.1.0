@@ -222,6 +222,12 @@ def l3_inject(req: InjectRequest) -> dict:
             "path": outcome.temp_path,
             # for as_second this is '<spec>_second' — Mode A targets it
             "spec_name": outcome.spec_name or spec_name,
+            # temp-spec indices of the rows Mode B ADDED: Mode A's
+            # verifier judges these by strict improvement, not perfection
+            # (their expected cells are coach guesses — debugger.verify_ops)
+            "coach_rows": sorted(
+                r["index"] for r in (outcome.rows or [])
+                if r.get("added") and isinstance(r.get("index"), int)),
         }
 
     return {
@@ -312,11 +318,13 @@ def llm_debug(req: DebugRequest) -> dict:
 
     Scope: when this session holds a coach TEMP for the file
     (Mode B injected rows), the analysis targets THAT temp and its spec —
-    the "Mode A operates on the CURRENT TEMP CIRCUIT" hand-off.
+    the "Mode A operates on the CURRENT TEMP CIRCUIT" hand-off. The temp's
+    coach-added rows are judged by strict improvement, not perfection
+    (debugger.verify_ops), because their expected cells are coach guesses.
 
     Use limits: clear and lazy runs are free; an analysis run books one
     Mode A use ONLY when at least one verified card is delivered — an
-    empty run must not cost the student a use (it says so in notes).
+    empty run must not cost the student a use.
     """
     from dlc.l3 import debugger      # late import keeps startup lean
     from dlc.web import server       # late binding; see module docstring
@@ -332,16 +340,18 @@ def llm_debug(req: DebugRequest) -> dict:
         }
 
     path, spec_name, on_temp = target["path"], None, False
+    coach_rows = None
     session = server._SESSIONS.get(req.session_id)
     lt = (session or {}).get("l3_temp") or None
     if (lt and lt.get("for") == req.filename and lt.get("path")
             and os.path.exists(lt["path"])):
         path, spec_name, on_temp = lt["path"], lt.get("spec_name"), True
+        coach_rows = lt.get("coach_rows") or None
 
     try:
         result = debugger.debug_circuit(
             path, spec_name=spec_name, spec_index=req.spec_index,
-            model=req.model,
+            model=req.model, coach_rows=coach_rows,
         )
     except Exception as exc:         # defense in depth
         return {"ok": False, "mode": "error",
@@ -351,10 +361,6 @@ def llm_debug(req: DebugRequest) -> dict:
                 and bool(result.get("cards")))
     result["limits"] = limits.consume("modeA") if consumed else limits.state()
     result["consumed_use"] = consumed
-    if result.get("mode") == "analysis" and not result.get("cards"):
-        result.setdefault("notes", []).append(
-            "No verified fix survived this run — it did not count against "
-            "today's debug-analysis uses.")
     result["on_coach_temp"] = on_temp
     return result
 

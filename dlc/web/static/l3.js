@@ -457,10 +457,8 @@ function l3ModeAStatus(res) {
   if (res.mode === "analysis") {
     const n = (res.cards || []).length;
     if (!n) {
-      return { status: "No fix passed machine verification — the best " +
-               "unverified idea is below. Re-run stays available until " +
-               "you reveal the idea; after that, fix and re-upload.",
-               cls: "blocked" };
+      return { status: "No fix passed the machine re-run — best " +
+               "unverified idea below.", cls: "blocked" };
     }
     return { status: `${n} verified hypothesis card${n === 1 ? "" : "s"} — ` +
              `every fix below passed the full re-run before you saw it.`,
@@ -499,10 +497,15 @@ function _l3CardHtml(ma, c) {
   const hint = c.hint || {};
   const fix = c.fix || {};
   const runner = (c.verified && c.verified.runner) || "";
+  const resid = (c.verified && c.verified.coach_residuals) || {};
+  const residRows = Object.keys(resid);
   let html = `<div class="l3-cov-circuit">` +
     `<div class="l3-cov-head">` +
     `<span class="l3-chip">hypothesis #${c.rank}</span>` +
     `<span class="l3-chip l3-chip-good" title="The fix was applied to a temp copy and the whole testcase re-run (${escapeHtml(runner)}) before display — the original file is untouched.">verified fix ✓</span>` +
+    (residRows.length
+      ? `<span class="l3-chip l3-chip-warn" title="This fix repaired every cell the coach-added row(s) originally flagged and broke nothing — but one coach-guessed cell still differs (details under the fix). The coach's expected value may be the wrong side there.">coach-row caveat</span>`
+      : "") +
     `<span class="l3-chip">confidence ${Math.round((c.confidence || 0) * 100)}%</span>` +
     `<span class="l3-chip l3-chip-none">row${(c.cluster_rows || []).length === 1 ? "" : "s"} ${(c.cluster_rows || []).join(", ")}</span>` +
     `</div>`;
@@ -526,12 +529,20 @@ function _l3CardHtml(ma, c) {
       opLines.map((line) => `<div class="l3-op">${escapeHtml(line)}</div>`).join("") +
       (fix.explanation_for_student
         ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(fix.explanation_for_student))}</div>` : "") +
-      (ma.result && ma.result.on_coach_temp
-        ? `<div class="l3-warn-note">If the circuit still looks right to ` +
-          `you after this, remember: some failing rows were coach-added ` +
-          `tests — a Mode B row itself could be the mistake (discard it ` +
-          `on the lower board and re-run).</div>`
-        : "") +
+      (residRows.length
+        ? `<div class="l3-warn-note">Coach-row check: ` +
+          residRows.map((r) => `row ${escapeHtml(r)} still differs on ` +
+            escapeHtml((resid[r] || []).join(", "))).join("; ") +
+          ` — this fix repaired every cell that row originally flagged, ` +
+          `so the remaining expected value is likely the coach's guess ` +
+          `being wrong, not your circuit. Edit or discard that cell on ` +
+          `the lower board if you agree.</div>`
+        : (ma.result && ma.result.on_coach_temp
+          ? `<div class="l3-warn-note">If the circuit still looks right ` +
+            `to you after this, remember: some failing rows were ` +
+            `coach-added tests — a Mode B row itself could be the ` +
+            `mistake (discard it on the lower board and re-run).</div>`
+          : "")) +
       `</div>`;
   }
   return html + `</div>`;
@@ -1825,6 +1836,13 @@ function _l3UnverifiedCardHtml(ma, b) {
     }
     if ((v.regressions || []).length) {
       failLine += `; it also broke row(s) ${v.regressions.join(", ")}`;
+    }
+    const uresid = v.coach_residuals || {};
+    const uresidRows = Object.keys(uresid);
+    if (uresidRows.length) {
+      failLine += `; coach-added row(s) ${uresidRows.join(", ")} improved ` +
+        `but still differ on ` +
+        uresidRows.map((r) => (uresid[r] || []).join(", ")).join("; ");
     }
     if (v.apply_ok === false) {
       failLine += ` (it could not even be applied: ${v.warning || "apply failed"})`;

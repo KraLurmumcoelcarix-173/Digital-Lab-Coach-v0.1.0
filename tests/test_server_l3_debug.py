@@ -56,13 +56,14 @@ def test_delivered_cards_consume_one_mode_a_use(monkeypatch):
     assert body["limits"]["used"]["modeA"] == 1
 
 
-def test_empty_analysis_is_free_and_says_so(monkeypatch):
+def test_empty_analysis_is_free_and_stays_quiet(monkeypatch):
     sid = _upload_bug3()
     monkeypatch.setattr(debugger, "debug_circuit", _canned("analysis", []))
     body = _debug(sid)
     assert body["consumed_use"] is False
     assert body["limits"]["used"]["modeA"] == 0
-    assert any("did not count" in n for n in body["notes"])
+    # the board explains itself through the cards — no bookkeeping notes
+    assert body["notes"] == []
 
 
 def test_clear_and_lazy_are_free(monkeypatch):
@@ -93,6 +94,7 @@ def test_coach_temp_is_targeted_when_registered(monkeypatch):
 
     body = _debug(sid)
     assert body["on_coach_temp"] is False
+    assert fake.calls[-1]["coach_rows"] is None
 
     # register a coach temp for this file (point it at a real path so the
     # existence check passes), exactly like /api/l3/inject does
@@ -101,8 +103,11 @@ def test_coach_temp_is_targeted_when_registered(monkeypatch):
         "name": "Wrong_cin__coach.dig",
         "path": _BUG3,
         "spec_name": "Testcase_12",
+        "coach_rows": [4, 5],
     }
     body = _debug(sid)
     assert body["on_coach_temp"] is True
     assert fake.calls[-1]["path"] == _BUG3
     assert fake.calls[-1]["spec_name"] == "Testcase_12"
+    # the strict-improvement seam: added rows reach the coordinator
+    assert fake.calls[-1]["coach_rows"] == [4, 5]

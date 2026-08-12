@@ -13,6 +13,8 @@ fodder).
 """
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -102,7 +104,7 @@ def test_bug3_end_to_end_confirmed_card():
     assert card["rank"] == 1
     assert card["cluster_rows"] == [0, 1]
     assert card["verified"] == {"confirmed": True, "runner": "evaluator",
-                                "regressions": []}
+                                "regressions": [], "coach_residuals": {}}
     assert card["fix"]["ops"] == GOOD_OPS
     assert card["fix"]["animation_script"][-1] == {"act": "retest"}
     assert card["hint"]["suspect_region"]
@@ -337,7 +339,8 @@ def test_zero_card_run_earns_one_escalation_per_cluster():
     assert "[ESCALATION]" in call.log[2] and '"refuted_ops"' in call.log[2]
     assert len(res["cards"]) == 1
     assert res["cards"][0]["fix"]["ops"] == GOOD_OPS
-    assert any("escalation pass ran" in n for n in res["notes"])
+    # pipeline internals stay off the student's board
+    assert not any("escalation" in n for n in res["notes"])
 
 
 def test_led5_gate_swap_fix_confirms_offline():
@@ -372,8 +375,8 @@ def test_best_unverified_survivor_when_everything_is_refuted():
     assert b["fix"]["ops_pretty"] == ["set [16] Const attribute Value = 1"]
     assert b["verdict"]["still_failing"] == [0, 1]
     assert b["hint"]["suspect_region"]
-    assert any("best unverified" in n.lower() or "unverified idea" in n
-               for n in res["notes"])
+    # the amber card itself explains the state — no extra note on the board
+    assert not any("unverified" in n.lower() for n in res["notes"])
     assert all((d.get("ops_pretty") or []) for d in res["dropped_ideas"]), \
         "dropped ideas must show what they tried"
 
@@ -398,3 +401,82 @@ def test_failing_subcircuit_gates_the_parent_into_suggestions():
     assert "bool_unit.dig" in res["gross_flags"][0]["detail"]
     assert [s["kind"] for s in res["suggestions"]] == ["subcircuit_failing"]
     assert "bottom-up" in res["suggestions"][0]["hint"]
+
+
+# ---------------------------------------------------------------------------
+# Coach-added rows: strict improvement, not perfection (the Mode B hand-off)
+# ---------------------------------------------------------------------------
+
+_BUG6 = f"{_BENCH}/bug6_hidden_mux_case3/hidden_mux_calculator.dig"
+# the hidden-mux repair: in3 stops feeding from the stray Ground [23] and
+# takes the boolean unit's Result, like in2 does
+MUX_FIX = [{"op": "rewire_pin", "component_index": 14, "pin": "in3",
+            "to": {"component_index": 9, "pin": "Result"}}]
+
+
+def _coach_temp(tmp_path):
+    """bug6 + ONE coach-style row appended to its testcase:
+    '5 10 0 3 15 1 0 1' — Result/Zero/Bit0 assert the TRUE Op=3 values
+    (the mux fix repairs them; pre-fix all four columns mismatch), but
+    Carry is deliberately mis-guessed (1; truly 0 on both sides), so the
+    row can never FULLY pass. Exactly the bug6 case-3 hand-off shape that
+    used to refute the correct fix."""
+    src = Path(_BUG6)
+    shutil.copy(src.parent / "bool_unit.dig", tmp_path / "bool_unit.dig")
+    text = src.read_text(encoding="utf-8")
+    anchor = "0 0 0 2 0 0 1 0</dataString>"
+    assert text.count(anchor) == 1
+    out = tmp_path / "hidden_mux_calculator.dig"
+    out.write_text(
+        text.replace(anchor,
+                     "0 0 0 2 0 0 1 0\n5 10 0 3 15 1 0 1</dataString>"),
+        encoding="utf-8")
+    return str(out)
+
+
+def test_verify_ops_refutes_partial_fix_without_coach_targets(tmp_path):
+    # baseline: no coach knowledge -> the imperfect Carry guess refutes
+    # the CORRECT mux fix (this was the 90% case-3 failure)
+    path = _coach_temp(tmp_path)
+    v = verify_ops(path, "Testcase_25", MUX_FIX, [10], [10])
+    assert v["confirmed"] is False
+    assert v["still_failing"] == [10]
+
+
+def test_coach_row_strict_improvement_confirms_with_residual(tmp_path):
+    path = _coach_temp(tmp_path)
+    v = verify_ops(path, "Testcase_25", MUX_FIX, [10], [10],
+                   coach_targets={10: {"Result", "Carry", "Zero", "Bit0"}})
+    assert v["confirmed"] is True
+    assert v["still_failing"] == [] and v["regressions"] == []
+    assert v["coach_residuals"] == {10: ["Carry"]}
+
+
+def test_coach_row_must_improve_and_break_nothing(tmp_path):
+    path = _coach_temp(tmp_path)
+    # a do-nothing patch repairs no flagged column -> still refuted
+    noop = [{"op": "change_attribute", "component_index": 23,
+             "name": "Bits", "value": 4}]
+    v = verify_ops(path, "Testcase_25", noop, [10], [10],
+                   coach_targets={10: {"Result", "Carry", "Zero", "Bit0"}})
+    assert v["confirmed"] is False and v["still_failing"] == [10]
+    # a residual column OUTSIDE the originally-flagged set -> refuted too
+    v2 = verify_ops(path, "Testcase_25", MUX_FIX, [10], [10],
+                    coach_targets={10: {"Result", "Zero", "Bit0"}})
+    assert v2["confirmed"] is False and v2["still_failing"] == [10]
+
+
+def test_debug_circuit_judges_coach_rows_by_improvement(tmp_path):
+    # end to end: the evaluator sweep finds only the coach row failing;
+    # with coach_rows the correct fix earns a CONFIRMED card that names
+    # the residual cell instead of being refuted by it
+    path = _coach_temp(tmp_path)
+    call = _fake([_reply(MUX_FIX)])
+    res = debug_circuit(path, call=call, use_manifest=False,
+                        coach_rows=[10])
+    assert res["mode"] == "analysis"
+    assert res["llm_calls"] == 1
+    card = res["cards"][0]
+    assert card["verified"]["confirmed"] is True
+    assert card["verified"]["coach_residuals"] == {10: ["Carry"]}
+    assert card["fix"]["ops"] == MUX_FIX

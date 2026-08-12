@@ -165,6 +165,19 @@ produced the original per-row verdict re-judges the patched temp — the
 judge never changes mid-flow. `verified.runner` says which ran
 (`"digital"` | `"evaluator"`).
 
+**Coach-added rows (the Mode B hand-off) are judged by STRICT IMPROVEMENT,
+not perfection.** A row Mode B injected asserts model-guessed cells, not
+ground truth, so demanding a full-row pass would let one imperfect
+side-column guess refute a correct fix. The web layer records the injected
+rows' indices on the temp registration (`l3_temp.coach_rows`) and the
+coordinator maps each to the output columns it originally failed on. For
+those rows only, condition (a) becomes: the fix repairs at least one
+originally-flagged column, breaks no new column, and any remaining columns
+are a strict subset of the original ones — reported per row in
+`verified.coach_residuals` (`{row: [columns]}`), never in `still_failing`.
+A row whose rerun errors, improves nothing, or fails a column it did not
+originally flag still refutes as before. Official rows keep the full bar.
+
 ## 6. Response (server → client)
 
 ```json
@@ -176,7 +189,7 @@ judge never changes mid-flow. `verified.runner` says which ran
       "confidence": 0.9,
       "cluster_rows": [0, 1, 2, 3],
       "hint": { "suspect_region": "...", "suspect_signals": ["..."], "why": "..." },
-      "verified": { "confirmed": true, "runner": "digital", "regressions": [] },
+      "verified": { "confirmed": true, "runner": "digital", "regressions": [], "coach_residuals": {} },
       "fix": { "ops": [ "..." ], "explanation_for_student": "...",
                "animation_script": [ "...validated, retest forced last..." ] } }
   ],
@@ -193,8 +206,8 @@ The client renders each card at `hint_level` 1 (hint only) and reveals
 the structural half of the F13 spoiler guard. `mode:"lazy"` responses
 carry `suggestions[]` (questions + build hints, with L2-library terms
 marked for the blue hover-cards) and NO cards, NO fix ops. An analysis
-run that delivers zero cards does not consume a daily use (the endpoint
-says so in `notes`).
+run that delivers zero cards does not consume a daily use; the board shows
+that state through the amber best-idea card alone — no bookkeeping notes.
 
 ## 7. Card lifetime (1.3, explicit)
 

@@ -58,7 +58,10 @@ def test_passing_rows_yield_all_set_and_register_the_temp_file():
         # the temp copy is now addressable like any session file
         names = [f["name"] for f in server._SESSIONS[sid]["files"]]
         assert "single_and__coach.dig" in names
-        assert server._SESSIONS[sid]["l3_temp"]["for"] == "single_and.dig"
+        lt = server._SESSIONS[sid]["l3_temp"]
+        assert lt["for"] == "single_and.dig"
+        # 4 original rows, 2 added -> Mode A judges 4 and 5 as coach rows
+        assert lt["coach_rows"] == [4, 5]
     finally:
         server._SESSIONS.pop(sid, None)
 
