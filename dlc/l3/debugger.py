@@ -18,8 +18,11 @@ One explicit trigger runs the whole ladder (docs/l3_debug_contract.md):
                   cells are model guesses, not ground truth.
                   With no jar the SAME Python evaluator that judged the
                   original failure re-judges the fix (verified.runner
-                  says which ran). Nothing unconfirmed is ever shown as
-                  a fix: unconfirmed hypotheses become dropped-ideas.
+                  says which ran). Nothing unconfirmed is ever shown AS A
+                  VERIFIED FIX: unconfirmed hypotheses become dropped
+                  ideas, except that a run with ZERO confirmed cards
+                  ships its best-ranked survivor clearly labeled
+                  unverified (best_unverified), with a free re-run.
   cards           dedupe by normalized ops, rank by (confirmed, rows
                   covered, confidence), top-K = 3. Student-visible text
                   passes the F13 leak guard; animation scripts are
@@ -217,7 +220,8 @@ def validate_animation(script: list, n_components: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Verify (the self-check oracle — nothing unconfirmed is ever shown)
+# Verify (the self-check oracle — only CONFIRMED fixes rank as cards;
+# a zero-card run ships its best survivor clearly labeled unverified)
 # ---------------------------------------------------------------------------
 
 def _offline_failing(temp_path: str, spec_name: str) -> tuple[list[int], dict]:

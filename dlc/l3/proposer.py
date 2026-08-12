@@ -466,7 +466,8 @@ def propose_rows(
     injectable (and resolved at RUN time, so tests may also monkeypatch
     module-level call_llm) — tests never touch the network. A scan that
     still has disagreements refuses to propose (the UI redirects to
-    Mode A first).
+    Mode A first), and so does a scan stopped by the Case 3.B
+    select-coverage gate (the student owes one row per op value first).
     """
     if call is None:
         call = call_llm
@@ -533,18 +534,18 @@ def propose_rows(
     notes: list[str] = []
 
     # HARDENING, strongest gates first:
-    # 1) deterministic REPLAY pre-gate — for clocked targets (where the
-    #    reference and self-check gates cannot run) the student's own
-    #    circuit is replayed through the official rows and the proposed
-    #    rows; a row whose expected values ignore the machine state at
-    #    that point is dropped. On a clean-scanned circuit (tests and
-    #    circuit agree everywhere) such a row is almost surely a wrong
-    #    expectation, not a discovered bug.
+    # 1) deterministic REPLAY pre-gate — for clocked targets, replay
+    #    through the official rows then each proposed row. With a
+    #    reference the replay is intended truth and disagreement DROPS;
+    #    without one the only oracle is the student's own circuit, whose
+    #    disagreement is not truth about intent (the row may be wrong OR
+    #    the circuit buggy right there — case 3), so those rows are
+    #    delivered as DISPUTED instead.
     # 2) deterministic reference check — a row the lab reference disagrees
     #    with is WRONG and is dropped before the student ever sees it;
     # 3) model self-check — for un-referenced combinational targets, the
-    #    model must independently re-derive its own rows' outputs; any
-    #    mismatch drops the row.
+    #    model must independently re-derive its own rows' outputs; an
+    #    unconfirmed row is delivered as DISPUTED.
     paths = {c.file: c.path for c in report.circuits if c.path}
     valid, rejected, notes = _category_gate(valid, rejected, notes, targets, m)
     valid, rejected, notes = _replay_gate(valid, rejected, notes, targets, paths)
@@ -684,26 +685,30 @@ def _category_gate(valid, rejected, notes, targets, manifest):
 
 def _replay_gate(valid, rejected, notes, targets, paths):
     """deterministic pre-check for CLOCKED targets — replay through the
-    official rows, then evaluate each proposed row in sequence. Rows whose
-    asserted outputs disagree with the machine state at that point are
-    dropped with the computed values in the reason.
+    official rows, then evaluate each proposed row in sequence.
 
-    when the lab reference circuit is configured, the replay runs on
-    the REFERENCE — intended truth — so a correct row for a student whose
-    bug hides in an untested category SURVIVES here and then fails on the
-    student's temp at Accept, which is exactly the hand-off Mode A wants.
-    Without a reference the student's own circuit is replayed (a row
-    disagreeing with a clean-scanned circuit is almost surely a wrong
-    expectation, and nothing secret is revealed). Program extensions are
-    judged the same way with the ROM pre-extended; they drop as a unit.
-    A replay that errors never blocks."""
+    WITH a configured lab reference the replay is INTENDED truth: rows
+    whose asserted outputs disagree are wrong and DROP (prefix rows after
+    a dropped one drop with it — their state context is gone; program
+    extensions drop as a unit). A correct row for a student whose bug
+    hides in an untested category survives here and then fails on the
+    student's temp at Accept — exactly the hand-off Mode A wants.
+
+    WITHOUT a reference the only replay oracle is the student's OWN
+    circuit, and its disagreement is NOT truth about intent: either the
+    row's expectation is wrong (e.g. it ignores the state the circuit
+    holds at that step) or the circuit is buggy exactly there — the
+    case-3 hand-off. Same epistemic state as the model self-check, so
+    such rows are DELIVERED AS DISPUTED (computed values attached),
+    never silently dropped; the student decides, and Accept runs the
+    truth on the temp copy. A replay that errors never blocks."""
     from dlc.l3 import manifest as mf
     from dlc.l3.coverage import replay_appended_rows
     m = mf.find_manifest({t["file"] for t in targets})
     ref_dir = mf.reference_dir(m)
     by_file = {t["file"]: t for t in targets}
     kept: list[dict] = []
-    checked = False
+    n_disputed = 0
     for g in valid:
         t = by_file.get(g["file"])
         path = paths.get(g["file"])
@@ -711,12 +716,14 @@ def _replay_gate(valid, rejected, notes, targets, paths):
             kept.append(g)
             continue
         ref_file = ref_dir / g["file"] if ref_dir else None
+        on_reference = False
         try:
             if ref_file is not None and ref_file.is_file():
                 try:                     # intended truth beats student state
                     verdicts = replay_appended_rows(
                         str(ref_file), g["spec_name"], g["rows"],
                         g.get("program_words"))
+                    on_reference = True
                 except Exception:        # e.g. renamed testcase in the ref
                     verdicts = replay_appended_rows(
                         path, g["spec_name"], g["rows"],
@@ -727,7 +734,24 @@ def _replay_gate(valid, rejected, notes, targets, paths):
         except Exception:
             kept.append(g)               # a broken replay never blocks
             continue
-        checked = True
+
+        if not on_reference:
+            # student-circuit replay: disagreement => DISPUTED, keep all.
+            # No prefix logic needed — the replay threads the circuit's
+            # own state through every row regardless of assertions.
+            marks = sorted(i for i, v in enumerate(verdicts)
+                           if v["verdict"] == "disagrees")
+            if marks:
+                g = {**g,
+                     "disputed_rows": sorted(
+                         set(g.get("disputed_rows") or []) | set(marks)),
+                     "disputed_details": {
+                         **(g.get("disputed_details") or {}),
+                         **{str(i): verdicts[i]["detail"] for i in marks}}}
+                n_disputed += len(marks)
+            kept.append(g)
+            continue
+
         if g.get("program_words"):       # atomic: any disagreement kills all
             bad = [v for v in verdicts if v["verdict"] == "disagrees"]
             if bad:
@@ -771,6 +795,14 @@ def _replay_gate(valid, rejected, notes, targets, paths):
             good.append(v["row"])
         if good:
             kept.append({**g, "rows": good})
+    if n_disputed:
+        notes.append(
+            f"your circuit disagrees with {n_disputed} proposed row(s) at "
+            f"that point in the test sequence — delivered as DISPUTED with "
+            f"the computed values shown. Either the row's expectation is "
+            f"wrong (it may ignore what the circuit holds at that step) or "
+            f"your circuit is buggy exactly there; accepting runs the "
+            f"truth on the temp copy.")
     return kept, rejected, notes
 
 
@@ -892,13 +924,14 @@ def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
         notes.append("self-check confirmed every proposed row.")
         return valid, rejected, notes
 
-    # This is the ONLY gate with no machine truth behind it (the model
-    # re-deriving its own rows blind), so an unconfirmed row is DELIVERED
-    # AS DISPUTED, never silently dropped: either the row is wrong or the
-    # circuit hides a bug exactly there, and only the student can decide
-    # (accept → temp rerun → the accept-failed popup → Mode A). Every gate
-    # that does hold real truth — format, duplicate, category, lazy,
-    # replay, reference — still drops as before.
+    # No machine truth stands behind this gate (the model re-deriving its
+    # own rows blind), so an unconfirmed row is DELIVERED AS DISPUTED,
+    # never silently dropped: either the row is wrong or the circuit
+    # hides a bug exactly there, and only the student can decide (accept
+    # → temp rerun → the accept-failed popup → Mode A). The same rule
+    # covers the replay gate when it runs on the student's own circuit.
+    # Every gate that does hold real truth — format, duplicate, category,
+    # lazy, replay-on-reference, reference — still drops as before.
     n_disputed = 0
     for gi, g in enumerate(valid):
         marks = sorted(ri for (gj, ri) in drop if gj == gi)

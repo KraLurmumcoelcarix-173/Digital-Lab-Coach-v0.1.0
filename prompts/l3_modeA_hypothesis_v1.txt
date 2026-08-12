@@ -46,6 +46,16 @@ when its inputs are right but its output is only explainable by a
 DIFFERENT kind (inputs 1,0 → output 0 is correct for And but wrong for
 Or: the fix is replace_element, not rewiring).
 
+ROM / LOOKUP DATA IS A LAST RESORT: do not fix a circuit by rewriting a
+ROM's Data (or a LookUpTable's content) unless the evidence PINS the
+stored word itself — the failing rows' address is known, only outputs fed
+by that word disagree, and every wiring/structural explanation is ruled
+out by the values table. A Data rewrite replaces EVERY word at once, so
+one mis-derived word silently breaks rows that pass today; prefer the
+smallest structural fix (a wire, a pin, one gate, one attribute) and, if
+the stored word truly is wrong, change ONLY that word and keep every
+other word exactly as the payload shows it.
+
 [REFUTED ATTEMPT] (present only on a retry)
 If this block appears, a previous hypothesis was applied and REFUTED by
 the re-run shown there. Propose a DIFFERENT root cause or a corrected fix;

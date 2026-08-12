@@ -23,5 +23,9 @@
  "tier3_latched_display.dig": {
   "content": "A B C D load Clock Fa Fb Fc Fd Fe Ff Fg\n# initial state: registers at 0, display shows '0'\n0 0 0 0 0 C 1 1 1 1 1 1 0\n# load 0101 (= 5): on next clock with load=1, registers capture\n0 1 0 1 1 C 1 0 1 1 0 1 1\n# hold: load=0, display stays at '5'\n1 1 1 1 0 C 1 0 1 1 0 1 1\n# load 1010 (= A): registers capture\n1 0 1 0 1 C 1 1 1 0 1 1 1\n# hold: load=0, X changes but display stays at 'A'\n0 0 0 0 0 C 1 1 1 0 1 1 1",
   "sha1": "5eb9760d3419462799e9bb40625e18840200c2f5"
+ },
+ "control-unit.dig": {
+  "content": "opcode    funct3  funct7     RegWrite ALUSrc ImmSrc1 ImmSrc0 ALUOp3 ALUOp2 ALUOp1 ALUOp0\n# add\n0b0110011 0b000   0b0000000  0b1      0b0    0b0     0b0     0b0    0b0    0b1    0b0\n# sub\n0b0110011 0b000   0b0100000  0b1      0b0    0b0     0b0     0b0    0b1    0b1    0b0\n# and\n0b0110011 0b111   0b0000000  0b1      0b0    0b0     0b0     0b0    0b0    0b0    0b0\n# or\n0b0110011 0b110   0b0000000  0b1      0b0    0b0     0b0     0b0    0b0    0b0    0b1\n# slt\n0b0110011 0b010   0b0000000  0b1      0b0    0b0     0b0     0b0    0b1    0b1    0b1\n# addi\n0b0010011 0b000   0b0000000  0b1      0b1    0b0     0b0     0b0    0b0    0b1    0b0\n# slti\n0b0010011 0b010   0b0000000  0b1      0b1    0b0     0b0     0b0    0b1    0b1    0b1\n# andi\n0b0010011 0b111   0b0000000  0b1      0b1    0b0     0b0     0b0    0b0    0b0    0b0",
+  "sha1": "95c7b8dd203dc9090174bb3582d90cb7876516cc"
  }
 }

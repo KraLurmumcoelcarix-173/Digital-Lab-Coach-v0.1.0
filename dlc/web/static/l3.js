@@ -415,7 +415,7 @@ function renderL3Boards(file) {
       cls = "blocked";
     } else if ((rep.select_gate || []).length) {
       status = "Scan done: tests and circuit agree, but some op values " +
-               "are never tested — your rows first, details below. " +
+               "are never tested" +
                "This scan was free.";
       cls = "blocked";
     } else {
@@ -839,11 +839,16 @@ function l3ProposalsHtml(mb) {
     <span class="muted">(model: ${escapeHtml(p.model || "?")})</span></div>`;
   p.proposals.forEach((g, gi) => {
     const disputed = g.disputed_rows || [];
-    const rows = g.rows.map((r, ri) =>
-      `<div class="l3-prop-row${disputed.includes(ri) ? " l3-row-disputed" : ""}">${escapeHtml(r)}${
+    const details = g.disputed_details || {};
+    const rows = g.rows.map((r, ri) => {
+      const why = details[String(ri)]
+        ? `Your circuit disagrees here: ${details[String(ri)]}. Either this expectation is wrong (it may ignore what the circuit holds at that step) or your circuit is buggy exactly there.`
+        : "The coach could not independently re-derive this row's expected outputs — no ground truth exists for it.";
+      return `<div class="l3-prop-row${disputed.includes(ri) ? " l3-row-disputed" : ""}">${escapeHtml(r)}${
         disputed.includes(ri)
-          ? ` <span class="l3-chip l3-chip-warn" title="The coach could not independently re-derive this row's expected outputs — no ground truth exists for it.">coach unsure</span>`
-          : ""}</div>`).join("");
+          ? ` <span class="l3-chip l3-chip-warn" title="${escapeHtml(why)}">coach unsure</span>`
+          : ""}</div>`;
+    }).join("");
     const dispHint = disputed.length
       ? `<div class="l3-warn-note">${disputed.length === g.rows.length ? "These rows are" : "The marked rows are"} DISPUTED — the
          coach could not independently confirm their expected outputs.
@@ -1530,7 +1535,11 @@ async function l3RunModeA() {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!file || file.error || !sessionId || l3RunState.a) return;
   const filename = file.filename;
-  logEvent("l3_modeA_started", { filename });
+  // "" = the server-side default (l3_debug_model config); the picker's
+  // non-empty value overrides for THIS run only — the benchmark's A/B seam
+  const modelPick = document.getElementById("l3-a-model");
+  const model = (modelPick && modelPick.value) || null;
+  logEvent("l3_modeA_started", { filename, model: model || "default" });
 
   l3RunState.a = true;
   l3ARunBtn.textContent = "Analyzing…";
@@ -1542,7 +1551,8 @@ async function l3RunModeA() {
     const res = await fetch("/api/llm/debug", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, filename }),
+      body: JSON.stringify({ session_id: sessionId, filename,
+                             ...(model ? { model } : {}) }),
     });
     if (!res.ok) failText = `Server error ${res.status}: ${await res.text()}`;
     else body = await res.json();

@@ -66,6 +66,18 @@ def test_empty_analysis_is_free_and_stays_quiet(monkeypatch):
     assert body["notes"] == []
 
 
+def test_model_override_reaches_the_coordinator(monkeypatch):
+    # the Mode A model dropdown: a non-default pick rides the request
+    # through to debug_circuit; omitted -> None -> the config default
+    sid = _upload_bug3()
+    fake = _canned("analysis", [{"rank": 1}])
+    monkeypatch.setattr(debugger, "debug_circuit", fake)
+    _debug(sid)
+    assert fake.calls[-1]["model"] is None
+    _debug(sid, model="claude-opus-5")
+    assert fake.calls[-1]["model"] == "claude-opus-5"
+
+
 def test_clear_and_lazy_are_free(monkeypatch):
     sid = _upload_bug3()
     for mode in ("clear", "lazy"):

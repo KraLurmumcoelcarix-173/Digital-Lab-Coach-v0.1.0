@@ -418,9 +418,12 @@ def test_program_word_decode_gate_and_word_info():
 _PIPE = "data/sample_circuits/tier3_realistic/pipelined_adder_correct.dig"
 
 
-def test_replay_gate_drops_state_ignorant_clocked_rows():
-    # The 2-stage pipelined adder: Sum lags two rows. After the official
-    # rows the pipe holds 0+0 twice, so an appended row must expect Sum=0.
+def test_replay_gate_disputes_state_ignorant_rows_without_reference():
+    # The 2-stage pipelined adder: Sum lags two rows. Without a reference
+    # the student's own circuit is the only replay oracle, and its
+    # disagreement is not truth about intent — rows are kept and marked
+    # DISPUTED (with the computed value attached), never dropped, and no
+    # prefix-kill: the replay threads the circuit's own state regardless.
     from dlc.parser.dig_parser import parse_dig_file
     from dlc.testing.spec import extract_test_specs
     spec = extract_test_specs(parse_dig_file(_PIPE))[0]
@@ -430,17 +433,43 @@ def test_replay_gate_drops_state_ignorant_clocked_rows():
          "has_clock": True, "clock_col": "Clk", "has_program_rom": False}
     paths = {"pipelined_adder_correct.dig": _PIPE}
     valid = [{"file": t["file"], "spec_name": spec.name,
-              # row 1 RIGHT (two-stage pipe still flushing 0s), row 2 WRONG
-              # (expects 5+5 immediately — it lands one row later), row 3
-              # would be right but FOLLOWS a dropped row: prefix-keep drops
-              # it too, because its context is gone.
-              "rows": ["5 5 C 0", "0 0 C 99", "0 0 C 10"], "why": "w"}]
+              # Sum lags ONE row (the official test shows 3+4 landing a
+              # row later). Row 0 agrees (official tail was 0+0), row 1
+              # disagrees (expects 5+5 immediately — it lands here as
+              # Sum=0xA, the row says 99), row 2 agrees (its Sum is row
+              # 1's 0+0) and SURVIVES because nothing is dropped ahead.
+              "rows": ["5 5 C 0", "0 0 C 99", "7 2 C 0"], "why": "w"}]
     kept, rejected, notes = proposer._replay_gate(valid, [], [], [t], paths)
-    assert len(kept) == 1 and kept[0]["rows"] == ["5 5 C 0"]
-    assert len(rejected) == 2
-    assert "wrong expected value" in rejected[0]["reason"]
-    assert "your circuit computes" in rejected[0]["reason"]
-    assert "follows a dropped row" in rejected[1]["reason"]
+    assert rejected == []
+    assert len(kept) == 1
+    assert kept[0]["rows"] == ["5 5 C 0", "0 0 C 99", "7 2 C 0"]
+    assert kept[0]["disputed_rows"] == [1]
+    assert "your circuit computes" in kept[0]["disputed_details"]["1"]
+    assert any("DISPUTED" in n for n in notes)
+
+
+def test_replay_gate_disputes_case3_rows_on_the_buggy_led():
+    # bug8 end-to-end shape: a correct-semantics row for the gapped digit
+    # disagrees with the student's buggy LED — exactly the case-3 hand-off
+    # that a silent drop used to suppress. It must arrive DISPUTED.
+    led = ("data/sample_circuits/30_bug_benchmark/bug8_gapped_led_minterm/"
+           "gapped_LED1.dig")
+    from dlc.parser.dig_parser import parse_dig_file
+    from dlc.testing.spec import extract_test_specs
+    spec = extract_test_specs(parse_dig_file(led))[0]
+    t = {"file": "gapped_LED1.dig", "spec_name": spec.name,
+         "headers": list(spec.headers), "inputs": [], "outputs": [],
+         "existing_rows": [], "existing_rows_omitted": 0,
+         "has_clock": True, "clock_col": "Clock", "has_program_rom": False}
+    good_row = "1 0 1 0 1 C 1 1 1 0 1 1 1"   # true 'A' display; bug fires
+    valid = [{"file": t["file"], "spec_name": spec.name,
+              "rows": [good_row], "why": "w"}]
+    kept, rejected, notes = proposer._replay_gate(
+        valid, [], [], [t], {"gapped_LED1.dig": led})
+    assert rejected == []
+    assert len(kept) == 1 and kept[0]["rows"] == [good_row]
+    assert kept[0]["disputed_rows"] == [0]
+    assert "your circuit computes" in kept[0]["disputed_details"]["0"]
 
 
 def test_propose_model_default_and_override(monkeypatch):
@@ -707,8 +736,9 @@ def test_synthesis_fallback_builds_a_gate_clean_extension():
     assert g["rows"][add_i] == "C 7 (-3)"
     assert g["rows"][-1] == "C 4 0"            # 7 + (-3), machine-derived
     assert notes == []          # the card's why says it — no extra note
-    # the replay gate pairs each dropped row with its own detail when
-    # a program group dies — spot-check the shape on a synthetic rejection
+    # a program group judged on the STUDENT's circuit (no reference dir)
+    # is not atomically killed anymore: its disagreeing rows arrive
+    # DISPUTED with per-row details, and the group survives
     m2 = _observing_manifest()
     t2 = {**_cpu_like_target(), "program_words": ["fec00213"]}
     from dlc.l3 import manifest as mfm
@@ -728,9 +758,34 @@ def test_synthesis_fallback_builds_a_gate_clean_extension():
             [grp], [], [], [t2], {"cpu.dig": "/tmp/nope.dig"})
     finally:
         covm.replay_appended_rows = old
+    assert rej == [] and len(kept) == 1
+    assert kept[0]["disputed_rows"] == [0]
+    assert kept[0]["disputed_details"]["0"] == "ReadData1 mismatch on C 9 9"
+
+
+def test_replay_gate_program_group_still_drops_atomically_on_reference(
+        monkeypatch, tmp_path):
+    # WITH a reference the replay is intended truth: a disagreeing program
+    # extension dies as a unit, each dropped row paired with its detail
+    import shutil
+    from dlc.l3 import coverage as covm
+    ref_dir = tmp_path / "refs"
+    ref_dir.mkdir()
+    shutil.copy(_PIPE, ref_dir / "cpu.dig")   # existence is what matters —
+    monkeypatch.setenv("DLC_REFERENCE_DIR", str(ref_dir))
+
+    def fake_replay(path, spec_name, rows, rom_words=None):  # replay faked
+        return [{"row": r, "verdict": "disagrees", "detail": f"d {r}"}
+                for r in rows]
+
+    monkeypatch.setattr(covm, "replay_appended_rows", fake_replay)
+    t = {**_cpu_like_target(), "program_words": ["fec00213"]}
+    grp = {"file": "cpu.dig", "spec_name": "Test",
+           "rows": ["C 9 9"], "why": "w", "program_words": ["940533"]}
+    kept, rej, _ = proposer._replay_gate(
+        [grp], [], [], [t], {"cpu.dig": "/tmp/nope.dig"})
     assert kept == [] and rej
-    assert rej[0]["details"] == [
-        {"row": "C 9 9", "detail": "ReadData1 mismatch on C 9 9"}]
+    assert rej[0]["details"] == [{"row": "C 9 9", "detail": "d C 9 9"}]
     assert "—" not in rej[0]["reason"]      # short reason, no joined wall
 
 

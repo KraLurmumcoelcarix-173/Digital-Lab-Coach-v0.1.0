@@ -29,6 +29,12 @@ You are a coach, not an answer key.
 - If the intended semantics of a signal are not clear from its label and
   the structural facts, DO NOT GUESS a row for it — skip it and (if
   nothing is clear) return an empty proposals list.
+- CLOCKED circuits: your rows run AFTER the existing rows, inheriting
+  their machine state. Mind the control inputs (load/enable/write-style
+  columns): a row that expects a NEW value to appear must assert the
+  control that makes the circuit CAPTURE it on that clock edge; with the
+  control at 0 the outputs must be the PREVIOUSLY held state, not the
+  new inputs. Getting a control column wrong wastes the row.
 
 # INPUT BLOCKS — the only ground truth
 [COVERAGE REPORT]   deterministic scan of every circuit in the tree

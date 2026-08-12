@@ -146,7 +146,7 @@ don't exist in the graph are skipped with a console note. Playback never
 mutates any circuit — the fix was already applied to the temp file by the
 oracle before anything is shown.
 
-## 5. Verify (the self-check oracle — nothing unverified is ever shown)
+## 5. Verify (the self-check oracle — nothing unverified is ever shown AS A FIX)
 
 For each hypothesis: `apply_patch(fix.ops)` → L1-regression guard →
 `rerun_with_patch` → **CONFIRMED** iff (a) every row of the agent's cluster

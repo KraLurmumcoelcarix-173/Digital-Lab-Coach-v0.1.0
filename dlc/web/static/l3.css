@@ -87,7 +87,18 @@
 .l3-board.locked .l3-board-body,
 .l3-board.locked .l3-board-foot { opacity: 0.5; }
 
-.l3-board-foot { margin-top: 10px; }
+.l3-board-foot { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Mode A model picker — same visual weight as a ghost button */
+.l3-model-pick {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
 
 .l3-note-card {
   border: 1px dashed var(--border);
