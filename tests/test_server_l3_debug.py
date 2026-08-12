@@ -153,3 +153,51 @@ def test_fix_retest_rejects_empty_and_broken_ops():
                  "name": "Value", "value": 0}]})
     body2 = r2.json()
     assert body2["ok"] is False and body2["warning"]
+
+
+def test_accept_fix_registers_fixed_temp_and_retargets_everything(monkeypatch):
+    # accept -> fix applied to a TEMP only; session coaches the temp:
+    # Mode A re-run sees it, and Mode B's scan now reports the FIXED
+    # circuit clean (the original bug3 scan would flag disagreements)
+    sid = _upload_bug3()
+    r = client.post("/api/l3/accept_fix", json={
+        "session_id": sid, "filename": "Wrong_cin.dig",
+        "ops": [{"op": "change_attribute", "component_index": 16,
+                 "name": "Value", "value": 0}],
+        "spec_name": "Testcase_12",
+    })
+    body = r.json()
+    assert body["ok"] is True, body.get("warning")
+    assert body["temp_filename"] == "Wrong_cin__coach.dig"
+    assert body["all_passed"] is True
+    lt = server._SESSIONS[sid]["l3_temp"]
+    assert lt["for"] == "Wrong_cin.dig" and lt["coach_rows"] == []
+    names = [f["name"] for f in server._SESSIONS[sid]["files"]]
+    assert "Wrong_cin__coach.dig" in names
+
+    # Mode A targets the fixed temp
+    fake = _canned("clear", [])
+    monkeypatch.setattr(debugger, "debug_circuit", fake)
+    b2 = _debug(sid)
+    assert b2["on_coach_temp"] is True
+    assert fake.calls[-1]["path"] == lt["path"]
+
+    # Mode B scans the fixed temp: zero disagreements
+    b3 = client.post("/api/l3/coverage", json={
+        "session_id": sid, "filename": "Wrong_cin.dig"}).json()
+    assert b3["ok"] is True
+    assert b3["on_coach_temp"] is True
+    assert b3["total_flags"] == 0
+
+    # the original upload was never touched
+    orig = next(f for f in server._SESSIONS[sid]["files"]
+                if f["name"] == "Wrong_cin.dig")
+    import dlc.l3.coverage as cov
+    assert cov.scan_tree_coverage(orig["path"]).total_flags > 0
+
+
+def test_accept_fix_refuses_empty_ops():
+    sid = _upload_bug3()
+    r = client.post("/api/l3/accept_fix", json={
+        "session_id": sid, "filename": "Wrong_cin.dig", "ops": []})
+    assert r.json()["ok"] is False

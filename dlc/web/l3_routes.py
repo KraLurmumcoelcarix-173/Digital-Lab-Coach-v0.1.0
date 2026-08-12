@@ -59,6 +59,14 @@ def l3_coverage(req: CoverageRequest) -> dict:
     from dlc.web import server   # late binding; see module docstring
 
     target = server._resolve_target(req.session_id, req.filename)
+    scan_path, on_temp = target["path"], False
+    _s = server._SESSIONS.get(req.session_id)
+    _lt = (_s or {}).get("l3_temp") or None
+    if (_lt and _lt.get("for") == req.filename and _lt.get("path")
+            and os.path.exists(_lt["path"])):
+        # after Accept-Fix (or an accepted injection) the session
+        # coaches the TEMP — Mode B continues on the fixed circuit
+        scan_path, on_temp = _lt["path"], True
     if not limits.allowed("modeB"):
         return {
             "ok": False,
@@ -67,7 +75,7 @@ def l3_coverage(req: CoverageRequest) -> dict:
             "limits": limits.state(),
         }
     try:
-        report = scan_tree_coverage(target["path"])
+        report = scan_tree_coverage(scan_path)
     except Exception as exc:     # defense in depth; the scan shouldn't raise
         return {
             "ok": False,
@@ -87,6 +95,7 @@ def l3_coverage(req: CoverageRequest) -> dict:
         "warning": None,
         "consumed_use": consumed,
         "limits": lim,
+        "on_coach_temp": on_temp,
         **report.to_dict(),
     }
 
@@ -110,8 +119,14 @@ def l3_propose(req: ProposeRequest) -> dict:
     from dlc.web import server       # late binding; see module docstring
 
     target = server._resolve_target(req.session_id, req.filename)
+    prop_path = target["path"]
+    _s = server._SESSIONS.get(req.session_id)
+    _lt = (_s or {}).get("l3_temp") or None
+    if (_lt and _lt.get("for") == req.filename and _lt.get("path")
+            and os.path.exists(_lt["path"])):
+        prop_path = _lt["path"]          # 3.11: propose on the fixed temp
     try:
-        result = proposer.propose_rows(target["path"], model=req.model)
+        result = proposer.propose_rows(prop_path, model=req.model)
     except Exception as exc:         # defense in depth
         result = {"ok": False, "proposals": [], "rejected": [],
                   "model": req.model, "notes": [],
@@ -174,11 +189,21 @@ def l3_inject(req: InjectRequest) -> dict:
     from dlc.web import server   # late binding; see module docstring
 
     target = server._resolve_target(req.session_id, req.filename)
+    base_path = target["path"]
+    _s = server._SESSIONS.get(req.session_id)
+    _lt = (_s or {}).get("l3_temp") or None
+    prev_coach_rows: list[int] = []
+    if (_lt and _lt.get("for") == req.filename and _lt.get("path")
+            and os.path.exists(_lt["path"])):
+        # rows inject ON TOP of the current temp (e.g. an accepted
+        # fix), never silently resetting to the unfixed original
+        base_path = _lt["path"]
+        prev_coach_rows = list(_lt.get("coach_rows") or [])
 
     spec_name = req.spec_name
     if spec_name is None:
         try:
-            specs = extract_test_specs(parse_dig_file(target["path"]))
+            specs = extract_test_specs(parse_dig_file(base_path))
         except Exception as exc:
             return {"ok": False, "outcome": "error",
                     "warning": f"Could not parse circuit: {exc}"}
@@ -191,15 +216,15 @@ def l3_inject(req: InjectRequest) -> dict:
             for r in req.rows if isinstance(r, str)]
     if req.as_second:
         outcome = rerun_with_second(
-            target["path"], spec_name, rows, req.rom_words, keep_temp=True,
+            base_path, spec_name, rows, req.rom_words, keep_temp=True,
         )
     elif req.rom_words:
         outcome = rerun_with_program(
-            target["path"], spec_name, rows, req.rom_words, keep_temp=True,
+            base_path, spec_name, rows, req.rom_words, keep_temp=True,
         )
     else:
         outcome = rerun_with_rows(
-            target["path"], spec_name, rows, keep_temp=True,
+            base_path, spec_name, rows, keep_temp=True,
         )
     body = outcome.to_dict()
     if not outcome.ok:
@@ -229,9 +254,9 @@ def l3_inject(req: InjectRequest) -> dict:
             # temp-spec indices of the rows Mode B ADDED: Mode A's
             # verifier judges these by strict improvement, not perfection
             # (their expected cells are coach guesses — debugger.verify_ops)
-            "coach_rows": sorted(
+            "coach_rows": sorted(set(prev_coach_rows) | {
                 r["index"] for r in (outcome.rows or [])
-                if r.get("added") and isinstance(r.get("index"), int)),
+                if r.get("added") and isinstance(r.get("index"), int)}),
         }
 
     return {
@@ -367,6 +392,104 @@ def llm_debug(req: DebugRequest) -> dict:
     result["consumed_use"] = consumed
     result["on_coach_temp"] = on_temp
     return result
+
+
+class AcceptFixRequest(BaseModel):
+    session_id: str
+    filename: str
+    ops: list[dict] = []
+    spec_name: str | None = None
+
+
+@router.post("/api/l3/accept_fix")
+def l3_accept_fix(req: AcceptFixRequest) -> dict:
+    """ACCEPT FIX: apply a CONFIRMED card's ops to a TEMP
+    copy ONLY — the student's original .dig is never touched — and
+    register that temp as the session coach temp (replacing any previous
+    one). From then on /api/llm/debug, /api/l3/coverage and
+    /api/l3/propose target the FIXED temp: re-running Mode A shows the
+    rows passing, and Mode B continues on the fixed circuit. The UI
+    double-confirms before calling. Applies on the CURRENT analysis
+    target (the registered temp when one exists — the fix was computed
+    against it), so a case-3 fix lands on top of the injected rows."""
+    from dlc.l3.patch import apply_patch
+    from dlc.testing.runner import per_row_run_auto
+    from dlc.web import server   # late binding; see module docstring
+
+    target = server._resolve_target(req.session_id, req.filename)
+    if not req.ops:
+        return {"ok": False, "warning": "No fix ops to accept."}
+    path = target["path"]
+    session = server._SESSIONS.get(req.session_id)
+    lt = (session or {}).get("l3_temp") or None
+    prev_coach_rows: list[int] = []
+    spec_name = req.spec_name
+    if (lt and lt.get("for") == req.filename and lt.get("path")
+            and os.path.exists(lt["path"])):
+        path = lt["path"]
+        prev_coach_rows = list(lt.get("coach_rows") or [])
+        spec_name = spec_name or lt.get("spec_name")
+
+    temp, rep = apply_patch(path, req.ops)
+    if temp is None:
+        return {"ok": False, "warning": rep.warning}
+
+    temp_filename = f"{Path(req.filename).stem}__coach.dig"
+    if session is not None:
+        for f in list(session["files"]):
+            if f["name"] == temp_filename:
+                session["files"].remove(f)
+                if f["path"] != temp:
+                    try:
+                        os.remove(f["path"])
+                    except OSError:
+                        pass
+        session["files"].append({"name": temp_filename, "path": temp})
+        session["l3_temp"] = {
+            "for": req.filename,
+            "name": temp_filename,
+            "path": temp,
+            "spec_name": spec_name,
+            # rows Mode B added remain coach-guessed on the fixed temp
+            "coach_rows": prev_coach_rows,
+        }
+
+    # show the green: per-row rerun of the FIXED temp (jar or evaluator)
+    try:
+        circ = parse_dig_file(temp)
+        specs = extract_test_specs(circ)
+        sp = next((s for s in specs if s.name == spec_name),
+                  specs[0] if specs else None)
+        if sp is None:
+            return {"ok": True, "temp_filename": temp_filename,
+                    "spec": None, "all_passed": None}
+        raw_by_idx = {r.line_index: r.raw for r in sp.rows
+                      if not r.is_malformed}
+        from dlc.testing.runner import find_digital_jar
+        jar = find_digital_jar()
+        if jar:
+            rs = per_row_run_auto(sp, temp, jar_path=jar)
+            rows = [{"index": r.row_index,
+                     "raw": raw_by_idx.get(r.row_index, ""),
+                     "status": "passed" if r.status == "passed"
+                               else "failed"} for r in rs]
+        else:
+            from dlc.l3.debugger import _offline_failing
+            failing, _det = _offline_failing(temp, sp.name)
+            rows = [{"index": r.line_index, "raw": r.raw,
+                     "status": "failed" if r.line_index in failing
+                               else "passed"}
+                    for r in sp.rows if not r.is_malformed]
+        allp = all(r["status"] == "passed" for r in rows)
+        return {"ok": True, "temp_filename": temp_filename,
+                "spec": {"name": sp.name, "headers": list(sp.headers),
+                         "rows": rows, "all_passed": allp},
+                "all_passed": allp}
+    except Exception as exc:             # registered fine; rerun best-effort
+        return {"ok": True, "temp_filename": temp_filename, "spec": None,
+                "all_passed": None,
+                "warning": (f"fix accepted onto the temp, but the rerun "
+                            f"failed: {type(exc).__name__}: {exc}")}
 
 
 class FixRetestRequest(BaseModel):

@@ -55,8 +55,7 @@ GROSS_MAX_FAILING = 10
 RATE_GATE_MIN_COMPONENTS = 30
 # Focus requisite: failing rows wrong in >=4 output columns AT ONCE must
 # stay UNDER this share of ALL well-formed testcase rows, or the run
-# is lazy regardless of pass rate (
-# change here to loosen/tighten).
+# is lazy regardless of pass rate.
 SCATTERED_ROW_MAX_SHARE = 0.25
 
 _MAX_CLUSTERS = 4          # one sub-agent per cluster, never one per row

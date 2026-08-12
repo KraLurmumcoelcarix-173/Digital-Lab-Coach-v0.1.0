@@ -154,6 +154,12 @@ function l3BuildMirror(file) {
   inst.once("layoutstop", () => {
     setTimeout(() => { try { inst.resize(); inst.fit(undefined, 40); } catch {} }, 0);
   });
+  // revealed fixes stay marked across rebuilds (top view or the
+  // fix-review descent) — the locked panel keeps its yellow story.
+  // NOT hooked on layoutstop: dagre with animate:false finishes inside
+  // the constructor, before a listener could attach; the badge/tag
+  // overlays self-correct on pan/zoom, so a plain delay is safe.
+  setTimeout(() => { try { l3ApplyFixMarks(file); } catch {} }, 300);
   l3WireMirrorInteractions(inst);
   l3ApplyNetIds();               // keep the net-id toggle across rebuilds
   l3GraphFilename = file.filename;
@@ -560,6 +566,11 @@ function _l3CardHtml(ma, c) {
         && !(ma.result && ma.result.on_coach_temp)
         ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3a-replay="${c.rank}">&#9654; Replay walkthrough</button></div>`
         : "") +
+      (ma.acceptedFix && String(ma.acceptedFix.rank) === String(c.rank)
+        ? _l3AcceptedFixHtml(ma.acceptedFix.body)
+        : `<div class="l3-prop-bar">` +
+          `<button class="btn" data-l3a-acceptfix="${c.rank}">Accept fix &rarr; temp copy</button>` +
+          `<span class="l3-prop-hint">applies the fix to a TEMP copy only — your file is never touched; the session then coaches the fixed temp</span></div>`) +
       `</div>`;
   }
   return html + `</div>`;
@@ -691,6 +702,23 @@ function _l3FailingRowsTable(res) {
     if (net) { l3FlashNet(net.dataset.l3Net); return; }
     const tr = evt.target.closest("tr[data-l3-simfile]");
     if (tr) { l3SimTempRow(tr); return; }
+    const af = evt.target.closest("[data-l3a-acceptfix]");
+    if (af) {
+      // double-confirm: first click arms, second applies
+      if (af.dataset.armed !== "1") {
+        af.dataset.armed = "1";
+        af.textContent = "Click again to confirm — TEMP copy only";
+        setTimeout(() => {
+          if (af.isConnected) {
+            af.dataset.armed = "";
+            af.innerHTML = "Accept fix &rarr; temp copy";
+          }
+        }, 5000);
+        return;
+      }
+      l3AcceptFix(af.dataset.l3aAcceptfix);
+      return;
+    }
     const rp = evt.target.closest("[data-l3a-replay]");
     if (rp) {
       const file = loaded.length > 0 ? loaded[currentIdx] : null;
@@ -1317,6 +1345,7 @@ function l3RenderDrillBar(crumb, rowIdx, targetFile) {
 function l3HideDrillBar() {
   const el = document.getElementById("l3-drill-bar");
   if (el) el.classList.add("hidden");
+  l3FixPath = [];                // any bar exit ends the fix review
   const pane = document.getElementById("l3-graph-pane");
   if (pane) pane.classList.remove("l3-drilling");
   const chip = document.getElementById("l3-file-chip");
@@ -1939,7 +1968,7 @@ function _l3UnverifiedCardHtml(ma, b) {
   return html + `</div>`;
 }
 
-// --- the fix walkthrough player ----------------------------------------
+// --- 3.6: the fix walkthrough player ----------------------------------------
 // Plays a CONFIRMED card's validated animation_script on the L3 mirror in
 // three phases: (1) Diagnose — the script's diagnose_line texts type onto
 // a red board over the canvas; (2) Localize + fix — the magical pointer
@@ -2001,18 +2030,23 @@ async function _l3PointerToNode(idx) {
   await _l3Sleep(650);
 }
 
-function _l3FixBadge(node, label) {
-  // 3.10: a subcircuit-internal fix pins a persistent wrench badge on the
-  // enclosing block — the "drill in here" hint that survives the playback
+function _l3FixBadge(node, label, onClick) {
+  // a subcircuit-internal fix pins a persistent wrench badge on the
+  // enclosing block; clicking it opens the fix-review drill (mirror swaps
+  // to the child with the inner fix marked yellow, recursive)
   const pane = document.getElementById("l3-graph-pane");
   const box = document.getElementById("l3-cy");
   if (!pane || !box || !l3Cy) return;
   const badge = document.createElement("div");
   badge.className = "l3-fix-badge";
   badge.textContent = "\u{1F527}";
-  badge.title = label
-    ? `fixed inside this block: ${label} — click a failing row and drill in to see it`
-    : "the fix sits inside this block — click a failing row and drill in to see it";
+  badge.title = (label ? `fixed inside this block: ${label}` :
+                 "the fix sits inside this block") +
+                (onClick ? " — click to review it inside" : "");
+  if (onClick) {
+    badge.style.cursor = "pointer";
+    badge.addEventListener("click", onClick);
+  }
   pane.appendChild(badge);
   const place = () => {
     if (!l3Cy || node.empty()) return;
@@ -2041,7 +2075,10 @@ function _l3MarkFix(target, label) {
   const path = target.path || [];
   if (path.length) {
     const host = l3Cy.getElementById(String(path[0]));
-    if (!host.empty()) { host.addClass("l3-fix-mark"); _l3FixBadge(host, label); }
+    if (!host.empty()) {
+      host.addClass("l3-fix-mark");
+      _l3FixBadge(host, label, () => l3FixDrillInto(path[0]));
+    }
     return;
   }
   const n = l3Cy.getElementById(String(target.component_index));
@@ -2195,4 +2232,141 @@ function _l3RetestHtml(body) {
     `<b>Retest on the fixed temp:</b> ${passed}/${rows.length} pass` +
     (body.all_passed ? ` — all green. Apply the fix in Digital and re-upload.` : "") +
     `<div class="l3-retest-rows">${chips}</div></div>`;
+}
+
+// --- Accept Fix + fix-review drill --------------------------------
+// Accept Fix (ratified): a CONFIRMED fix may be applied to a TEMP copy
+// only — never the student's file. The temp registers as the session
+// coach temp, so Mode A re-runs show the rows passing and Mode B
+// continues on the fixed circuit. The button double-confirms.
+async function l3AcceptFix(rank) {
+  const file = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!file || !sessionId) return;
+  const ma = l3Slot(file.filename).modeA;
+  const card = ma && ((ma.result || {}).cards || []).find(
+    (c) => String(c.rank) === String(rank));
+  if (!card) return;
+  let body = null;
+  try {
+    const res = await fetch("/api/l3/accept_fix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId, filename: file.filename,
+        ops: (card.fix && card.fix.ops) || [],
+        spec_name: (ma.result || {}).spec_name || null,
+      }),
+    });
+    body = res.ok ? await res.json()
+                  : { ok: false, warning: `Server error ${res.status}` };
+  } catch (err) {
+    body = { ok: false, warning: `Network error: ${err}` };
+  }
+  ma.acceptedFix = { rank, body };
+  logEvent("l3_fix_accepted", { rank: Number(rank),
+                                all_passed: !!(body && body.all_passed) });
+  renderL3Boards(file);
+}
+
+function _l3AcceptedFixHtml(body) {
+  if (!body) return "";
+  if (!body.ok) {
+    return `<div class="l3-warn-note">Accept failed: ${escapeHtml(body.warning || "unknown error")}</div>`;
+  }
+  return `<div class="l3-retest-result${body.all_passed ? " allgreen" : ""}">` +
+    `<b>Fix accepted onto ${escapeHtml(body.temp_filename || "the temp copy")}.</b> ` +
+    (body.warning ? escapeHtml(body.warning) : "") +
+    ((body.spec && body.spec.rows)
+      ? ` ${body.spec.rows.filter((r) => r.status === "passed").length}/${body.spec.rows.length} rows pass.` +
+        `<div class="l3-retest-rows">` +
+        body.spec.rows.map((r) =>
+          `<span class="l3-retest-row ${r.status === "passed" ? "ok" : "bad"}">row ${r.index}</span>`).join("") +
+        `</div>`
+      : "") +
+    `<div class="l3-prop-hint">The session now coaches the FIXED temp: a Mode A ` +
+    `re-run shows these rows passing, and Mode B scans/proposals continue on it. ` +
+    `Apply the same change in Digital, then re-upload your file to make it real.</div></div>`;
+}
+
+// the re-openable fix review. l3FixPath is the descent (component
+// indices from the top); marks re-apply from the REVEALED cards' validated
+// scripts on every mirror build, so the story survives tab switches and
+// the back button.
+let l3FixPath = [];
+
+function _l3RevealedMarkActs(ma) {
+  const out = [];
+  const res = ma && ma.result;
+  if (!res) return out;
+  for (const c of res.cards || []) {
+    if (((ma.levels || {})[String(c.rank)] || 1) >= 2) {
+      for (const a of (c.fix && c.fix.animation_script) || []) {
+        if (a.act === "mark_fix" && a.target) out.push(a);
+      }
+    }
+  }
+  return out;
+}
+
+function l3ApplyFixMarks(viewFile) {
+  if (!l3Cy || !viewFile) return;
+  const top = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!top) return;
+  const ma = l3Slot(top.filename).modeA;
+  const acts = _l3RevealedMarkActs(ma);
+  if (!acts.length) return;
+  const d = l3FixPath.length;
+  // top-level marks belong on the top mirror only (a row-drill view of a
+  // child must not inherit the parent's indices)
+  if (d === 0 && viewFile.filename !== top.filename) return;
+  for (const a of acts) {
+    const tgt = a.target || {};
+    const path = tgt.path || [];
+    if (path.slice(0, d).join(",") !== l3FixPath.join(",")) continue;
+    const rest = path.slice(d);
+    if (rest.length === 0) {
+      _l3MarkFix({ component_index: tgt.component_index, path: [],
+                   net_id: tgt.net_id }, a.label || "");
+    } else {
+      const host = l3Cy.getElementById(String(rest[0]));
+      if (!host.empty()) {
+        host.addClass("l3-fix-mark");
+        _l3FixBadge(host, a.label || "", () => l3FixDrillInto(rest[0]));
+      }
+    }
+  }
+}
+
+function l3FixDrillInto(hostIdx) {
+  if (!l3Cy) return;
+  const n = l3Cy.getElementById(String(hostIdx));
+  const ref = n.empty() ? null : n.data("element_name");
+  const child = ref ? l3LoadedByName()[ref] : null;
+  if (!child || child.error) {
+    alert(`Upload ${ref || "the subcircuit file"} alongside to review the fix inside it.`);
+    return;
+  }
+  l3FixPath = l3FixPath.concat([Number(hostIdx)]);
+  const keep = l3FixPath.slice();          // survive the hide-reset
+  l3BuildMirror(child);
+  l3FixPath = keep;
+  l3RenderFixBar(ref);
+  logEvent("l3_fix_drillin_opened", { depth: l3FixPath.length });
+}
+
+function l3RenderFixBar(ref) {
+  const el = l3DrillBarEl();
+  if (!el) return;
+  const top = loaded[currentIdx] ? loaded[currentIdx].filename : "top";
+  el.innerHTML =
+    `<span class="l3-drill-crumb">fix review &#9656; ${escapeHtml(ref)}` +
+    (l3FixPath.length > 1 ? ` (depth ${l3FixPath.length})` : "") + `</span>` +
+    `<span class="l3-drill-hint">yellow marks what the fix changes inside ` +
+    `this block</span>` +
+    `<button class="btn-ghost" data-l3-drillback>&#9666; back to ${escapeHtml(top)}</button>`;
+  el.classList.remove("hidden");
+  const pane = document.getElementById("l3-graph-pane");
+  if (pane) pane.classList.add("l3-drilling");
+  const chip = document.getElementById("l3-file-chip");
+  if (chip) chip.classList.add("hidden");
 }
