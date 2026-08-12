@@ -298,10 +298,18 @@ def test_small_circuit_stays_analyzable_even_when_every_row_fails():
 
 
 def test_big_circuit_below_its_bar_goes_lazy_with_suggestions():
+    # unfocused (4 scattered columns) + 20% passing on a 160+ component
+    # tree: under the 30% bar -> the free suggestion branch
     led = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
            f"wrong_bool_LED1.dig")
     res = debug_circuit(led, call=_never, use_manifest=False,
-                        failing_indices=[0, 1, 2])
+                        failing_indices=[0, 1, 2, 3],
+                        jar_mismatches={
+                            0: [{"column": "Fa", "expected": "1", "found": "0"}],
+                            1: [{"column": "Fb", "expected": "1", "found": "0"}],
+                            2: [{"column": "Fe", "expected": "1", "found": "0"}],
+                            3: [{"column": "Fg", "expected": "1", "found": "0"}],
+                        })
     assert res["mode"] == "lazy"
     assert [s["kind"] for s in res["suggestions"]] == ["low_pass_rate"]
     assert "truth table" in res["suggestions"][0]["terms"]

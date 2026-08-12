@@ -117,10 +117,17 @@ def test_bug4_missing_pipeline_goes_lazy():
 
 
 def test_big_circuit_below_its_bar_goes_lazy_before_any_evidence():
-    # the LED lab has 160+ components, so the bars apply: 3 of its 5
-    # rows failing (40% pass) is under the 1-5 row bar
+    # the LED lab has 160+ components and these caller-seam mismatches
+    # scatter over FOUR columns (unfocused, so the bars apply): 1 of 5
+    # rows passing (20%) is under the 30% bar
     res = assemble_evidence_for_file(
-        _BUG5, use_manifest=False, failing_indices=[0, 1, 2],
+        _BUG5, use_manifest=False, failing_indices=[0, 1, 2, 3],
+        jar_mismatches={
+            0: [{"column": "Fa", "expected": "1", "found": "0"}],
+            1: [{"column": "Fb", "expected": "1", "found": "0"}],
+            2: [{"column": "Fe", "expected": "1", "found": "0"}],
+            3: [{"column": "Fg", "expected": "1", "found": "0"}],
+        },
     )
     assert res.mode == "lazy"
     kinds = [f["kind"] for f in res.gross_flags]
@@ -129,6 +136,7 @@ def test_big_circuit_below_its_bar_goes_lazy_before_any_evidence():
 
 
 def test_big_circuit_on_or_above_its_bar_is_analyzable():
+    # 3 of 5 passing (60%) clears the 30% bar even without column focus
     res = assemble_evidence_for_file(
         _BUG5, use_manifest=False, failing_indices=[1, 2],
     )
@@ -149,21 +157,23 @@ def _spec_of(n):
 
 def test_tiered_pass_rate_bars():
     # exercised with the bars forced on (bug3 itself is a small circuit,
-    # exempt by default — asserted at the end)
+    # exempt by default — asserted at the end). v0.1.0 bars: 80/60/30.
     c, _nl, _g = _parsed(_BUG3)
     on = {"rate_gate_min_components": 0}
-    # big suite: >10 failing alone is fine while >=90% still passes
+    # big suite: >10 failing alone is fine while >=80% still passes
     assert gross_check(c, _spec_of(200), failing_count=15, **on) == []
-    # big suite: >10 failing AND under 90% -> structural
+    # the old 90% bar rejected this near-passing suite; 85% is analyzable
+    assert gross_check(c, _spec_of(100), failing_count=15, **on) == []
+    # big suite: >10 failing AND under 80% -> structural
     kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 11, **on)]
     assert kinds == ["too_many_failures"]
     # big suite: many rows failing but <=10 absolute -> still analyzable
     assert gross_check(c, _spec_of(12), failing_count=2, **on) == []
-    # 6-10 rows: 75% bar (2 of 8 failing = exactly 75% passing = ok)
-    assert gross_check(c, _spec_of(8), failing_count=2, **on) == []
-    assert [f["kind"] for f in gross_check(c, _spec_of(8), 3, **on)] == [
+    # 6-10 rows: 60% bar (3 of 8 failing = 62.5% passing = ok now)
+    assert gross_check(c, _spec_of(8), failing_count=3, **on) == []
+    assert [f["kind"] for f in gross_check(c, _spec_of(8), 4, **on)] == [
         "low_pass_rate"]
-    # 1-5 rows: 50% bar
+    # 1-5 rows: 30% bar (2 of 4 failing = 50% = ok; 3 of 4 = 25% = lazy)
     assert gross_check(c, _spec_of(4), failing_count=2, **on) == []
     assert [f["kind"] for f in gross_check(c, _spec_of(4), 3, **on)] == [
         "low_pass_rate"]
@@ -188,7 +198,7 @@ def test_gross_check_flags_unbound_columns():
 def test_gross_check_quiet_on_registered_clocked_circuit():
     c, _nl, _g = _parsed(_BUG3)
     spec = extract_test_specs(c)[0]
-    # 2 of 4 failing sits exactly on the 50% bar; registers exist, so no
+    # 2 of 4 failing sits well above the 30% bar; registers exist, so no
     # missing_clocked_logic either — nothing gross about this circuit
     assert gross_check(c, spec, failing_count=2) == []
 
@@ -388,10 +398,12 @@ def test_case3_fixture_is_clean_but_hides_the_mux_bug():
     assert not any("never selected" in n for n in (root.notes or []))
 
 
-def test_focused_failure_exempts_the_rate_bars():
-    # LED5 under a strict jar: 5 of 5 rows fail, but every mismatch sits
-    # in ONE output column (Ff) — a single wrong gate, localizable, so
-    # the rate bars step aside. Without column info the bars still apply.
+def test_focus_is_a_requisite_not_an_amnesty():
+    # v0.1.0: LED5 with 5 of 5 rows failing in ONE column (Ff) meets the
+    # focus requisite (no scattered rows) but no longer skips the rate
+    # bars — 0% passing is under the 30% bar, so the run is lazy. "You
+    # have <=3 columns wrong, so you can debug? no way" — the focus is a
+    # precondition, the pass rate still gets the last word.
     led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
             f"wrong_bool_LED5.dig")
     cells = {i: [{"column": "Ff", "expected": "1", "found": "0"}]
@@ -400,16 +412,43 @@ def test_focused_failure_exempts_the_rate_bars():
         led5, use_manifest=False,
         failing_indices=[0, 1, 2, 3, 4], jar_mismatches=cells,
     )
-    assert res.mode == "analysis"
+    assert res.mode == "lazy"
+    kinds = [f["kind"] for f in res.gross_flags]
+    assert "low_pass_rate" in kinds
+    assert "scattered_failures" not in kinds
+    # without column info the requisite stays silent; the bars still judge
     res2 = assemble_evidence_for_file(
         led5, use_manifest=False, failing_indices=[0, 1, 2, 3, 4],
     )
     assert res2.mode == "lazy"
-    # 4+ scattered columns is NOT focused — the bars still judge it
-    cells4 = {i: [{"column": col, "expected": "1", "found": "0"}]
-              for i, col in enumerate(["Fa", "Fb", "Fc", "Fd", "Fe"])}
-    res3 = assemble_evidence_for_file(
-        led5, use_manifest=False,
-        failing_indices=[0, 1, 2, 3, 4], jar_mismatches=cells4,
+
+
+def test_scattered_rows_are_lazy_regardless_of_pass_rate():
+    # Charles's ruling: failing rows wrong in 4+ output columns AT ONCE
+    # are a fundamentals symptom even when the pass rate looks fine.
+    # 3 of 5 rows pass (60%, above the 30% bar) — but TWO of the five
+    # rows scatter over four columns: 2/5 = 40% >= 25% of ALL rows -> lazy.
+    led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+            f"wrong_bool_LED5.dig")
+    four = [{"column": c, "expected": "1", "found": "0"}
+            for c in ("Fa", "Fb", "Fd", "Ff")]
+    res = assemble_evidence_for_file(
+        led5, use_manifest=False, failing_indices=[1, 2],
+        jar_mismatches={1: four, 2: four},
     )
-    assert res3.mode == "lazy"
+    assert res.mode == "lazy"
+    assert [f["kind"] for f in res.gross_flags] == ["scattered_failures"]
+
+
+def test_rare_scattered_row_in_a_long_suite_passes():
+    # one scattered row in a 20-row suite (1/20 = 5% < 25% of ALL rows)
+    # usually shares the focused rows' root cause — it passes; the same
+    # scattered row in a 4-row suite is 25% of the testcase -> lazy
+    c, _nl, _g = _parsed(_BUG3)
+    on = {"rate_gate_min_components": 0}
+    rows_cols = [{"Fa", "Fb", "Fd", "Ff"}] + [{"Ff"}] * 4
+    assert gross_check(c, _spec_of(20), failing_count=5,
+                       row_mismatch_columns=rows_cols, **on) == []
+    flags = gross_check(c, _spec_of(4), failing_count=4,
+                        row_mismatch_columns=rows_cols[:4], **on)
+    assert "scattered_failures" in [f["kind"] for f in flags]

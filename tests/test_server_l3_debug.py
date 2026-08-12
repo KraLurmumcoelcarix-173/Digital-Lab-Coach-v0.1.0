@@ -123,3 +123,33 @@ def test_coach_temp_is_targeted_when_registered(monkeypatch):
     assert fake.calls[-1]["spec_name"] == "Testcase_12"
     # the strict-improvement seam: added rows reach the coordinator
     assert fake.calls[-1]["coach_rows"] == [4, 5]
+
+
+def test_fix_retest_applies_ops_and_reruns():
+    # the animation's green Retest box: bug3 + the correct Const fix ->
+    # every row green on the patched temp; the original file untouched
+    sid = _upload_bug3()
+    r = client.post("/api/l3/fix_retest", json={
+        "session_id": sid, "filename": "Wrong_cin.dig",
+        "ops": [{"op": "change_attribute", "component_index": 16,
+                 "name": "Value", "value": 0}],
+    })
+    body = r.json()
+    assert body["ok"] is True, body.get("warning")
+    assert body["all_passed"] is True
+    rows = body["spec"]["rows"]
+    assert len(rows) == 4
+    assert all(row["status"] == "passed" for row in rows)
+
+
+def test_fix_retest_rejects_empty_and_broken_ops():
+    sid = _upload_bug3()
+    r = client.post("/api/l3/fix_retest", json={
+        "session_id": sid, "filename": "Wrong_cin.dig", "ops": []})
+    assert r.json()["ok"] is False
+    r2 = client.post("/api/l3/fix_retest", json={
+        "session_id": sid, "filename": "Wrong_cin.dig",
+        "ops": [{"op": "change_attribute", "component_index": 9999,
+                 "name": "Value", "value": 0}]})
+    body2 = r2.json()
+    assert body2["ok"] is False and body2["warning"]

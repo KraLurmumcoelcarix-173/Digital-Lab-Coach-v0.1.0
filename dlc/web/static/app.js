@@ -166,6 +166,25 @@ const CY_STYLE = [
       "text-background-color": "#dbeafe",
     },
   },
+  {
+    // fix walkthrough: yellow marks laid by the animation player
+    selector: "node.l3-fix-mark",
+    style: {
+      "border-width": 4,
+      "border-color": "#eab308",
+      "background-color": "#fef9c3",
+      "background-opacity": 0.9,
+    },
+  },
+  {
+    selector: "edge.l3-fix-mark-edge",
+    style: {
+      "line-color": "#eab308",
+      "target-arrow-color": "#eab308",
+      "width": 5,
+      "opacity": 1,
+    },
+  },
   { selector: "node.sig-dim", style: { "opacity": 0.35 } },
   // failed-row output: red ring + expected/found chip in the label.
   {

@@ -369,6 +369,79 @@ def llm_debug(req: DebugRequest) -> dict:
     return result
 
 
+class FixRetestRequest(BaseModel):
+    session_id: str
+    filename: str
+    ops: list[dict] = []
+    spec_name: str | None = None
+
+
+@router.post("/api/l3/fix_retest")
+def l3_fix_retest(req: FixRetestRequest) -> dict:
+    """The animation's green Retest box: apply a delivered card's fix ops
+    to a TEMP copy and per-row rerun the testcase — the student SEES the
+    fixed circuit go green without their file being touched. Deterministic
+    (apply_patch guards + jar/evaluator rerun), no model call, no daily
+    use. Targets the coach temp when one is registered, exactly like
+    /api/llm/debug, so the retest re-runs what the analysis analyzed."""
+    from dlc.l3.patch import rerun_with_patch
+    from dlc.web import server   # late binding; see module docstring
+
+    target = server._resolve_target(req.session_id, req.filename)
+    path = target["path"]
+    spec_name = req.spec_name
+    session = server._SESSIONS.get(req.session_id)
+    lt = (session or {}).get("l3_temp") or None
+    if (lt and lt.get("for") == req.filename and lt.get("path")
+            and os.path.exists(lt["path"])):
+        path, spec_name = lt["path"], spec_name or lt.get("spec_name")
+    if not req.ops:
+        return {"ok": False, "warning": "No fix ops to retest."}
+    try:
+        outcome = rerun_with_patch(path, req.ops, spec_name=spec_name)
+    except Exception as exc:             # defense in depth
+        return {"ok": False,
+                "warning": f"Retest failed: {type(exc).__name__}: {exc}"}
+    if outcome.ok:
+        spec = None
+        if outcome.specs:
+            spec = next((s for s in outcome.specs if s["name"] == spec_name),
+                        outcome.specs[0])
+        return {"ok": True, "spec": spec, "all_passed": outcome.all_passed}
+    if "Digital.jar" not in (outcome.warning or ""):
+        return {"ok": False, "warning": outcome.warning}
+
+    # no jar: the SAME evaluator that judged Mode A's verify re-judges here
+    from dlc.l3.debugger import _offline_failing
+    from dlc.l3.patch import apply_patch
+    temp, rep = apply_patch(path, req.ops)
+    if temp is None:
+        return {"ok": False, "warning": rep.warning}
+    try:
+        circ = parse_dig_file(temp)
+        specs = extract_test_specs(circ)
+        sp = next((s for s in specs if s.name == spec_name),
+                  specs[0] if specs else None)
+        if sp is None:
+            return {"ok": False, "warning": "The temp has no testcase."}
+        failing, _det = _offline_failing(temp, sp.name)
+        rows = [{"index": r.line_index, "raw": r.raw,
+                 "status": "failed" if r.line_index in failing else "passed"}
+                for r in sp.rows if not r.is_malformed]
+        return {"ok": True,
+                "spec": {"name": sp.name, "headers": list(sp.headers),
+                         "rows": rows, "all_passed": not failing},
+                "all_passed": not failing}
+    except Exception as exc:
+        return {"ok": False,
+                "warning": f"Retest failed: {type(exc).__name__}: {exc}"}
+    finally:
+        try:
+            os.remove(temp)
+        except OSError:
+            pass
+
+
 @router.get("/api/l3/configured")
 def l3_configured() -> dict:
     """which lab files this deployment is configured for — union of

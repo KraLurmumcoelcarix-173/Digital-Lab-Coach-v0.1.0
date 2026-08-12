@@ -34,12 +34,29 @@ injected rows this session, the coordinator targets the CURRENT TEMP CIRCUIT
 2. Per-row run (fast Mode C when Digital.jar is configured; the Python
    evaluator's expected-vs-found sweep otherwise) → failing rows. All pass
    → no-op response (`mode:"clear"`). A gross-check trips → `mode:"lazy"`
-   (suggestion-only branch; consumes 0 daily uses). The gross-checks
-   (v1.1, implemented in `dlc/l3/evidence.py`):
-   - `too_many_failures` — failing rows > 10;
-   - `unbound_columns` — testcase columns matching no In/Out/Clock label;
-   - `missing_clocked_logic` — the testcase drives a clock but the tree
-     holds no state element (register/flip-flop/RAM/counter).
+   (suggestion-only branch; consumes 0 daily uses).
+
+   **The lazy gate (v0.1.0 ratified, `dlc/l3/evidence.py`). Mode A starts
+   IFF: no Layer-1 issue + per-row run done + not lazy.** The focus and
+   rate checks apply only to >30-component trees — a ≤30-component
+   circuit is always analyzable (close-to-answer students get help, not
+   rejection). Checks in order:
+   1. FOCUS REQUISITE — "≤3 mismatch columns is a REQUISITE, not an
+      amnesty": failing rows wrong in ≥4 output columns AT ONCE must
+      stay under 25% of the testcase's well-formed rows
+      (`SCATTERED_ROW_MAX_SHARE`), else `scattered_failures` → lazy
+      REGARDLESS of pass rate. A rare scattered row among focused
+      failures passes — it usually shares their root cause.
+   2. STRUCTURAL — `unbound_columns` (testcase columns matching no
+      In/Out/Clock label); `missing_clocked_logic` (the testcase drives
+      a clock but the tree holds no state element); a subcircuit failing
+      its OWN tests routes to fix-the-child-first (coordinator).
+   3. PASS-RATE BARS, checked LAST (no focus amnesty): >10 rows → lazy
+      when >10 failing AND <80% passing; 6–10 rows → <60%; 1–5 rows →
+      <30%.
+   Re-analyses automatically target the coach temp when Mode B rows were
+   accepted. The result freezes after delivery and refreshes on
+   re-upload/discard.
 3. CLUSTER failing rows by signature (Phase 0.5, ratified): the tuple of
    (mismatched output columns, exercised opcode/select values read from the
    row's inputs — plus the manifest-decoded program CATEGORY of the word on

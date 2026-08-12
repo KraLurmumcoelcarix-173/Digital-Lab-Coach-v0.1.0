@@ -53,6 +53,11 @@ GROSS_MAX_FAILING = 10
 # audience, whatever its pass rate — every row can fail on a 20-part
 # adder and one wrong constant still explains all of it.
 RATE_GATE_MIN_COMPONENTS = 30
+# Focus requisite: failing rows wrong in >=4 output columns AT ONCE must
+# stay UNDER this share of ALL well-formed testcase rows, or the run
+# is lazy regardless of pass rate (
+# change here to loosen/tighten).
+SCATTERED_ROW_MAX_SHARE = 0.25
 
 _MAX_CLUSTERS = 4          # one sub-agent per cluster, never one per row
 _MAX_REPRESENTATIVES = 2   # full per-net evidence for at most 2 rows/cluster
@@ -271,63 +276,49 @@ def _holds_state(circuit) -> bool:
 def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 max_failing: int = GROSS_MAX_FAILING,
                 rate_gate_min_components: int = RATE_GATE_MIN_COMPONENTS,
-                failing_columns: set | None = None,
+                row_mismatch_columns: list[set] | None = None,
                 ) -> list[dict]:
     """Deterministic checks that mean the circuit needs fundamentals, not
     a per-bug hypothesis hunt. Any flag → mode "lazy" (suggestion-only
-    branch). Returns [{kind, detail}] in a fixed order."""
+    branch). Returns [{kind, detail}] in a fixed order: focus requisite,
+    structural checks, pass-rate bars last.
+
+    v0.1.0 ratified gate (>30-component trees; smaller circuits skip the
+    focus and rate checks entirely — a close-to-answer student gets help,
+    not rejection):
+      1. FOCUS REQUISITE — "≤3 mismatch columns is a REQUISITE, not an
+         amnesty": a failing row wrong in 4+ output columns at once is a
+         fundamentals symptom. When such rows reach
+         SCATTERED_ROW_MAX_SHARE of ALL well-formed testcase rows, the
+         run is lazy REGARDLESS of pass rate. A rare scattered row in a
+         long suite passes (it usually shares the focused rows' root
+         cause); rows with no column info can never count as scattered.
+      2. STRUCTURAL — unbound columns; clock driven with no state element.
+      3. PASS-RATE BARS, checked LAST (no focus amnesty anymore):
+           > 10 rows:  lazy when failing > max_failing AND pass rate < 80%
+           6-10 rows:  lazy when pass rate < 60%
+           1-5  rows:  lazy when pass rate < 30%
+    ``row_mismatch_columns`` carries one set of mismatched output columns
+    per failing row (empty set = no column info for that row)."""
     flags: list[dict] = []
-    # Tiered pass-rate bars (ratified): a suite below its bar is a
-    # structural problem, not one localized bug. Small suites tolerate a
-    # bigger failing SHARE because two rows of four can be one bug.
-    #   > 10 rows:  lazy when failing > max_failing AND pass rate < 90%
-    #   6-10 rows:  lazy when pass rate < 75%
-    #   1-5  rows:  lazy when pass rate < 50%
-    if len(circuit.components) <= rate_gate_min_components:
-        n_rows = 0             # bars off: small circuit, always analyzable
-    elif failing_columns is not None and 0 < len(failing_columns) <= 3:
-        # FOCUSED failure: every mismatch sits in at most three output
-        # columns. A single wrong gate can flunk a whole 5-row suite on
-        # one segment — that is localizable, not structural, so the rate
-        # bars step aside (4+ scattered columns stay lazy; the structural
-        # checks below always apply).
-        n_rows = 0
-    else:
-        n_rows = spec.well_formed_row_count()
-    passing = max(0, n_rows - failing_count)
-    rate = passing / n_rows if n_rows else 0.0
-    if n_rows >= 11:
-        if failing_count > max_failing and rate < 0.90:
+    bars_on = len(circuit.components) > rate_gate_min_components
+
+    if bars_on and row_mismatch_columns:
+        total_rows = spec.well_formed_row_count()
+        scattered = [cols for cols in row_mismatch_columns
+                     if len(cols) >= 4]
+        if scattered and total_rows and (len(scattered) / total_rows
+                                         >= SCATTERED_ROW_MAX_SHARE):
             flags.append({
-                "kind": "too_many_failures",
+                "kind": "scattered_failures",
                 "detail": (
-                    f"{failing_count} of {n_rows} rows fail — more than "
-                    f"{max_failing}, with under 90% passing. That is "
-                    f"usually a structural problem (wrong wiring plan, "
-                    f"missing block), not one localized bug; revisit the "
-                    f"design before chasing single rows."
+                    f"{len(scattered)} of the testcase's {total_rows} rows "
+                    f"are wrong in 4 or more output columns AT ONCE. "
+                    f"That spread points at the design plan, not one "
+                    f"localized bug — whatever the pass rate says."
                 ),
             })
-    elif n_rows >= 6:
-        if rate < 0.75:
-            flags.append({
-                "kind": "low_pass_rate",
-                "detail": (
-                    f"only {passing} of {n_rows} rows pass — below the 75% "
-                    f"bar for a 6-10 row testcase. Rebuild the basics "
-                    f"before hunting a single bug."
-                ),
-            })
-    elif n_rows >= 1:
-        if rate < 0.50:
-            flags.append({
-                "kind": "low_pass_rate",
-                "detail": (
-                    f"only {passing} of {n_rows} rows pass — below the 50% "
-                    f"bar for a 1-5 row testcase. Rebuild the basics "
-                    f"before hunting a single bug."
-                ),
-            })
+
     bindings = match_variables_to_io(spec.headers, circuit)
     unbound = [h for h in spec.headers
                if bindings[h].role == "unbound"]
@@ -355,6 +346,44 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 "state between rows (is the pipeline stage missing?)."
             ),
         })
+    if not bars_on:
+        n_rows = 0             # bars off: small circuit, always analyzable
+    else:
+        n_rows = spec.well_formed_row_count()
+    passing = max(0, n_rows - failing_count)
+    rate = passing / n_rows if n_rows else 0.0
+    if n_rows >= 11:
+        if failing_count > max_failing and rate < 0.80:
+            flags.append({
+                "kind": "too_many_failures",
+                "detail": (
+                    f"{failing_count} of {n_rows} rows fail — more than "
+                    f"{max_failing}, with under 80% passing. That is "
+                    f"usually a structural problem (wrong wiring plan, "
+                    f"missing block), not one localized bug; revisit the "
+                    f"design before chasing single rows."
+                ),
+            })
+    elif n_rows >= 6:
+        if rate < 0.60:
+            flags.append({
+                "kind": "low_pass_rate",
+                "detail": (
+                    f"only {passing} of {n_rows} rows pass — below the 60% "
+                    f"bar for a 6-10 row testcase. Rebuild the basics "
+                    f"before hunting a single bug."
+                ),
+            })
+    elif n_rows >= 1:
+        if rate < 0.30:
+            flags.append({
+                "kind": "low_pass_rate",
+                "detail": (
+                    f"only {passing} of {n_rows} rows pass — below the 30% "
+                    f"bar for a 1-5 row testcase. Rebuild the basics "
+                    f"before hunting a single bug."
+                ),
+            })
     return flags
 
 
@@ -600,10 +629,10 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
 
     sims: dict[int, SimResult] = {}
-    failing_columns: set | None = None
+    row_mismatch_columns: list[set] | None = None
     if failing_indices is None:
         failing: list[int] = []
-        failing_columns = set()
+        row_mismatch_columns = []
         for row in spec.rows:
             if row.is_malformed:
                 res.notes.append(
@@ -621,16 +650,16 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
             if mism:
                 failing.append(row.line_index)
                 sims[row.line_index] = sim
-                failing_columns.update(
-                    m.get("column") for m in mism if m.get("column"))
+                row_mismatch_columns.append(
+                    {m.get("column") for m in mism if m.get("column")})
     else:
         failing = list(failing_indices)
         if jar_mismatches:
-            cols = {c.get("column")
-                    for cells in jar_mismatches.values()
-                    for c in cells or [] if isinstance(c, dict)}
-            cols.discard(None)
-            failing_columns = cols or None
+            sets = [
+                {c.get("column") for c in (jar_mismatches.get(i) or [])
+                 if isinstance(c, dict) and c.get("column")}
+                for i in failing]
+            row_mismatch_columns = sets if any(sets) else None
     res.failing_count = len(failing)
 
     if not failing:
@@ -638,7 +667,7 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
         return res
 
     flags = gross_check(circuit, spec, len(failing), max_failing=max_failing,
-                        failing_columns=failing_columns)
+                        row_mismatch_columns=row_mismatch_columns)
     if flags:
         res.mode = "lazy"
         res.gross_flags = flags

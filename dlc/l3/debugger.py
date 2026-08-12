@@ -348,6 +348,17 @@ def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
 
 # `terms` are L2 library vocabulary, marked for the blue hover-cards.
 _SUGGESTION_TABLE = {
+    "scattered_failures": {
+        "question": ("Pick ONE failing row: why is it wrong in four or "
+                     "more output columns AT ONCE?"),
+        "hint": ("Rows failing across many outputs at the same time "
+                 "almost never come from one localized bug — the block's "
+                 "plan itself disagrees with the spec. Rebuild the truth "
+                 "table output by output, check a few rows by hand, and "
+                 "test each subcircuit alone before re-running the "
+                 "analysis."),
+        "terms": ["truth table", "combinational logic", "subcircuit"],
+    },
     "too_many_failures": {
         "question": ("Which OUTPUT column fails most often — and does it "
                      "fail the same way every time?"),

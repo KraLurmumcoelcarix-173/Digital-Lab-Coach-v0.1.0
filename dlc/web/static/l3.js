@@ -127,6 +127,12 @@ function renderL3Graph(file) {
 function l3BuildMirror(file) {
   const box = document.getElementById("l3-cy");
   if (!box || !file || file.error || !file.graph) return;
+  // a fresh mirror never inherits a previous run's walkthrough leftovers
+  if (typeof _l3ClearFixMarks === "function") _l3ClearFixMarks();
+  const diag = document.getElementById("l3-diag-board");
+  if (diag) diag.remove();
+  const rbox = document.getElementById("l3-retest-box");
+  if (rbox) rbox.remove();
   if (l3Cy) { try { l3Cy.destroy(); } catch {} l3Cy = null; }
   const elements = JSON.parse(JSON.stringify(
     { nodes: file.graph.nodes, edges: file.graph.edges },
@@ -549,6 +555,11 @@ function _l3CardHtml(ma, c) {
             `coach-added tests — a Mode B row itself could be the ` +
             `mistake (discard it on the lower board and re-run).</div>`
           : "")) +
+      _l3RetestHtml((ma.retest || {})[c.rank]) +
+      ((fix.animation_script || []).length > 1
+        && !(ma.result && ma.result.on_coach_temp)
+        ? `<div class="l3-prop-bar"><button class="btn-ghost" data-l3a-replay="${c.rank}">&#9654; Replay walkthrough</button></div>`
+        : "") +
       `</div>`;
   }
   return html + `</div>`;
@@ -680,6 +691,15 @@ function _l3FailingRowsTable(res) {
     if (net) { l3FlashNet(net.dataset.l3Net); return; }
     const tr = evt.target.closest("tr[data-l3-simfile]");
     if (tr) { l3SimTempRow(tr); return; }
+    const rp = evt.target.closest("[data-l3a-replay]");
+    if (rp) {
+      const file = loaded.length > 0 ? loaded[currentIdx] : null;
+      const ma = file && l3Slot(file.filename).modeA;
+      const card = ma && ((ma.result || {}).cards || []).find(
+        (c) => String(c.rank) === rp.dataset.l3aReplay);
+      if (card) l3PlayScript(card);
+      return;
+    }
     const btn = evt.target.closest("[data-l3a-more]");
     if (!btn) return;
     const file = loaded.length > 0 ? loaded[currentIdx] : null;
@@ -690,6 +710,17 @@ function _l3FailingRowsTable(res) {
     ma.levels[btn.dataset.l3aMore] = 2;
     logEvent("l3_hint_level", { rank: Number(btn.dataset.l3aMore), level: 2 });
     renderL3Boards(file);
+    // Case-1 route: the reveal plays the fix walkthrough once. The
+    // coach-temp rerun and the best-unverified card never auto-play.
+    const rank = btn.dataset.l3aMore;
+    if (rank !== "u" && ma.result && !ma.result.on_coach_temp) {
+      const card = ((ma.result || {}).cards || []).find(
+        (c) => String(c.rank) === rank);
+      if (card && !((ma.played || {})[rank])) {
+        (ma.played = ma.played || {})[rank] = true;
+        l3PlayScript(card);
+      }
+    }
   });
 })();
 
@@ -1273,6 +1304,10 @@ function l3RenderDrillBar(crumb, rowIdx, targetFile) {
     `${escapeHtml(targetFile)}</span>` +
     `<button class="btn-ghost" data-l3-drillback>&#9666; back to ${escapeHtml(top)}</button>`;
   el.classList.remove("hidden");
+  // the netid button sits at the pane's top-right — under the drill bar it
+  // would overlap the return bar, so the pane class shifts it below
+  const pane = document.getElementById("l3-graph-pane");
+  if (pane) pane.classList.add("l3-drilling");
   // the "coaching <file>" chip names the SELECTED file — misleading (and
   // overlapping) while a drilled child owns the mirror, so hide it
   const chip = document.getElementById("l3-file-chip");
@@ -1282,6 +1317,8 @@ function l3RenderDrillBar(crumb, rowIdx, targetFile) {
 function l3HideDrillBar() {
   const el = document.getElementById("l3-drill-bar");
   if (el) el.classList.add("hidden");
+  const pane = document.getElementById("l3-graph-pane");
+  if (pane) pane.classList.remove("l3-drilling");
   const chip = document.getElementById("l3-file-chip");
   if (chip && chip.textContent) chip.classList.remove("hidden");
 }
@@ -1900,4 +1937,262 @@ function _l3UnverifiedCardHtml(ma, b) {
       `</div>`;
   }
   return html + `</div>`;
+}
+
+// --- the fix walkthrough player ----------------------------------------
+// Plays a CONFIRMED card's validated animation_script on the L3 mirror in
+// three phases: (1) Diagnose — the script's diagnose_line texts type onto
+// a red board over the canvas; (2) Localize + fix — the magical pointer
+// glides to each target, fixes render as yellow marks, and a target inside
+// a subcircuit pins a persistent 🔧 badge on the enclosing block (the
+// drill-in hint); (3) Retest — a green Retest box is drawn, "clicked",
+// and /api/l3/fix_retest REALLY re-runs the fixed temp; the per-row green
+// result then sits under the card. Interaction is shielded while playing;
+// Replay runs it again. Case-1 route only: coach-temp analyses and the
+// best-unverified card never auto-play (their boards carry their own story).
+let l3AnimBusy = false;
+
+function _l3Sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function _l3Shield(on) {
+  let el = document.getElementById("l3-anim-shield");
+  if (on) {
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "l3-anim-shield";
+      el.innerHTML = `<span class="l3-anim-note">&#9654; playing the fix walkthrough&hellip;</span>`;
+      document.body.appendChild(el);
+    }
+    el.classList.remove("hidden");
+  } else if (el) {
+    el.classList.add("hidden");
+  }
+  return el;
+}
+
+function _l3PointerEl() {
+  const pane = document.getElementById("l3-graph-pane");
+  if (!pane) return null;
+  let el = document.getElementById("l3-anim-pointer");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "l3-anim-pointer";
+    el.textContent = "➤";
+    pane.appendChild(el);
+  }
+  el.classList.remove("hidden");
+  return el;
+}
+
+async function _l3PointerToNode(idx) {
+  if (!l3Cy) return;
+  const n = l3Cy.getElementById(String(idx));
+  if (!n || n.empty()) return;
+  try {
+    l3Cy.animate({ center: { eles: n }, duration: 380 });
+    await _l3Sleep(420);
+  } catch {}
+  const el = _l3PointerEl();
+  const box = document.getElementById("l3-cy");
+  if (!el || !box) return;
+  const p = n.renderedPosition();
+  el.style.left = `${box.offsetLeft + p.x + 6}px`;
+  el.style.top = `${box.offsetTop + p.y + 6}px`;
+  await _l3Sleep(650);
+}
+
+function _l3FixBadge(node, label) {
+  // 3.10: a subcircuit-internal fix pins a persistent wrench badge on the
+  // enclosing block — the "drill in here" hint that survives the playback
+  const pane = document.getElementById("l3-graph-pane");
+  const box = document.getElementById("l3-cy");
+  if (!pane || !box || !l3Cy) return;
+  const badge = document.createElement("div");
+  badge.className = "l3-fix-badge";
+  badge.textContent = "\u{1F527}";
+  badge.title = label
+    ? `fixed inside this block: ${label} — click a failing row and drill in to see it`
+    : "the fix sits inside this block — click a failing row and drill in to see it";
+  pane.appendChild(badge);
+  const place = () => {
+    if (!l3Cy || node.empty()) return;
+    const p = node.renderedPosition();
+    badge.style.left = `${box.offsetLeft + p.x + 10}px`;
+    badge.style.top = `${box.offsetTop + p.y - 26}px`;
+  };
+  place();
+  l3Cy.on("pan zoom resize", place);
+}
+
+function _l3ClearFixMarks() {
+  if (l3Cy) {
+    l3Cy.nodes().removeClass("l3-fix-mark");
+    l3Cy.edges().removeClass("l3-fix-mark-edge");
+  }
+  document.querySelectorAll(".l3-fix-badge, .l3-fix-tag").forEach((n) => n.remove());
+}
+
+function _l3MarkFix(target, label) {
+  if (!l3Cy || !target) return;
+  if (typeof target.net_id === "number") {
+    l3Cy.edges(`[net_id = ${Number(target.net_id)}]`).addClass("l3-fix-mark-edge");
+    return;
+  }
+  const path = target.path || [];
+  if (path.length) {
+    const host = l3Cy.getElementById(String(path[0]));
+    if (!host.empty()) { host.addClass("l3-fix-mark"); _l3FixBadge(host, label); }
+    return;
+  }
+  const n = l3Cy.getElementById(String(target.component_index));
+  if (n.empty()) return;
+  n.addClass("l3-fix-mark");
+  if (label) {
+    const pane = document.getElementById("l3-graph-pane");
+    const box = document.getElementById("l3-cy");
+    if (pane && box) {
+      const tag = document.createElement("div");
+      tag.className = "l3-fix-tag";
+      tag.textContent = `fixed: ${label}`;
+      pane.appendChild(tag);
+      const place = () => {
+        if (!l3Cy || n.empty()) return;
+        const p = n.renderedPosition();
+        tag.style.left = `${box.offsetLeft + p.x + 14}px`;
+        tag.style.top = `${box.offsetTop + p.y + 14}px`;
+      };
+      place();
+      l3Cy.on("pan zoom resize", place);
+    }
+  }
+}
+
+function _l3DiagBoard() {
+  const pane = document.getElementById("l3-graph-pane");
+  if (!pane) return null;
+  let el = document.getElementById("l3-diag-board");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "l3-diag-board";
+    el.innerHTML = `<div class="l3-diag-title">DIAGNOSIS</div>`;
+    pane.appendChild(el);
+  }
+  el.classList.remove("hidden");
+  return el;
+}
+
+async function _l3TypeLine(board, text) {
+  if (!board) return;
+  const line = document.createElement("div");
+  line.className = "l3-diag-line";
+  board.appendChild(line);
+  const t = String(text).slice(0, 160);
+  for (let i = 1; i <= t.length; i += 2) {
+    line.textContent = t.slice(0, i);
+    await _l3Sleep(14);
+  }
+  line.textContent = t;
+  await _l3Sleep(250);
+}
+
+async function _l3RetestAct(file, card, ma) {
+  const pane = document.getElementById("l3-graph-pane");
+  const box = document.getElementById("l3-cy");
+  if (!pane || !box) return;
+  let el = document.getElementById("l3-retest-box");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "l3-retest-box";
+    el.textContent = "▶ Retest";
+    pane.appendChild(el);
+  }
+  el.classList.remove("hidden", "go");
+  const ptr = _l3PointerEl();
+  if (ptr) {
+    ptr.style.left = `${el.offsetLeft + 18}px`;
+    ptr.style.top = `${el.offsetTop + 12}px`;
+    await _l3Sleep(700);
+  }
+  el.classList.add("go");
+  await _l3Sleep(350);
+  let body = null;
+  try {
+    const res = await fetch("/api/l3/fix_retest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, filename: file.filename,
+                             ops: (card.fix && card.fix.ops) || [] }),
+    });
+    body = res.ok ? await res.json() : { ok: false, warning: `Server error ${res.status}` };
+  } catch (err) {
+    body = { ok: false, warning: `Network error: ${err}` };
+  }
+  if (ma) {
+    ma.retest = ma.retest || {};
+    ma.retest[card.rank] = body;
+  }
+  await _l3Sleep(500);
+  el.classList.add("hidden");
+}
+
+async function l3PlayScript(card) {
+  const file = loaded.length > 0 ? loaded[currentIdx] : null;
+  if (!file || l3AnimBusy || !l3Cy || !sessionId) return;
+  const script = (card.fix && card.fix.animation_script) || [];
+  if (!script.length) return;
+  l3AnimBusy = true;
+  logEvent("l3_fix_animation_played", { rank: card.rank });
+  _l3Shield(true);
+  const ma = l3Slot(file.filename).modeA;
+  try {
+    _l3ClearFixMarks();
+    const board = _l3DiagBoard();
+    if (board) board.querySelectorAll(".l3-diag-line").forEach((n) => n.remove());
+    for (const act of script) {
+      if (act.act === "diagnose_line") await _l3TypeLine(board, act.text);
+    }
+    await _l3Sleep(350);
+    for (const act of script) {
+      if (act.act === "focus") {
+        await _l3PointerToNode((act.path || []).length ? act.path[0]
+                                                       : act.component_index);
+      } else if (act.act === "drill") {
+        // playback stays on the top mirror: the pointer visits the
+        // enclosing block; the fix badge (mark_fix) invites the real
+        // drill-in afterwards
+        if ((act.path || []).length) await _l3PointerToNode(act.path[0]);
+      } else if (act.act === "mark_fix") {
+        const t = act.target || {};
+        if (typeof t.net_id !== "number") {
+          await _l3PointerToNode((t.path || []).length ? t.path[0]
+                                                       : t.component_index);
+        }
+        _l3MarkFix(t, act.label || "");
+        await _l3Sleep(650);
+      }
+    }
+    await _l3RetestAct(file, card, ma);
+  } finally {
+    const ptr = document.getElementById("l3-anim-pointer");
+    if (ptr) ptr.classList.add("hidden");
+    _l3Shield(false);
+    l3AnimBusy = false;
+    renderL3Boards(file);
+  }
+}
+
+function _l3RetestHtml(body) {
+  if (!body) return "";
+  if (!body.ok) {
+    return `<div class="l3-warn-note">Retest could not run: ${escapeHtml(body.warning || "unknown error")}</div>`;
+  }
+  const spec = body.spec || {};
+  const rows = spec.rows || [];
+  const passed = rows.filter((r) => r.status === "passed").length;
+  const chips = rows.map((r) =>
+    `<span class="l3-retest-row ${r.status === "passed" ? "ok" : "bad"}">row ${r.index}</span>`).join("");
+  return `<div class="l3-retest-result${body.all_passed ? " allgreen" : ""}">` +
+    `<b>Retest on the fixed temp:</b> ${passed}/${rows.length} pass` +
+    (body.all_passed ? ` — all green. Apply the fix in Digital and re-upload.` : "") +
+    `<div class="l3-retest-rows">${chips}</div></div>`;
 }
