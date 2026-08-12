@@ -296,3 +296,64 @@ def test_sevenseg_manifest_grades_display_digits(monkeypatch):
     assert set(c.categories_touched) == {"digit_5", "digit_A", "hold"}
     assert len(c.categories_missing) == 14
     assert any("category gap" in n for n in c.notes)
+
+
+# ---------------------------------------------------------------------------
+# Case 3.B: the select-coverage gate
+# ---------------------------------------------------------------------------
+
+def test_select_gate_fires_on_uncovered_input_driven_op():
+    # bug6: the testcase never drives Op=3, and Op feeds the result mux's
+    # select directly — Mode B must refuse to guess that op's semantics
+    r = scan_tree_coverage(str(SAMPLES / "30_bug_benchmark" /
+                               "bug6_hidden_mux_case3" /
+                               "uncovered_op_calculator.dig"))
+    assert r.total_flags == 0, "bug6 is clean-but-gapped by construction"
+    assert len(r.select_gate) == 1
+    g = r.select_gate[0]
+    assert g["input"] == "Op"
+    assert g["missing"] == [3]
+    assert g["component_index"] == 14
+
+
+def test_select_gate_stays_silent_when_every_op_is_covered():
+    # bug1's calculator keeps the full official testcase: all ops taken
+    r = scan_tree_coverage(str(_CALC))
+    assert r.select_gate == []
+
+
+def test_select_gate_guards_internal_unresolved_and_manifest():
+    from dlc.l3.coverage import _apply_select_gate
+
+    def mk(**kw):
+        cov = CircuitCoverage(file="x.dig", path=None, has_testcases=True)
+        cov.mux_branches.append(MuxBranchCoverage(
+            component_index=1, selector_bits=1, arms_total=2, **kw))
+        return cov
+
+    rep = TreeCoverageReport(root="x.dig")
+    # internal-logic select: arms may be unreachable by design — no gate
+    rep.circuits.append(mk(arms_taken=[0], arms_missing=[1]))
+    # select never resolved on any row: honesty guard — no accusation
+    rep.circuits.append(mk(arms_taken=[], arms_missing=[0, 1],
+                           select_from_input="Op"))
+    # manifest-graded circuit: the category machinery owns coverage there
+    graded = mk(arms_taken=[0], arms_missing=[1], select_from_input="Op")
+    graded.categories_total = 3
+    rep.circuits.append(graded)
+    _apply_select_gate(rep)
+    assert rep.select_gate == []
+
+
+def test_bug8_gapped_led_scans_clean_with_gaps_and_no_gate():
+    # bug8: a buggy LED decoder whose failing rows were DROPPED — the
+    # case-3 fixture: scan is clean, coverage gaps remain, and with no
+    # mux there is no select gate, so Mode B WILL propose here
+    r = scan_tree_coverage(str(SAMPLES / "30_bug_benchmark" /
+                               "bug8_gapped_led_minterm" /
+                               "gapped_LED1.dig"))
+    assert r.total_flags == 0
+    assert r.select_gate == []
+    c = r.circuits[0]
+    assert c.row_count == 3
+    assert any("32 possible input vectors" in n for n in c.notes)

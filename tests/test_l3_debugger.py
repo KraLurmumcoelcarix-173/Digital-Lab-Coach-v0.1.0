@@ -407,7 +407,7 @@ def test_failing_subcircuit_gates_the_parent_into_suggestions():
 # Coach-added rows: strict improvement, not perfection (the Mode B hand-off)
 # ---------------------------------------------------------------------------
 
-_BUG6 = f"{_BENCH}/bug6_hidden_mux_case3/hidden_mux_calculator.dig"
+_BUG6 = f"{_BENCH}/bug6_hidden_mux_case3/uncovered_op_calculator.dig"
 # the hidden-mux repair: in3 stops feeding from the stray Ground [23] and
 # takes the boolean unit's Result, like in2 does
 MUX_FIX = [{"op": "rewire_pin", "component_index": 14, "pin": "in3",
@@ -426,7 +426,7 @@ def _coach_temp(tmp_path):
     text = src.read_text(encoding="utf-8")
     anchor = "0 0 0 2 0 0 1 0</dataString>"
     assert text.count(anchor) == 1
-    out = tmp_path / "hidden_mux_calculator.dig"
+    out = tmp_path / "uncovered_op_calculator.dig"
     out.write_text(
         text.replace(anchor,
                      "0 0 0 2 0 0 1 0\n5 10 0 3 15 1 0 1</dataString>"),

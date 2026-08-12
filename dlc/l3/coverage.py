@@ -28,6 +28,15 @@ coverage report
       - clock-edge row count.
     The per-circuit `notes` list is the human-readable "good report"; the
     same structure grounds the row-proposal prompt.
+
+select-coverage gate (Case 3.B)
+    When an INPUT-driven Multiplexer select value is never exercised by
+    any test row (in a circuit no manifest grades by category), the
+    report carries a `select_gate` entry and Mode B refuses to propose:
+    an op the tests never define has no anchor for INTENDED semantics,
+    so a proposed row would be a guess that can enshrine the very bug it
+    should catch. The student writes one row per select value first —
+    the refusal is deterministic, zero model calls, and free.
 """
 
 from __future__ import annotations
@@ -119,6 +128,11 @@ class MuxBranchCoverage:
     # from the netlist ("BarrelShifter 'RSA'"), so neither the student nor
     # the proposer has to guess arm semantics from the select number.
     arm_drivers: dict[int, str] = field(default_factory=dict)
+    # label of the top-level In that drives 'sel' (directly or through a
+    # Splitter), None when the select comes from internal logic. Only
+    # input-driven selects can gate Mode B — an internal select may have
+    # arms that are unreachable by design.
+    select_from_input: str | None = None
 
 
 @dataclass
@@ -157,6 +171,13 @@ class TreeCoverageReport:
     circuits: list[CircuitCoverage] = field(default_factory=list)
     total_flags: int = 0
     notes: list[str] = field(default_factory=list)
+    # Case 3.B gate: entries for every INPUT-driven Multiplexer select
+    # value no test row ever exercises (in circuits no manifest grades by
+    # category). Non-empty => Mode B refuses to propose — for an op the
+    # tests never define, nothing anchors INTENDED semantics, so a model
+    # proposal would be a guess that can enshrine the very bug it should
+    # catch. The student writes one row per select value first.
+    select_gate: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -304,6 +325,50 @@ def _mux_sel_nets(circuit: Circuit, netlist) -> list[tuple[int, int, int]]:
         nid = pin_net.get((idx, "sel"))
         if nid is not None:
             out.append((idx, sel_bits, nid))
+    return out
+
+
+def _sel_input_labels(circuit: Circuit, netlist) -> dict[int, str]:
+    """{mux_component_index: In label} for every Multiplexer whose 'sel'
+    is driven by a top-level In — directly or through up to 2 Splitters
+    (tunnels are already resolved into nets). Internal-logic selects are
+    absent on purpose: only a select the STUDENT steers from a testcase
+    column is theirs to cover row by row."""
+    pin_net: dict[tuple[int, str], int] = {}
+    driver_of_net: dict[int, int] = {}
+    in_pins: dict[int, list[str]] = {}
+    for net in netlist.nets:
+        for p in net.pins:
+            pin_net[(p.component_index, p.pin_name)] = net.net_id
+            if p.direction == "out":
+                driver_of_net.setdefault(net.net_id, p.component_index)
+            elif p.direction == "in":
+                in_pins.setdefault(p.component_index, []).append(p.pin_name)
+
+    out: dict[int, str] = {}
+    for idx, comp in enumerate(circuit.components):
+        if comp.element_name != "Multiplexer":
+            continue
+        nid = pin_net.get((idx, "sel"))
+        src = driver_of_net.get(nid) if nid is not None else None
+        hops = 2
+        while (src is not None
+               and circuit.components[src].element_name in _PASSTHROUGH_ELEMS
+               and hops > 0):
+            nxt = None
+            for p2 in in_pins.get(src, []):
+                n2 = pin_net.get((src, p2))
+                d2 = driver_of_net.get(n2) if n2 is not None else None
+                if d2 is not None and d2 != src:
+                    nxt = d2
+                    break
+            src = nxt
+            hops -= 1
+        if src is None:
+            continue
+        c = circuit.components[src]
+        if c.element_name == "In" and c.attributes.get("Label"):
+            out[idx] = c.attributes["Label"]
     return out
 
 
@@ -469,6 +534,7 @@ def scan_circuit_coverage(
             oc.constant_value = vals[0]
         cov.outputs.append(oc)
 
+    sel_inputs = _sel_input_labels(circuit, netlist)
     for idx, sel_bits, _nid in muxes:
         total = 1 << sel_bits
         taken = sorted(arms_taken[idx])
@@ -479,6 +545,7 @@ def scan_circuit_coverage(
             arms_taken=taken,
             arms_missing=sorted(set(range(total)) - set(taken)),
             arm_drivers=arm_drivers.get(idx, {}),
+            select_from_input=sel_inputs.get(idx),
         ))
 
     _build_notes(cov)
@@ -700,7 +767,43 @@ def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
 
     report.total_flags = sum(len(c.flags) for c in report.circuits)
     _apply_manifest(report)
+    _apply_select_gate(report)
     return report
+
+
+def _apply_select_gate(report: TreeCoverageReport) -> None:
+    """Case 3.B: collect every input-driven Multiplexer select value that
+    no test row exercises. Guards, in order of why each exists:
+      * select_from_input — internal selects may have arms unreachable by
+        design; only a select the student steers from a testcase column
+        is theirs to cover.
+      * arms_taken non-empty — the evaluator RESOLVED the select on some
+        row (honesty guard: never accuse through an unresolved net).
+      * categories_total == 0 — manifest-graded labs (e.g. the cpu) are
+        anchored by the instructor reference; the category machinery
+        already decides what must be covered there.
+    """
+    for cov in report.circuits:
+        if not cov.has_testcases or cov.categories_total:
+            continue
+        for mb in cov.mux_branches:
+            if (mb.select_from_input and mb.arms_taken and mb.arms_missing):
+                report.select_gate.append({
+                    "file": cov.file,
+                    "component_index": mb.component_index,
+                    "input": mb.select_from_input,
+                    "selector_bits": mb.selector_bits,
+                    "missing": list(mb.arms_missing),
+                    "taken": list(mb.arms_taken),
+                    "arm_drivers": {str(a): mb.arm_drivers[a]
+                                    for a in mb.arms_missing
+                                    if a in mb.arm_drivers},
+                })
+                # the gate card now carries this mux's story — the raw
+                # arm note next to it would just repeat it
+                cov.notes = [n for n in cov.notes
+                             if not n.startswith(
+                                 f"Multiplexer[{mb.component_index}]:")]
 
 
 def _apply_manifest(report: TreeCoverageReport) -> None:

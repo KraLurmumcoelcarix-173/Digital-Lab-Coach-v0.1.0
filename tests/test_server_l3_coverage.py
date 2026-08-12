@@ -74,6 +74,26 @@ def test_coverage_endpoint_clean_circuit_reports_no_flags():
         server._SESSIONS.pop(sid, None)
 
 
+def test_coverage_endpoint_select_gate_is_free(monkeypatch, tmp_path):
+    # Case 3.B: bug6 scans clean but Op=3 is never exercised — the scan
+    # carries select_gate, consumes NO Mode B use, and the UI locks propose
+    monkeypatch.setenv("DLC_LIMITS_PATH", str(tmp_path / "limits.json"))
+    d = "data/sample_circuits/30_bug_benchmark/bug6_hidden_mux_case3"
+    sid = _upload(f"{d}/uncovered_op_calculator.dig", f"{d}/bool_unit.dig")
+    try:
+        r = client.post("/api/l3/coverage", json={
+            "session_id": sid, "filename": "uncovered_op_calculator.dig",
+        })
+        body = r.json()
+        assert body["ok"] is True and body["total_flags"] == 0
+        assert body["select_gate"][0]["input"] == "Op"
+        assert body["select_gate"][0]["missing"] == [3]
+        assert body["consumed_use"] is False
+        assert body["limits"]["used"]["modeB"] == 0
+    finally:
+        server._SESSIONS.pop(sid, None)
+
+
 def test_coverage_endpoint_notes_unresolved_children_instead_of_failing():
     # Parent uploaded WITHOUT its child: the missing subcircuit becomes a
     # report note; the endpoint itself still succeeds.

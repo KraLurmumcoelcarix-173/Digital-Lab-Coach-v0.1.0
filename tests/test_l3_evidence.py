@@ -375,16 +375,17 @@ def test_suspect_wiring_carries_pin_values_for_representative_rows():
 
 def test_case3_fixture_is_clean_but_hides_the_mux_bug():
     # bug6: bug1's circuit with the Op=3 rows REMOVED — passes everything,
-    # so Mode B's arm-coverage note is the only trace of the hidden bug
-    path = (f"{_BENCH}/bug6_hidden_mux_case3/hidden_mux_calculator.dig")
+    # so Mode B's select-coverage gate is the only trace of the hidden
+    # bug (the raw arm note is folded into the gate card, not repeated)
+    path = (f"{_BENCH}/bug6_hidden_mux_case3/uncovered_op_calculator.dig")
     res = assemble_evidence_for_file(path, use_manifest=False)
     assert res.mode == "clear"
     from dlc.l3.coverage import scan_tree_coverage
     rep = scan_tree_coverage(path)
     root = rep.circuits[0]
     assert root.flags == []
-    assert any("arm 3" in n and "never selected" in n
-               for n in (root.notes or []))
+    assert rep.select_gate and rep.select_gate[0]["missing"] == [3]
+    assert not any("never selected" in n for n in (root.notes or []))
 
 
 def test_focused_failure_exempts_the_rate_bars():

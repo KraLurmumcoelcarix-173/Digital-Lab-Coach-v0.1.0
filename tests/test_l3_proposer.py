@@ -224,6 +224,21 @@ def test_propose_rows_refuses_when_scan_has_flags():
     assert "disagree" in out["error"]
 
 
+def test_propose_rows_refuses_on_select_gate_with_zero_model_calls():
+    # Case 3.B: an op the tests never define has no semantic anchor —
+    # the refusal is deterministic and must never reach the model
+    bug = ("data/sample_circuits/30_bug_benchmark/"
+           "bug6_hidden_mux_case3/uncovered_op_calculator.dig")
+
+    def dead(prompt, **_kw):
+        raise AssertionError("select-gated propose must not call the model")
+
+    out = proposer.propose_rows(bug, call=dead)
+    assert out["ok"] is False
+    assert out["select_gate"] and out["select_gate"][0]["missing"] == [3]
+    assert "'Op'" in out["error"] and "value 3" in out["error"]
+
+
 def test_propose_rows_survives_model_failure_and_garbage():
     def dead(prompt, **kw):
         return {"ok": False, "text": None, "error": "no key", "usage": None,

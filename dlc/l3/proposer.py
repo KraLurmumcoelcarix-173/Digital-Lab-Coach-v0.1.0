@@ -477,6 +477,24 @@ def propose_rows(
                 "error": ("Tests and circuit still disagree somewhere — "
                           "resolve that before asking for new rows."),
                 "notes": []}
+    if report.select_gate:
+        # Case 3.B refusal, zero model calls: an op value the tests never
+        # define has no anchor for INTENDED semantics — a proposed row
+        # there is a guess that can enshrine the very bug it should catch.
+        gaps = "; ".join(
+            f"{e['file']}: input '{e['input']}' value"
+            f"{'s' if len(e['missing']) != 1 else ''} "
+            f"{', '.join(map(str, e['missing']))} "
+            f"(Multiplexer[{e['component_index']}])"
+            for e in report.select_gate)
+        return {"ok": False, "proposals": [], "rejected": [],
+                "model": None, "select_gate": report.select_gate,
+                "error": ("Every select value needs at least one of YOUR "
+                          "test rows before the coach can extend them — "
+                          f"never exercised: {gaps}. Write one row per "
+                          "listed value stating what the circuit SHOULD "
+                          "output, then re-run the Coverage Coach."),
+                "notes": []}
     targets = build_targets(report)
     if not targets:
         return {"ok": False, "proposals": [], "rejected": [],

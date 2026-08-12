@@ -413,6 +413,11 @@ function renderL3Boards(file) {
       status = `Scan done: ${n} cell${n === 1 ? "" : "s"} where a test row ` +
                `and the circuit disagree — details below.`;
       cls = "blocked";
+    } else if ((rep.select_gate || []).length) {
+      status = "Scan done: tests and circuit agree, but some op values " +
+               "are never tested — your rows first, details below. " +
+               "This scan was free.";
+      cls = "blocked";
     } else {
       status = "Scan done: tests and circuit agree everywhere. " +
                "Coverage notes below.";
@@ -425,7 +430,8 @@ function renderL3Boards(file) {
       // use, and rescanning the same upload cannot change the answer.
       // Re-uploading (which resets the store) re-enables it.
       enabled: false,
-      bodyHtml: l3ModeBBodyHtml(mb) + l3ProposalsHtml(mb) + l3InjectHtml(mb),
+      bodyHtml: l3ModeBBodyHtml(mb) + _l3SelectGateHtml(mb) +
+        l3ProposalsHtml(mb) + l3InjectHtml(mb),
     });
   } else {
     _l3PaintBoard("b", {
@@ -779,12 +785,37 @@ function _l3NotesHtml(notes) {
     notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") + `</ul>`;
 }
 
+// Case 3.B gate card: an input-driven mux select value no test row ever
+// exercises. The coach refuses to propose there — nothing anchors what
+// that op SHOULD do, so a proposed row would be a guess that can lock in
+// the very bug it should catch. The student writes those rows first.
+function _l3SelectGateHtml(mb) {
+  const gate = (mb.report && mb.report.select_gate) || [];
+  if (!gate.length || mb.locked) return "";
+  let items = "";
+  for (const e of gate) {
+    const vals = (e.missing || []).join(", ");
+    items += `<div class="l3-flag-title">${escapeHtml(e.file)}: input ` +
+      `'${escapeHtml(e.input)}' value${(e.missing || []).length === 1 ? "" : "s"} ` +
+      `<b>${escapeHtml(vals)}</b> never tested ` +
+      `(${_l3Netify(`[${e.component_index}] Multiplexer`)} select)</div>`;
+  }
+  return `<div class="l3-flag">` + items +
+    `<div class="l3-flag-body">Every op value needs at least one row ` +
+    `written by YOU before the coach can extend the tests: for each ` +
+    `value above, work out what the circuit SHOULD output and add that ` +
+    `row to your testcase in Digital, then re-upload and scan again. ` +
+    `The coach refuses to guess an op your tests never define — a wrong ` +
+    `guess could lock in the exact bug it is meant to catch.</div></div>`;
+}
+
 // --- Mode B: proposals + accept-flow --------------------------
 // State lives in slot.modeB: { report, proposing, proposals, accepting,
 // inject: {file: outcomeBody}, injectFailing, tempName, locked }.
 
 function l3ProposalsHtml(mb) {
-  if (!mb.report || mb.report.total_flags > 0 || mb.locked) return "";
+  if (!mb.report || mb.report.total_flags > 0 || mb.locked
+      || (mb.report.select_gate || []).length) return "";
   if (mb.proposing) {
     return `<div class="l3-note-card">Asking the coach for new rows<span
       class="l3-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></div>`;
@@ -1583,6 +1614,7 @@ l3BRunBtn.addEventListener("click", async () => {
     l3Slot(filename).modeB = { report: body };
     logEvent("l3_modeB_run_complete", {
       filename, ok: true, total_flags: body.total_flags || 0,
+      select_gate: (body.select_gate || []).length,
     });
   } else {
     const warn = failText || (body && body.warning) || "Scan failed.";

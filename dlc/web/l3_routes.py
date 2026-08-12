@@ -50,7 +50,9 @@ def l3_coverage(req: CoverageRequest) -> dict:
     filename still 404s like every other endpoint.
 
     Use limits : a clean scan consumes one Mode B use;
-    a scan that finds disagreements is a REDIRECT to Mode A and is free.
+    a scan that finds disagreements is a REDIRECT to Mode A and is free,
+    and a scan stopped by the select-coverage gate (Case 3.B — an
+    input-driven mux select value no row exercises) is free as well.
     Counters always tick; the block applies only under DLC_ENFORCE_LIMITS.
     The L1 lock stays a board-UI concern.
     """
@@ -71,7 +73,9 @@ def l3_coverage(req: CoverageRequest) -> dict:
             "ok": False,
             "warning": f"Coverage scan failed: {type(exc).__name__}: {exc}",
         }
-    consumed = report.total_flags == 0     # disagreements => free redirect
+    # disagreements => free redirect to Mode A; a select-coverage gate
+    # (Case 3.B) is a free redirect too — the student owes rows, not uses
+    consumed = report.total_flags == 0 and not report.select_gate
     lim = limits.consume("modeB") if consumed else limits.state()
     if consumed:
         # this use is refundable until a propose actually DELIVERS

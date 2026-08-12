@@ -35,7 +35,7 @@
 | # | Name | Status |
 |---|---|:-:|
 | F14 | Failed-test interpreter | **L3 Mode A** (debug, when tests fail): hypothesis cards + animated wrong-signal-flow. Data side done (per-row runner: failing rows + expected-vs-found; **plus the `dlc/sim` value evaluator + `/api/simulate` now compute and drive the wrong-signal-flow**); LLM side TBD (`/api/llm/debug`) |
-| F15 | Test-writing coach | **L3 Mode B** (coverage): test-coverage analysis -> non-redundant new tests; gated on L1 clean + all tests pass; ROM/RISC-V -> more program + instruction-memory hints. TBD |
+| F15 | Test-writing coach | **L3 Mode B** (coverage): test-coverage analysis -> non-redundant new tests; gated on L1 clean + all tests pass; ROM/RISC-V -> more program + instruction-memory hints. Case 3.B select-coverage gate: an input-driven mux select value with zero test rows blocks proposing (deterministic, free) — the student writes one row per op value first, so the coach never guesses semantics the tests don't define. TBD |
 | F16 | Signal-flow narrator | The failing-row animation. Its Layer-1 signal-flow-on-click substrate is now **Done** (`/api/simulate` returns per-net values + expected-vs-found outputs + node reactions, which the row-click renderer animates; `/api/subcircuit` drives nested flow). The v3 field names `signal_path_components`/`animation_script` were never built; `animation_script` becomes an L3-agent output. LLM narration layer TBD. |
 
 ## Research infrastructure
