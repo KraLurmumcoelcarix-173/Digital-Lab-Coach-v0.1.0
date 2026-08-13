@@ -10,8 +10,7 @@ from dlc.analyzer.wire_completeness import (
 )
 
 
-_CLOCKED_ELEMENTS = {"Register", "RegisterFile", "RAM", "D-FlipFlop",
-                     "JK-FF", "T-FF", "Counter"}
+_CLOCKED_ELEMENTS = {"Register", "RAM", "D-FlipFlop", "JK-FF", "T-FF", "Counter"}
 
 
 def _pin_on_instance(netlist: NetList, comp_idx: int, pin_name: str):

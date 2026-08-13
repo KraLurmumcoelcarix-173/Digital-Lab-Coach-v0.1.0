@@ -36,8 +36,7 @@ from dlc.parser.pin_geometry import inverted_input_names
 
 
 _CLOCKED_ELEMENTS = frozenset({
-    "Register", "RegisterFile", "Clock", "RAM", "D-FlipFlop", "JK-FF",
-    "T-FF", "Counter",
+    "Register", "Clock", "RAM", "D-FlipFlop", "JK-FF", "T-FF", "Counter",
 })
 
 
@@ -517,17 +516,7 @@ def _rom_facts(circuit: Circuit) -> list[dict]:
         raw = comp.attributes.get("Data", "")
         if not isinstance(raw, str):
             raw = "" if raw is None else str(raw)
-        tokens = []
-        for t in raw.replace(",", " ").split():
-            if "*" in t:                    # Digital run-length: "7*1f"
-                cnt_s, _, val_s = t.partition("*")
-                try:
-                    cnt = max(int(cnt_s, 10), 1)
-                except ValueError:
-                    cnt = 1
-                tokens.extend([val_s] * cnt)
-            elif t:
-                tokens.append(t)
+        tokens = [t for t in raw.replace(",", " ").split() if t]
         fmt = str(comp.attributes.get("intFormat", "hex") or "hex").lower()
         if fmt == "hex":
             words = ["0x" + t.lower().removeprefix("0x") for t in tokens]

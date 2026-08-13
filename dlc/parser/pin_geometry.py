@@ -66,20 +66,6 @@ _ROM_PINS = [
     PinSpec("D",   80, 20, "out"),
 ]
 
-# Digital's built-in Register File (memory category): dual async read
-# ports + one clocked write port. Fixed 6-in/2-out layout, width 80 —
-# measured against a real student CPU wiring every pin (r28).
-_REGISTER_FILE_PINS = [
-    PinSpec("Din", offset_x=0,  offset_y=0,   direction="in"),
-    PinSpec("we",  offset_x=0,  offset_y=20,  direction="in"),
-    PinSpec("Rw",  offset_x=0,  offset_y=40,  direction="in"),
-    PinSpec("C",   offset_x=0,  offset_y=60,  direction="in"),
-    PinSpec("Ra",  offset_x=0,  offset_y=80,  direction="in"),
-    PinSpec("Rb",  offset_x=0,  offset_y=100, direction="in"),
-    PinSpec("Da",  offset_x=80, offset_y=0,   direction="out"),
-    PinSpec("Db",  offset_x=80, offset_y=20,  direction="out"),
-]
-
 _SEVEN_SEG_PINS = [
     PinSpec("a",  offset_x=0,  offset_y=-40, direction="in"),
     PinSpec("b",  offset_x=20, offset_y=-40, direction="in"),
@@ -104,7 +90,6 @@ STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
     "BitExtender":   _BITEXTENDER_PINS,
     "BarrelShifter": _BARREL_SHIFTER_PINS,
     "ROM":    _ROM_PINS,
-    "RegisterFile": _REGISTER_FILE_PINS,
     "Seven-Seg": _SEVEN_SEG_PINS,
 }
 
