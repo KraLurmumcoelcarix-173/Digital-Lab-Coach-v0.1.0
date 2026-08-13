@@ -13,6 +13,7 @@ from enum import Enum
 from dlc.parser.models import Circuit
 from dlc.parser.netlist import (
     NetList, build_netlist, _wire_endpoint_degree, IMPLICIT_PIN_RADIUS,
+    _all_predicted_pins, _subcircuit_pin_specs,
 )
 from dlc.parser.graph import build_signal_graph
 from dlc.facts.extractor import CircuitFacts, extract_facts
@@ -614,6 +615,187 @@ def _link_cascades_to_missing(
             ))
     return out
 
+
+# --- version-skew linking ----------------------------------------------
+# A parent drawn against a DIFFERENT version of a child .dig can never
+# line up with the child we actually loaded: Digital sizes a custom
+# component's box (and pin rows) from the child's own pins, so when the
+# child's ports changed, the parent's wires end where the OLD shape had
+# pins. Digital shows that visibly; a naive netlist instead sprays
+# unrelated-looking undriven/width/multi-driver errors (seen live on real
+# student CPUs paired with the solution's subcircuit files, r28). The
+# forensic signature is unmistakable: DANGLING wire ends (degree-1, on no
+# computed pin, not resting on another wire) sitting exactly on the
+# instance's pin rows or pin columns — a Digital-authored parent never
+# leaves those. Fold each such instance's noise into ONE actionable
+# error and suppress the symptom issues it explains.
+
+_MISMATCH_SUPPRESSED_KINDS = (
+    "dangling_input", "unused_top_output", "dangling_subcircuit_input",
+    "multi_driver", "width_mismatch", "floating_register_en",
+)
+
+
+def _orphan_wire_endpoints(
+    circuit: Circuit, netlist: NetList
+) -> set[tuple[int, int]]:
+    """Degree-1 wire endpoints where the FINAL netlist attached no real
+    pin (snap tolerance and the out-pin/tunnel matcher already absorbed
+    every near-miss) and that rest on no wire interior — points where the
+    parent expected a pin our loaded shapes don't provide. Implicit
+    "wire@" pins (direction unknown) do not legitimize an endpoint."""
+    attached = {
+        (p.x, p.y)
+        for net in netlist.nets for p in net.pins
+        if p.direction != "unknown"
+    }
+    degree = _wire_endpoint_degree(circuit)
+
+    def on_some_wire_interior(pt) -> bool:
+        (px, py) = pt
+        for w in circuit.wires:
+            (x1, y1), (x2, y2) = (w.p1.x, w.p1.y), (w.p2.x, w.p2.y)
+            if (px, py) in ((x1, y1), (x2, y2)):
+                continue
+            if x1 == x2 == px and min(y1, y2) < py < max(y1, y2):
+                return True
+            if y1 == y2 == py and min(x1, x2) < px < max(x1, x2):
+                return True
+        return False
+
+    out: set[tuple[int, int]] = set()
+    for pt, deg in degree.items():
+        if deg == 1 and pt not in attached and not on_some_wire_interior(pt):
+            out.add(pt)
+    return out
+
+
+def _detect_shape_mismatches(
+    circuit: Circuit, netlist: NetList,
+) -> dict[int, dict]:
+    """instance component index -> {"ref", "orphans"} for every resolved
+    subcircuit instance whose surrounding wiring shows >=2 dangling wire
+    ends on its pin rows / pin columns (the version-skew signature)."""
+    candidates: list[tuple[int, str, object]] = []
+    for sub_ref in circuit.subcircuits:
+        child = sub_ref.child_circuit
+        if child is None or "Width" not in child.attributes:
+            continue
+        for idx, comp in enumerate(circuit.components):
+            if comp is sub_ref.parent_component:
+                candidates.append((idx, sub_ref.reference, child))
+                break
+    if not candidates:
+        return {}
+    orphans = _orphan_wire_endpoints(circuit, netlist)
+    if not orphans:
+        return {}
+
+    _V_SPAN = 20 * 64          # vertical reach along a pin column
+    _H_SLACK = 600             # horizontal reach along an output pin row
+
+    claims: dict[tuple[int, int], tuple[int, int]] = {}   # orphan -> (dist, idx)
+    for idx, ref, child in candidates:
+        comp = circuit.components[idx]
+        ax, ay = comp.position.x, comp.position.y
+        specs = _subcircuit_pin_specs(child)
+        body_w = max((s.offset_x for s in specs), default=0)
+        out_rows = {ay + s.offset_y for s in specs if s.direction == "out"}
+        for (ex, ey) in orphans:
+            hit = (
+                # a pin column (input side x=anchor, output side x=anchor+W)
+                (ex in (ax, ax + body_w) and abs(ey - ay) <= _V_SPAN)
+                # or an output pin row at a different width than ours
+                or (ey in out_rows and ax < ex <= ax + max(body_w, 40) + _H_SLACK)
+            )
+            if not hit:
+                continue
+            d = abs(ex - ax) + abs(ey - ay)
+            prev = claims.get((ex, ey))
+            if prev is None or d < prev[0]:
+                claims[(ex, ey)] = (d, idx)
+
+    per_inst: dict[int, set] = {}
+    for orphan, (_d, idx) in claims.items():
+        per_inst.setdefault(idx, set()).add(orphan)
+    refs = {idx: ref for idx, ref, _c in candidates}
+    return {
+        idx: {"ref": refs[idx], "orphans": pts}
+        for idx, pts in per_inst.items() if len(pts) >= 2
+    }
+
+
+def _shape_mismatch_issue(
+    circuit: Circuit, inst_idx: int, ref: str, n_suppressed: int,
+) -> Issue:
+    comp = circuit.components[inst_idx]
+    name = _component_display_name(comp, inst_idx)
+    return Issue(
+        kind="subcircuit_shape_mismatch",
+        severity=IssueSeverity.ERROR,
+        title=f"{name} doesn't match the uploaded '{ref}'",
+        message=(
+            f"The wires around this instance end where '{ref}' pins are "
+            f"NOT: this parent was drawn against a different version of "
+            f"'{ref}' (its inputs/outputs changed, so Digital drew a "
+            f"different box). The '{ref}' uploaded alongside is not the "
+            f"one this circuit was built with"
+            + (f" — {n_suppressed} other flag"
+               f"{'s' if n_suppressed != 1 else ''} on these wires "
+               f"{'is' if n_suppressed == 1 else 'are'} symptoms of this "
+               f"one cause, not separate mistakes." if n_suppressed
+               else ".")
+        ),
+        component_indices=[inst_idx],
+        location=(comp.position.x, comp.position.y),
+        suggested_fix=(
+            f"Upload the '{ref}' file that belongs WITH this circuit "
+            f"(the version it was drawn against), then re-upload them "
+            f"together."
+        ),
+    )
+
+
+def _link_cascades_to_mismatched(
+    circuit: Circuit, netlist: NetList, issues: IssueCollection
+) -> IssueCollection:
+    mism = _detect_shape_mismatches(circuit, netlist)
+    if not mism:
+        return issues
+    orphan_net_ids: set[int] = set()
+    for info in mism.values():
+        for pt in info["orphans"]:
+            nid = netlist.by_coord.get(pt)
+            if nid is not None:
+                orphan_net_ids.add(nid)
+
+    suppressed: dict[int, int] = {i: 0 for i in mism}
+    kept: list[Issue] = []
+    for iss in issues.issues:
+        if iss.scope is None and iss.kind in _MISMATCH_SUPPRESSED_KINDS:
+            hit = next(
+                (i for i in iss.component_indices if i in mism), None)
+            if hit is not None:
+                suppressed[hit] += 1
+                continue
+            net = _net_for_issue(iss, netlist)
+            if net is not None and net.net_id in orphan_net_ids:
+                owner = next(
+                    (i for i, info in mism.items()
+                     if any(netlist.by_coord.get(pt) == net.net_id
+                            for pt in info["orphans"])),
+                    next(iter(mism)))
+                suppressed[owner] += 1
+                continue
+        kept.append(iss)
+
+    out = IssueCollection()
+    for iss in kept:
+        out.add(iss)
+    for idx in sorted(mism):
+        out.add(_shape_mismatch_issue(
+            circuit, idx, mism[idx]["ref"], suppressed[idx]))
+    return out
 
 
 # Public API

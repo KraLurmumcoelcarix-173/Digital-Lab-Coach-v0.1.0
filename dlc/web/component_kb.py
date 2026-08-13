@@ -190,6 +190,32 @@ COMPONENT_KB: dict[str, dict] = {
             ),
         },
     },
+    "RegisterFile": {
+        "display_name": "Register file (built-in)",
+        "image": "register.png",
+        "description": (
+            "Digital's built-in register bank: 2^AddrBits words of Bits "
+            "bits, TWO combinational read ports (Ra->Da, Rb->Db) and ONE "
+            "clocked write port (Din written to address Rw on the clock "
+            "edge when we=1). The one-component version of the "
+            "register-file lab: reads need no clock, writes do. NOTE: "
+            "address 0 is an ordinary writable word here — RISC-V's "
+            "x0-is-always-zero rule must be enforced OUTSIDE this "
+            "component if you rely on it."
+        ),
+        "transistor_count": "About 2^AddrBits x Bits latch cells plus decode",
+        "port_summary": (
+            "in: Din, we, Rw, C, Ra, Rb -> out: Da, Db "
+            "(reads async, write clocked)"
+        ),
+        "extra": {
+            "behavior_example": (
+                "AddrBits=2, we=1, Rw=1, Din=7, clock edge -> word1=7; "
+                "same row Ra=1 reads Da=7 post-edge. With we=0 nothing "
+                "writes. Unwritten words read 0."
+            ),
+        },
+    },
     "Demultiplexer": {
         "display_name": "Demultiplexer (DEMUX)",
         "image": "decoder.png",

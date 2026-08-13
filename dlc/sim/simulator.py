@@ -262,15 +262,29 @@ def _rom_words(comp) -> list[int]:
     tokens = [t for t in raw.replace(",", " ").split() if t]
     fmt = str(comp.attributes.get("intFormat", "hex") or "hex").lower()
     base = {"hex": 16, "bin": 2, "oct": 8, "dec": 10, "def": 10}.get(fmt, 16)
-    words: list[int] = []
-    for t in tokens:
+    def _parse_one(t: str) -> int:
         try:
-            words.append(int(t, base))
+            return int(t, base)
         except ValueError:
             try:
-                words.append(int(t, 16))   # last-ditch: treat as hex
+                return int(t, 16)          # last-ditch: treat as hex
             except ValueError:
-                words.append(0)
+                return 0
+
+    words: list[int] = []
+    for t in tokens:
+        # Digital's run-length syntax: "7*1f" stores 1f at 7 consecutive
+        # addresses — mis-reading it as one token shifts every later word
+        # (seen live in a real student ROM, r28)
+        if "*" in t:
+            cnt_s, _, val_s = t.partition("*")
+            try:
+                cnt = int(cnt_s, 10)
+            except ValueError:
+                cnt = 1
+            words.extend([_parse_one(val_s)] * max(cnt, 1))
+        else:
+            words.append(_parse_one(t))
     return words
 
 
@@ -403,6 +417,12 @@ def simulate(
     def reg_state(idx: int) -> int:
         return state_store.get(path + (idx,), 0)
 
+    def regfile_state(idx: int) -> dict:
+        # a RegisterFile's state is a whole {address: word} mapping under
+        # one path key (never mutated in place — reg_next carries a copy)
+        v = state_store.get(path + (idx,))
+        return v if isinstance(v, dict) else {}
+
     # Bit width per net — single source of truth, matches the edge widths.
     per_net, _conflicts = infer_net_widths(circuit, netlist)
     for nid, info in per_net.items():
@@ -486,7 +506,26 @@ def simulate(
             # evaluate it with whatever inputs are ready — the outer fixpoint
             # re-runs it as more resolve. Plain gates still need every input.
             is_subcircuit = comp.element_name.endswith(".dig")
-            if unresolved_input and not is_subcircuit:
+            is_regfile = comp.element_name == "RegisterFile"
+            # A RegisterFile resolves each read port from its own address
+            # alone (Da needs only Ra), like a subcircuit — evaluate with
+            # whatever inputs are ready and let the fixpoint refine.
+            if unresolved_input and not is_subcircuit and not is_regfile:
+                continue
+
+            if is_regfile:
+                bits = _as_int(comp.attributes.get("Bits", 1), 1)
+                abits = _as_int(comp.attributes.get("AddrBits", 3), 3)
+                mem = regfile_state(idx)
+                outs = {}
+                if "Ra" in in_vals:
+                    outs["Da"] = mem.get(in_vals["Ra"] & _mask(abits), 0) & _mask(bits)
+                if "Rb" in in_vals:
+                    outs["Db"] = mem.get(in_vals["Rb"] & _mask(abits), 0) & _mask(bits)
+                for name, direction, nid in pins:
+                    if direction == "out" and name in outs:
+                        if set_net(nid, outs[name]):
+                            changed = True
                 continue
 
             if is_subcircuit:
@@ -529,6 +568,29 @@ def simulate(
     # Compute each register's next-Q (its resolved D input, gated by `en`).
     has_register = False
     for idx, comp in enumerate(circuit.components):
+        if comp.element_name == "RegisterFile":
+            # next state = current words + one write when `we` holds
+            # (unresolved `we` follows the Register precedent: enabled)
+            has_register = True
+            cur = regfile_state(idx)
+            din_net = pin_net(idx, "Din")
+            rw_net = pin_net(idx, "Rw")
+            we_net = pin_net(idx, "we")
+            if (din_net is not None and din_net in net_values
+                    and rw_net is not None and rw_net in net_values):
+                enabled = True
+                if we_net is not None and we_net in net_values:
+                    enabled = bool(net_values[we_net])
+                if enabled:
+                    bits = _as_int(comp.attributes.get("Bits", 1), 1)
+                    abits = _as_int(comp.attributes.get("AddrBits", 3), 3)
+                    nxt = dict(cur)
+                    nxt[net_values[rw_net] & _mask(abits)] = (
+                        net_values[din_net] & _mask(bits))
+                    result.reg_next[path + (idx,)] = nxt
+                else:
+                    result.reg_next[path + (idx,)] = cur
+            continue
         if comp.element_name != "Register":
             continue
         has_register = True

@@ -109,3 +109,77 @@ def test_demux_fixture_simulates_end_to_end():
     assert res.output_values.get("En31") == 1
     res = simulate(c, nl, g, {"RegWrite": 0, "WriteReg": 31})
     assert res.output_values.get("En31") == 0
+
+
+# ---- r28: Digital's built-in RegisterFile ----------------------------------
+# Field bug: student CPUs built on the Memory-category RegisterFile element
+# (dual async read ports + one clocked write port) — completely unsupported,
+# so every read net flagged undriven. The fixture's expected rows were
+# validated against Digital.jar itself before being locked here.
+
+def test_registerfile_fixture_is_l1_clean():
+    c = parse_dig_file(f"{_DIR}/regfile_write_read.dig")
+    assert check_all_l1(c).issues == []
+
+
+def test_registerfile_pin_layout():
+    from dlc.parser.pin_geometry import absolute_pin_positions
+    rf = _c("RegisterFile", **{"AddrBits": 5, "Bits": 32})
+    by_name = {s.name: (p.x, p.y) for p, s in absolute_pin_positions(rf)}
+    assert by_name == {
+        "Din": (0, 0), "we": (0, 20), "Rw": (0, 40), "C": (0, 60),
+        "Ra": (0, 80), "Rb": (0, 100), "Da": (80, 0), "Db": (80, 20),
+    }
+
+
+def test_registerfile_sequential_semantics_match_digital():
+    # write r0=5 -> write r1=7 -> we=0 blocks -> overwrite r1=3;
+    # reads are post-edge, unwritten words read 0 (jar-verified rows)
+    from dlc.sim.simulator import simulate_sequential
+    from dlc.testing.spec import extract_test_specs
+    c = parse_dig_file(f"{_DIR}/regfile_write_read.dig")
+    nl = build_netlist(c)
+    g = build_signal_graph(c, nl)
+    sp = extract_test_specs(c)[0]
+    expected = {0: (5, 0), 1: (5, 7), 2: (0, 7), 3: (3, 5)}
+    for r in sp.rows:
+        if r.is_malformed:
+            continue
+        res = simulate_sequential(c, nl, g, sp, r.line_index)
+        got = (res.output_values.get("DA"), res.output_values.get("DB"))
+        assert got == expected[r.line_index], f"row {r.line_index}: {got}"
+
+
+def test_registerfile_breaks_combinational_loops():
+    # Da -> logic -> Din is a CLOCKED path, not a combinational loop
+    from dlc.facts.extractor import _CLOCKED_ELEMENTS
+    assert "RegisterFile" in _CLOCKED_ELEMENTS
+
+
+# ---- r28: version-skewed subcircuit children -------------------------------
+# Field bug: pairing a student CPU with a DIFFERENT version of its child
+# .dig files (ports changed -> Digital drew a different box) sprayed
+# unrelated-looking undriven/width/multi-driver errors. The forensic
+# signature — dangling wire ends exactly on the instance's pin rows or
+# columns — now folds into ONE actionable shape-mismatch error.
+
+def test_version_skewed_child_reports_one_mismatch_not_a_flood():
+    c = parse_dig_file(f"{_DIR}/skew/skew_parent.dig")
+    issues = check_all_l1(c).issues
+    kinds = [i.kind for i in issues]
+    assert kinds == ["subcircuit_shape_mismatch"]
+    assert "different version" in issues[0].message
+
+
+def test_matching_child_stays_clean_no_false_mismatch():
+    # the skew child ITSELF (a well-formed pair of files) must not flag
+    c = parse_dig_file(f"{_DIR}/skew/skew_child.dig")
+    assert check_all_l1(c).issues == []
+
+
+# ---- r28: ROM run-length Data syntax ---------------------------------------
+
+def test_rom_run_length_data_expands():
+    from dlc.sim.simulator import _rom_words
+    rom = _c("ROM", **{"Data": "a,3*b,c", "Bits": 8, "AddrBits": 4})
+    assert _rom_words(rom) == [0xA, 0xB, 0xB, 0xB, 0xC]

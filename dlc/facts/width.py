@@ -106,6 +106,22 @@ def pin_width(component: Component, pin_name: str) -> int | None:
             return 1
         return None
 
+    if e == "RegisterFile":
+        if pin_name in ("Din", "Da", "Db"):
+            return _bits(component)
+        if pin_name in ("Rw", "Ra", "Rb"):
+            return int(component.attributes.get("AddrBits", 3))
+        if pin_name in ("we", "C"):
+            return 1
+        return None
+
+    if e == "Demultiplexer":
+        if pin_name == "sel":
+            return _selector_bits(component)
+        if pin_name == "in" or pin_name.startswith("out"):
+            return _bits(component)
+        return None
+
     if e == "ROM":
         if pin_name == "A":
             return int(component.attributes.get("AddrBits", _BITS_DEFAULT))
