@@ -530,6 +530,29 @@ def _diagnosis_line(cluster) -> str:
     return line + "."
 
 
+def _touches_stored_data(ops_lists: list[list[dict]]) -> bool:
+    return any(isinstance(op, dict) and op.get("name") == "Data"
+               for ops in ops_lists for op in (ops or []))
+
+
+# Machine fact appended once a ROM/LookUpTable Data rewrite has been
+# REFUTED: the stored words provably satisfy every currently-passing row
+# that reads the same table, so a second Data guess is the one move that
+# cannot be right — steer the retry to the ADDRESS/SELECT path instead
+# (the live failure mode on the control unit: the model kept rewriting
+# words when the bug was a detect gate feeding the priority encoder).
+_DATA_REFUTED_STEER = (
+    "\nMACHINE FACT: a stored-Data rewrite was already applied and "
+    "REFUTED by the re-run above — the stored words satisfy every row "
+    "that passes today, so the table content is NOT the bug. Do NOT "
+    "propose another Data change. The failing rows read the WRONG WORD: "
+    "suspect the ADDRESS/SELECT path instead — the detect gates, "
+    "comparators and encoder/selector inputs that choose which word is "
+    "read. Run the gate-kind sanity check on each of them using the "
+    "values table."
+)
+
+
 def _refutation_block(ops: list[dict], verdict: dict) -> str:
     payload = {
         "refuted_ops": ops,
@@ -547,7 +570,8 @@ def _refutation_block(ops: list[dict], verdict: dict) -> str:
         },
     }
     return ("\n\n[REFUTED ATTEMPT]\n"
-            + json.dumps(payload, indent=2, default=str))
+            + json.dumps(payload, indent=2, default=str)
+            + (_DATA_REFUTED_STEER if _touches_stored_data([ops]) else ""))
 
 
 def _rank_key(h: dict):
@@ -803,7 +827,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 json.dumps(payload, indent=2, default=str)) + (
                 "\n\n[ESCALATION]\n"
                 + json.dumps({"refuted_ops": tried[ci]}, indent=2,
-                             default=str))
+                             default=str)
+                + (_DATA_REFUTED_STEER
+                   if _touches_stored_data(tried[ci]) else ""))
             reply = ask(prompt)
             if not reply.get("ok"):
                 continue
@@ -858,14 +884,10 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             reason = "refuted"
         else:
             reason = "patch_failed"
+        # dropped ideas name the idea and the reason kind only — the
+        # "applied cleanly, but row(s) … still fail" recap read as noise
+        # to students (user ruling, r27); machine warnings still ride
         det = h["verdict"]["warning"]
-        if not det and h["verdict"]["still_failing"]:
-            det = ("applied cleanly, but row(s) "
-                   + ", ".join(map(str, h["verdict"]["still_failing"]))
-                   + " still fail")
-            if h["verdict"]["regressions"]:
-                det += ("; it also broke row(s) "
-                        + ", ".join(map(str, h["verdict"]["regressions"])))
         dropped.append({
             "cluster_rows": h["cluster_rows"],
             "reason": reason,

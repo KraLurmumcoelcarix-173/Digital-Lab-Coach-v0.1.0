@@ -41,6 +41,7 @@ Last updated: 2026/7/03
 | `BarrelShifter` | Variable shift | `Bits`, `direction`, `barrelShifterMode` |
 | `Seven-Seg` | 7-segment LED display (non-hex). Lab 2. | `Color` (awt-color, ignored), `rotation`. **Eight 1-bit input pins**: `a, b, c, d` (top edge) + `e, f, g, dp` (bottom edge). |
 | `Decoder` | One-of-N decoder | `Selector Bits` → 2^N outputs |
+| `Demultiplexer` | Routes 1 input to one of 2^N outputs (others 0) | `Selector Bits`, `Bits` |
 | `PriorityEncoder` | Priority → binary index | `Selector Bits` → 2^N inputs |
 | `Clock` | Clock signal | No attributes in basic use |
 | `Testcase` | Embedded simulator test cases | `testData/dataString`, default Label `"Testdata"`. **No signal pins.** |
@@ -71,8 +72,13 @@ Digital's coordinate system: x increases rightward, y increases downward. Anchor
 | `BarrelShifter` | `in` (0, 0), `sh` (0, 40) | `out` (60, 20) | |
 | `Seven-Seg` | `a/b/c/d` at `(0,-40)/(20,-40)/(40,-40)/(60,-40)`; `e/f/g` at `(0,180)/(20,180)/(40,180)`; `dp` at `(60, 240)` | (no outputs — display sink only) | Verified against Lab 2 (rotation=0) and tier3_latched_display (rotation=3). The `dp` pin sits one row below `e/f/g`, aligned x-wise with `d`. |
 | `ROM` | `A` (0, 0), `sel` (0, 40) | `D` (80, 20) | Width varies with data width |
-| `Decoder` | `sel` (20, n_outputs * 20) | `out_i` at (60, i*20) | sel sits bottom-middle (same pattern as Mux n≥4) |
+| `Decoder` | `sel` (20, (n_outputs − 1) * 20) | `out_i` at (60, i*20) | **sel sits at the LAST output's height, NOT one row below like the Mux** — measured on a rotation-2 sel_bits=5 Decoder whose sel feed lands exactly at (20, 620); the old n*20 table falsely flagged its sel undriven |
+| `Demultiplexer` (sel_bits=1, n=2) | `in` (0, 20), `sel` (20, 40) | `out0` (40, 0), `out1` (40, 40) | mirror of the 2-input Mux |
+| `Demultiplexer` (sel_bits≥2, n≥4) | `in` (0, n*10), `sel` (20, n*20) | `out_i` at (40, i*20) | measured on a sel_bits=5 register-file write-enable fan-out; non-selected outputs drive 0 |
 | `PriorityEncoder` | `in_i` at (0, i*20) | `num` (80, 0) | |
+
+`flipSelPos` (Multiplexer / Demultiplexer / Decoder): Digital's "flip selector position"
+attribute moves the `sel` pin to the TOP edge at (20, −20); everything else is unchanged.
 
 ### Rotation
 
@@ -167,7 +173,7 @@ The ablation contrast (Layer 1 alone vs Layer 1+3 vs Layer 3 alone) is the proje
 DLC's parser aims to **semantically understand** elements used in COMP 311 labs so far. Other elements (transistor primitives, FPGA-specific blocks, FSM editor outputs, etc.) are parsed structurally but treated as opaque `UnknownComponent` with named pins for now. This lets the analyzer skip unrecognized components and the LLM describe them generically, while keeping the parser future-proof for new labs.
 
 **Known-and-semantically-supported**:
-Wire (straight, L, diagonal), And, Or, XOr, NAnd, NOr, XNOr, Not, In, Out, Multiplexer, Splitter, Tunnel, ROM, Register, Const, Comparator, Add, BitExtender, Clock, Ground, VDD, BarrelShifter, Decoder, PriorityEncoder, Testcase, Rectangle, Seven-Seg
+Wire (straight, L, diagonal), And, Or, XOr, NAnd, NOr, XNOr, Not, In, Out, Multiplexer, Demultiplexer, Splitter, Tunnel, ROM, Register, Const, Comparator, Add, BitExtender, Clock, Ground, VDD, BarrelShifter, Decoder, PriorityEncoder, Testcase, Rectangle, Seven-Seg
 
 **Annotation-only** (parsed but explicitly carry no signal pins): Testcase, Rectangle. Excluded from implicit-pin candidate set.
 

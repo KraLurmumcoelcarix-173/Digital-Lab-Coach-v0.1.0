@@ -190,6 +190,26 @@ COMPONENT_KB: dict[str, dict] = {
             ),
         },
     },
+    "Demultiplexer": {
+        "display_name": "Demultiplexer (DEMUX)",
+        "image": "decoder.png",
+        "description": (
+            "The mirror of a MUX: routes ONE data input to exactly one "
+            "of 2^S outputs, chosen by an S-bit selector; every "
+            "non-selected output is driven to 0. A register file's "
+            "write-enable fan-out is a classic use: feed RegWrite in, "
+            "select with the write address, and each output enables one "
+            "register."
+        ),
+        "transistor_count": "About 2^S AND-gate equivalents plus the decode",
+        "port_summary": "1 data input + S select bits -> 2^S outputs (S = Selector Bits)",
+        "extra": {
+            "behavior_example": (
+                "Selector Bits=2, in=1, sel=3: out_3=1, out_0..out_2=0. "
+                "With in=0 every output is 0 regardless of sel."
+            ),
+        },
+    },
     "Decoder": {
         "display_name": "Decoder (1-of-N)",
         "image": "decoder.png",

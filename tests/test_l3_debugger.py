@@ -160,6 +160,25 @@ def test_refuted_fix_earns_one_retry_with_evidence():
     assert res["cards"][0]["fix"]["ops"] == GOOD_OPS
 
 
+def test_refuted_rom_data_rewrite_steers_the_retry_off_the_table():
+    # r27, from a live control-unit failure: once a Data rewrite is
+    # refuted, the retry must carry the machine fact that the stored
+    # words are consistent and point at the address/select path instead
+    rom_ops = [{"op": "change_attribute", "component_index": 16,
+                "name": "Data", "value": "82,86"}]
+    call = _fake([_reply(rom_ops), _reply(GOOD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["llm_calls"] == 2
+    assert "MACHINE FACT" in call.log[1]
+    assert "ADDRESS/SELECT path" in call.log[1]
+    # a refuted NON-data fix must not carry the steer (other test's log)
+    call2 = _fake([_reply(BAD_OPS), _reply(GOOD_OPS)])
+    debug_circuit(_BUG3, call=call2, use_manifest=False,
+                  failing_indices=[0, 1])
+    assert "MACHINE FACT" not in call2.log[1]
+
+
 def test_unknown_op_is_a_format_error_then_dropped():
     bad = _reply(GOOD_OPS)
     bad["fix"]["ops"] = [{"op": "explode_everything"}]

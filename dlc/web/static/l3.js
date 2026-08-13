@@ -58,13 +58,23 @@ function l3PageVisible() {
 }
 
 function l3ResetDom() {
+  // Clear-all must not leave walkthrough leftovers behind (diagnosis
+  // board, retest box, yellow marks, badges, pointer): no mirror rebuild
+  // happens on the way back to the dashboard, so scrub them here.
+  try { if (typeof _l3ClearFixMarks === "function") _l3ClearFixMarks(); } catch {}
+  for (const id of ["l3-diag-board", "l3-retest-box",
+                    "l3-anim-pointer", "l3-anim-shield"]) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  }
+  try { l3HideDrillBar(); } catch {}
   if (l3Cy) { try { l3Cy.destroy(); } catch {} l3Cy = null; }
   l3GraphFilename = null;
   const ph = document.getElementById("l3-placeholder");
   if (ph) {
     ph.classList.remove("hidden");
     ph.innerHTML =
-      `No circuit loaded. Add a <code>.dig</code> file from the toolbar ` +
+      `No circuit loaded. Add a .dig file from the toolbar ` +
       `above &mdash; the coach works on the file selected there.`;
   }
   const chip = document.getElementById("l3-file-chip");
@@ -94,7 +104,7 @@ function renderL3Graph(file) {
     ph.classList.remove("hidden");
     if (!file) {
       ph.innerHTML =
-        `No circuit loaded. Add a <code>.dig</code> file from the toolbar ` +
+        `No circuit loaded. Add a .dig file from the toolbar ` +
         `above &mdash; the coach works on the file selected there.`;
     } else if (file.error) {
       ph.innerHTML =
@@ -345,8 +355,8 @@ function renderL3Boards(file) {
       cls: "muted",
       bodyHtml:
         `<div class="l3-note-card"><span class="l3-spinner"></span> ` +
-        `Nothing unverified is ever shown. This usually takes a few ` +
-        `seconds per cluster.</div>`,
+        `Nothing unverified is ever shown. This can take one or a few ` +
+        `minutes.</div>`,
     });
   } else if (ma && ma.result) {
     const st = l3ModeAStatus(ma.result);
@@ -1960,9 +1970,6 @@ function _l3UnverifiedCardHtml(ma, b) {
       (fix.explanation_for_student
         ? `<div class="l3-prop-why">${_l3Netify(escapeHtml(fix.explanation_for_student))}</div>` : "") +
       `<div class="l3-unv-fail">${escapeHtml(failLine)}.</div>` +
-      `<div class="l3-prop-hint">The idea is revealed, so analysis is ` +
-      `locked for this upload: apply it (or your own fix) in Digital, ` +
-      `then re-upload the file to analyze what remains.</div>` +
       `</div>`;
   }
   return html + `</div>`;

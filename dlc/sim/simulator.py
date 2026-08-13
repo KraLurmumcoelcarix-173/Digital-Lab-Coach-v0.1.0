@@ -180,6 +180,18 @@ def _eval_decoder(comp, in_vals):
     return {f"out_{i}": (1 if i == sel else 0) for i in range(n_out)}
 
 
+def _eval_demux(comp, in_vals):
+    # routes `in` to the selected output; Digital drives every
+    # non-selected output to 0 (not Z)
+    sel_bits = _as_int(comp.attributes.get("Selector Bits", 1), 1)
+    n_out = 2 ** sel_bits
+    if "sel" not in in_vals or "in" not in in_vals:
+        return None
+    sel = in_vals["sel"] & _mask(sel_bits)
+    return {f"out_{i}": (in_vals["in"] if i == sel else 0)
+            for i in range(n_out)}
+
+
 def _eval_priority_encoder(comp, in_vals):
     sel_bits = _as_int(comp.attributes.get("Selector Bits", 1), 1)
     n_in = 2 ** sel_bits
@@ -322,6 +334,7 @@ _RULES = {
     "Not": _eval_not,
     "Const": _eval_const, "Ground": _eval_ground, "VDD": _eval_vdd,
     "Multiplexer": _eval_mux,
+    "Demultiplexer": _eval_demux,
     "Decoder": _eval_decoder,
     "PriorityEncoder": _eval_priority_encoder,
     "Splitter": _eval_splitter,

@@ -189,9 +189,12 @@ def _multiplexer_pins(comp: Component) -> list[PinSpec]:
         out  at (40, 20)
 
       n_inputs >= 4 (sel_bits >= 2):
-        in_i at (0, i * 20)   
+        in_i at (0, i * 20)
         sel  at (20, n_inputs * 20)
         out  at (40, n_inputs * 10)
+
+    'flipSelPos' (Digital's flip-selector attribute) moves sel to the top
+    edge at (20, -20) for either size.
     """
     sel_bits = int(comp.attributes.get("Selector Bits", 1))
     n_inputs = 2 ** sel_bits
@@ -201,6 +204,8 @@ def _multiplexer_pins(comp: Component) -> list[PinSpec]:
         spacing = 20
         sel_y = n_inputs * 20
         out_y = n_inputs * 10
+    if comp.attributes.get("flipSelPos"):
+        sel_y = -20
 
     pins: list[PinSpec] = []
     for i in range(n_inputs):
@@ -252,19 +257,57 @@ def _register_pins(comp: Component) -> list[PinSpec]:
 
 def _decoder_pins(comp: Component) -> list[PinSpec]:
     """
-    Decoder: 2^Selector Bits outputs stacked on the right edge,
-    one sel input at the bottom-middle (analogous to Multiplexer n>=4
-    layout). Example (Selector Bits=5, 32 enable outputs):
+    Decoder: 2^Selector Bits outputs stacked on the right edge, one sel
+    input on the bottom edge. Unlike the Multiplexer (sel one grid row
+    BELOW the last input, y = n*20), the Decoder's sel sits at the height
+    of the LAST output: y = (n-1)*20 — measured against a rotation-2
+    Selector-Bits-5 Decoder in a real lab file whose sel feed lands
+    exactly there (a one-row-off table made every such circuit flag a
+    false "undriven sel"). Example (Selector Bits=5, 32 outputs):
       out_i at (60, i * 20)
-      sel   at (20, n_outputs * 20)
+      sel   at (20, 620)          # (n_outputs - 1) * 20
+    'flipSelPos' (Digital's flip-selector attribute) moves sel to the top
+    edge at (20, -20).
     """
     sel_bits = int(comp.attributes.get("Selector Bits", 1))
     n_outputs = 2 ** sel_bits
+    sel_y = -20 if comp.attributes.get("flipSelPos") else (n_outputs - 1) * 20
     pins: list[PinSpec] = [
-        PinSpec("sel", offset_x=20, offset_y=n_outputs * 20, direction="in"),
+        PinSpec("sel", offset_x=20, offset_y=sel_y, direction="in"),
     ]
     for i in range(n_outputs):
         pins.append(PinSpec(f"out_{i}", offset_x=60, offset_y=i * 20, direction="out"))
+    return pins
+
+
+def _demultiplexer_pins(comp: Component) -> list[PinSpec]:
+    """
+    Demultiplexer: routes one data input to 1 of 2^Selector Bits outputs.
+    Mirror of the Multiplexer layout — measured against a Selector-Bits-5
+    Demultiplexer in a real lab register file (write-enable fan-out):
+      n_outputs >= 4:
+        out_i at (40, i * 20)
+        in    at (0, n_outputs * 10)     (left edge, middle)
+        sel   at (20, n_outputs * 20)    (bottom, same rule as Mux)
+      n_outputs == 2 (sel_bits=1): spacing 40, like the 2-input Mux:
+        out0 (40, 0), out1 (40, 40), in (0, 20), sel (20, 40)
+    'flipSelPos' moves sel to the top edge at (20, -20).
+    """
+    sel_bits = int(comp.attributes.get("Selector Bits", 1))
+    n_outputs = 2 ** sel_bits
+    if n_outputs == 2:
+        spacing, in_y, sel_y = 40, 20, 40
+    else:
+        spacing, in_y, sel_y = 20, n_outputs * 10, n_outputs * 20
+    if comp.attributes.get("flipSelPos"):
+        sel_y = -20
+    pins: list[PinSpec] = [
+        PinSpec("in", offset_x=0, offset_y=in_y, direction="in"),
+        PinSpec("sel", offset_x=20, offset_y=sel_y, direction="in"),
+    ]
+    for i in range(n_outputs):
+        pins.append(PinSpec(f"out_{i}", offset_x=40, offset_y=i * spacing,
+                            direction="out"))
     return pins
 
 
@@ -310,7 +353,8 @@ DYNAMIC_PIN_TABLE: dict[str, callable] = {
     "NAnd": _nary_gate_pins,
     "NOr":  _nary_gate_pins,
     "XNOr": _nary_gate_pins,
-    "Multiplexer": _multiplexer_pins,
+    "Multiplexer":   _multiplexer_pins,
+    "Demultiplexer": _demultiplexer_pins,
     "Splitter":    _splitter_pins,
     "Register":    _register_pins,
     "Comparator":  _comparator_pins,
