@@ -256,7 +256,7 @@ def test_empty_testcase_debug_runs_on_injected_temp(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# r38: rom-injected runs — the model note, the student hint, the rerun
+# rom-injected runs — the model note, the student hint, the rerun
 # ---------------------------------------------------------------------------
 
 def test_rom_hint_rides_verified_cards_on_rom_injected_runs():

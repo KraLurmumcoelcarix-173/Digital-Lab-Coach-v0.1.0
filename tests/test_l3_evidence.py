@@ -481,7 +481,7 @@ def test_dead_trunk_full_output_surface_is_analyzable():
 
 
 def test_suspect_attrs_show_student_words_hide_injected_ones():
-    # r38: a student's own small stored table rides the payload so a
+    # a student's own small stored table rides the payload so a
     # partially-wrong word can be convicted; grader-injected words never
     # do (a reply echoing them would leak the course program).
     from types import SimpleNamespace

@@ -692,7 +692,7 @@ def test_all_rows_error_with_unbound_columns_gets_rename_guidance(
 
 
 def test_control_unit_files_skip_the_lazy_gate(tmp_path):
-    # r37.1 instructor ruling (marked temporary): control-unit files
+    # instructor ruling (marked temporary): control-unit files
     # always analyze — the decode-table lab must reach Mode A no matter
     # how gross the failure shape looks. Same content under any other
     # name keeps every ratified lazy bar.
@@ -731,7 +731,7 @@ def test_control_unit_files_skip_the_lazy_gate(tmp_path):
 
 
 def test_rom_injected_note_rides_every_cluster_prompt():
-    # r38: when the analyzed copy runs with grader-injected rom content,
+    # when the analyzed copy runs with grader-injected rom content,
     # every cluster prompt carries the [ROM NOTE] so the model never
     # proposes Data changes against official words. Plain runs don't.
     # the template MENTIONS "[ROM NOTE]" in its reading guide, so the
