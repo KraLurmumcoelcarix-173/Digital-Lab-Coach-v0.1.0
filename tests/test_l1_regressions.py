@@ -264,3 +264,83 @@ def test_no_width_child_defaults_to_digital_3_grid(tmp_path):
     assert not issues.errors(), [
         (i.kind, i.title) for i in issues.errors()
     ]
+
+
+# ---- Digital's built-in RegisterFile-------------
+
+def test_register_file_pins_and_widths():
+    from dlc.facts.width import pin_width
+    rf = _c("RegisterFile", **{"AddrBits": 5, "Bits": 32})
+    specs = get_pin_specs(rf)
+    got = {p.name: (p.offset_x, p.offset_y, p.direction) for p in specs}
+    assert got == {
+        "Din": (0, 0, "in"), "we": (0, 20, "in"), "Rw": (0, 40, "in"),
+        "C": (0, 60, "in"), "Ra": (0, 80, "in"), "Rb": (0, 100, "in"),
+        "Da": (80, 0, "out"), "Db": (80, 20, "out"),
+    }
+    assert pin_width(rf, "Din") == 32 and pin_width(rf, "Da") == 32
+    assert pin_width(rf, "Ra") == 5 and pin_width(rf, "Rw") == 5
+    assert pin_width(rf, "we") == 1 and pin_width(rf, "C") == 1
+
+
+def test_register_file_write_then_read(tmp_path):
+    # jar-validated trace: write 7@1, then 9@2, then 5@0; reads follow
+    # post-edge state; unwritten words read 0.
+    elements = (
+        _ve("In", 100, 0, _entry("Label", "Din") + _entry("Bits", 8, "int"))
+        + _ve("Const", 160, 20, _entry("Value", 1, "long") + _entry("Bits", 1, "int"))
+        + _ve("In", 100, 40, _entry("Label", "Rw") + _entry("Bits", 2, "int"))
+        + _ve("Clock", 100, 60, _entry("Label", "C"))
+        + _ve("In", 100, 80, _entry("Label", "Ra") + _entry("Bits", 2, "int"))
+        + _ve("In", 100, 100, _entry("Label", "Rb") + _entry("Bits", 2, "int"))
+        + _ve("RegisterFile", 200, 0,
+              _entry("Bits", 8, "int") + _entry("AddrBits", 2, "int"))
+        + _ve("Out", 340, 0, _entry("Label", "Da") + _entry("Bits", 8, "int"))
+        + _ve("Out", 340, 20, _entry("Label", "Db") + _entry("Bits", 8, "int"))
+        + (
+            "    <visualElement><elementName>Testcase</elementName>"
+            "<elementAttributes><entry><string>Testdata</string>"
+            "<testData><dataString>C Din Rw Ra Rb Da Db\n"
+            "0 0 0 0 0 0 0\n"
+            "C 7 1 1 3 7 0\n"
+            "C 9 2 2 1 9 7\n"
+            "C 5 0 2 0 9 5\n"
+            "</dataString></testData></entry></elementAttributes>"
+            "<pos x=\"100\" y=\"200\"/></visualElement>\n"
+        )
+    )
+    wires = (
+        _w(100, 0, 200, 0) + _w(160, 20, 200, 20) + _w(100, 40, 200, 40)
+        + _w(100, 60, 200, 60) + _w(100, 80, 200, 80)
+        + _w(100, 100, 200, 100)
+        + _w(280, 0, 340, 0) + _w(280, 20, 340, 20)
+    )
+    p = tmp_path / "regfile.dig"
+    p.write_text(_xml_circuit(elements, wires), encoding="utf-8")
+    c = parse_dig_file(str(p))
+    assert not check_all_l1(c).issues
+
+    from dlc.testing.spec import extract_test_specs
+    from dlc.sim.simulator import simulate_sequential
+    nl = build_netlist(c)
+    g = build_signal_graph(c, nl)
+    spec = extract_test_specs(c)[0]
+    out_idx = {comp.label: i for i, comp in enumerate(c.components)
+               if comp.element_name == "Out"}
+    expected = [(0, 0), (7, 0), (9, 7), (9, 5)]
+    for k, row in enumerate([r for r in spec.rows if not r.is_malformed]):
+        res = simulate_sequential(c, nl, g, spec, row.line_index)
+        got = {}
+        for lbl, idx in out_idx.items():
+            comp = c.components[idx]
+            net = nl.net_at(comp.position.x, comp.position.y)
+            got[lbl] = res.net_values.get(net.net_id) if net else None
+        assert (got["Da"], got["Db"]) == expected[k], f"row {k}: {got}"
+
+
+def test_rom_run_length_data_expands():
+    # Digital's "N*value" Data syntax stores value at N consecutive
+    # addresses; mis-reading it as one token shifts every later word.
+    from dlc.sim.simulator import _rom_words
+    rom = _c("ROM", **{"AddrBits": 4, "Bits": 8, "Data": "3*1f,2a"})
+    assert _rom_words(rom) == [0x1F, 0x1F, 0x1F, 0x2A]

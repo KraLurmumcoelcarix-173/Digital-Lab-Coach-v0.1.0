@@ -1197,9 +1197,20 @@ function renderTestsForFile(file) {
     runTestsBtn.disabled = false;
     runTestsBtn.classList.remove("running");
     runTestsBtn.textContent = "Run tests";
-    testsStatusEl.textContent = hasTests
-      ? `Ready: ${file.summary.testcase_count} testcase${file.summary.testcase_count === 1 ? "" : "s"} found. Click "Run tests" to execute.`
-      : `Ready: this file has no testcase, but an official test set exists for "${file.filename}" — running injects it (Gradescope-style).`;
+    const officialStatus = file.summary && file.summary.official_test_status;
+    if (officialStatus === "missing") {
+      testsStatusEl.textContent =
+        `Ready: this file has no test rows, but an official test set exists for "${file.filename}" — runs use the official tests (Gradescope-style).`;
+    } else if (officialStatus === "modified") {
+      testsStatusEl.textContent =
+        `Ready: this file's testcase differs from the official set for "${file.filename}" — runs use the official tests (Gradescope-style).`;
+    } else if (hasTests) {
+      testsStatusEl.textContent =
+        `Ready: ${file.summary.testcase_count} testcase${file.summary.testcase_count === 1 ? "" : "s"} found. Click "Run tests" to execute.`;
+    } else {
+      testsStatusEl.textContent =
+        `Ready: an official test set exists for "${file.filename}" — runs use the official tests (Gradescope-style).`;
+    }
     testsStatusEl.className = "tests-status muted";
     hideProgress();
     return;
@@ -1235,7 +1246,7 @@ function renderTestsForFile(file) {
   if (!payload) return;
 
   const injectedNote = (payload.injected || []).length
-    ? " Official content was injected for this run (empty testcase/ROM — Gradescope does the same)."
+    ? " This run used the official test set (yours was missing or modified — Gradescope grades the same way)."
     : "";
   if (payload.warning) {
     testsStatusEl.textContent = `Warning: ${payload.warning}`;

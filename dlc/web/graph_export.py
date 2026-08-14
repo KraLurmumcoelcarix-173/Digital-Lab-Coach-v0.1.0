@@ -299,16 +299,16 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
     )
 
     # Gradescope-style: an official test set registered for this FILENAME
-    # means the file is runnable even when its own testcase is missing or
-    # header-only — the run injects the official rows (dlc/testing/inject).
-    official_available = False
+    # means test runs use the official rows whenever the file's own
+    # testcase is missing or does not match them (dlc/testing/inject) —
+    # so the panel can say so from the second the file is uploaded.
+    official_status = None
     try:
         import os as _os
-        from dlc.l3 import official_store
+        from dlc.testing.inject import file_test_status
         name = _os.path.basename(circuit.source_path or "")
-        official_available = bool(name) and (
-            official_store.get_content(name) is not None
-        )
+        if name:
+            official_status = file_test_status(circuit, name)
     except Exception:
         pass
 
@@ -321,7 +321,11 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         "subcircuits": subcircuits,
         "has_testcases": n_testcases > 0,
         "testcase_count": n_testcases,
-        "official_test_available": official_available,
+        "official_test_available": official_status is not None,
+        # None = no official set registered for this filename;
+        # 'official' = file's testcase matches it (runs untouched);
+        # 'modified' / 'missing' = runs will inject the official rows.
+        "official_test_status": official_status,
         "net_stats": {
             "total": len(netlist.nets),
             "driven": n_driven,

@@ -1,19 +1,19 @@
-"""Gradescope-style official-content injection for test runs.
+"""Gradescope-style official-testcase injection for test runs.
 
-The autograder always runs a submission against the OFFICIAL test vectors
-and the OFFICIAL instruction program — a student who uploads a cpu with a
-header-only testcase or an unprogrammed Instruction Memory still gets a
-real grade. The coach mirrors that at test time:
+The autograder always runs a submission against the OFFICIAL test vectors:
+whatever a student's own Testcase element holds — missing, header-only, or
+edited — the grade comes from the instructor's rows. The coach mirrors
+that: when a filename has an official test set registered
+(data/official_tests_defaults.json, or a Settings entry) and the file's
+own testcase does not MATCH it (normalized-content hash), test runs use
+the official rows instead. A file whose testcase already matches runs
+untouched.
 
-  * testcase: when a file's own tests have no data rows (missing Testcase
-    element, or header-only), and the official store has a testcase for
-    that FILENAME, the run uses the official rows.
-  * ROM program: when a ROM in the file has an empty Data attribute and
-    the official store registers a rom_program for that FILENAME, the run
-    fills that Data in. (Programs are registered only for files whose ROM
-    content is instructor-GIVEN — e.g. cpu.dig's Instruction Memory.
-    A child circuit's ROM that IS the student's work, like the
-    control-unit decode table, is never injected.)
+ROM contents are deliberately NOT injected. A wrong or empty ROM is the
+student's own work (e.g. the control-unit decode table, the cpu's
+instruction memory) — Layer 3 exists to teach them what's wrong with it,
+and official ROM data must never appear in the tool. An empty ROM is a
+Layer-1 WARNING that blocks nothing.
 
 The student's file on disk is never modified: injection writes a sibling
 temp copy (same directory, so child .dig references still resolve), the
@@ -31,129 +31,91 @@ def _official_testcase(filename: str) -> str | None:
     return official_store.get_content(filename)
 
 
-def _official_rom_program(filename: str) -> dict | None:
+def file_test_status(circuit, filename: str) -> str | None:
+    """How this file's own tests relate to the official set for `filename`.
+
+    Returns None when no official test set is registered for the filename;
+    otherwise 'official' (some testcase hash-matches the official rows),
+    'modified' (it has test rows, but none match), or 'missing' (no
+    testcase with data rows at all).
+    """
     from dlc.l3 import official_store
-    return official_store.get_rom_program(filename)
-
-
-def _entry_map(element: ET.Element) -> dict[str, ET.Element]:
-    """{key: value-element} for a Digital elementAttributes block."""
-    out: dict[str, ET.Element] = {}
-    for entry in element.findall("./elementAttributes/entry"):
-        kids = list(entry)
-        if len(kids) == 2 and kids[0].tag == "string" and kids[0].text:
-            out[kids[0].text] = kids[1]
-    return out
-
-
-def _file_has_data_rows(circuit) -> bool:
     from dlc.testing.spec import extract_test_specs
-    return any(s.rows for s in extract_test_specs(circuit))
+
+    if official_store.get_content(filename) is None:
+        return None
+    for comp in circuit.components:
+        if comp.element_name != "Testcase":
+            continue
+        raw = comp.attributes.get("Testdata", "")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        if official_store.status_for(filename, raw) == "official":
+            return "official"
+    specs = [s for s in extract_test_specs(circuit) if s.rows]
+    return "modified" if specs else "missing"
 
 
-def _set_testcase(root: ET.Element, content: str) -> bool:
-    """Point the file's (first) Testcase at `content`; create the element
-    if the file has none. Returns True when the XML changed."""
+def _replace_testcases(root: ET.Element, content: str) -> bool:
+    """Drop every Testcase element and add ONE holding `content` — the
+    run should exercise exactly the official rows, like the grader does.
+    Returns True when the XML changed."""
     ves = root.find("visualElements")
     if ves is None:
         return False
-    target = None
-    for ve in ves.findall("visualElement"):
+    pos_x, pos_y = 0, 0
+    for ve in list(ves.findall("visualElement")):
         if ve.findtext("elementName") == "Testcase":
-            target = ve
-            break
-    if target is None:
-        target = ET.SubElement(ves, "visualElement")
-        ET.SubElement(target, "elementName").text = "Testcase"
-        ET.SubElement(target, "elementAttributes")
-        pos = ET.SubElement(target, "pos")
-        pos.set("x", "0")
-        pos.set("y", "0")
-    attrs = target.find("elementAttributes")
-    if attrs is None:
-        attrs = ET.SubElement(target, "elementAttributes")
-    # drop any existing Testdata entry, then write ours
-    for entry in list(attrs):
-        kids = list(entry)
-        if len(kids) == 2 and kids[0].text == "Testdata":
-            attrs.remove(entry)
+            pos = ve.find("pos")
+            if pos is not None:
+                pos_x = pos.get("x", "0")
+                pos_y = pos.get("y", "0")
+            ves.remove(ve)
+    target = ET.SubElement(ves, "visualElement")
+    ET.SubElement(target, "elementName").text = "Testcase"
+    attrs = ET.SubElement(target, "elementAttributes")
     entry = ET.SubElement(attrs, "entry")
     ET.SubElement(entry, "string").text = "Testdata"
     td = ET.SubElement(entry, "testData")
     ET.SubElement(td, "dataString").text = content
+    pos = ET.SubElement(target, "pos")
+    pos.set("x", str(pos_x))
+    pos.set("y", str(pos_y))
     return True
-
-
-def _fill_empty_roms(root: ET.Element, program: dict) -> int:
-    """Write program['data'] into every ROM whose Data is empty/missing.
-    Returns how many ROMs were filled."""
-    data = (program or {}).get("data") or ""
-    if not data.strip():
-        return 0
-    filled = 0
-    for ve in root.iter("visualElement"):
-        if ve.findtext("elementName") != "ROM":
-            continue
-        entries = _entry_map(ve)
-        cur = entries.get("Data")
-        if cur is not None and (cur.text or "").strip():
-            continue  # student programmed it — leave it alone
-        attrs = ve.find("elementAttributes")
-        if attrs is None:
-            attrs = ET.SubElement(ve, "elementAttributes")
-        if cur is None:
-            entry = ET.SubElement(attrs, "entry")
-            ET.SubElement(entry, "string").text = "Data"
-            ET.SubElement(entry, "data").text = data
-        else:
-            cur.text = data
-        filled += 1
-    return filled
 
 
 def prepare_injected_run(path: str, filename: str) -> tuple[str | None, list[str]]:
     """Return (temp_path, notes) when injection applies to this file, or
     (None, []) when the file runs as-is.
 
-    temp_path is a sibling copy with the official testcase and/or ROM
-    program filled in; the caller runs the jar on it and unlinks it in a
-    finally block. Any parse hiccup returns (None, []) — injection must
-    never break a run that would have worked without it.
+    temp_path is a sibling copy whose testcases are replaced by the
+    official set; the caller runs the jar on it and unlinks it in a
+    finally block. Any hiccup returns (None, []) — injection must never
+    break a run that would have worked without it.
     """
-    notes: list[str] = []
     try:
         from dlc.parser.dig_parser import parse_dig_file
         circuit = parse_dig_file(path)
-        tree = ET.parse(path)
-        root = tree.getroot()
-        changed = False
-
-        official = _official_testcase(filename)
-        if official and not _file_has_data_rows(circuit):
-            if _set_testcase(root, official):
-                changed = True
-                notes.append(
-                    "official testcase injected (this file's own testcase "
-                    "has no data rows — Gradescope does the same)"
-                )
-
-        program = _official_rom_program(filename)
-        if program:
-            n = _fill_empty_roms(root, program)
-            if n:
-                changed = True
-                plural = "s" if n != 1 else ""
-                notes.append(
-                    f"official instruction program injected into {n} "
-                    f"empty ROM{plural} (Gradescope does the same)"
-                )
-
-        if not changed:
+        status = file_test_status(circuit, filename)
+        if status in (None, "official"):
             return None, []
+        official = _official_testcase(filename)
+        if not official:
+            return None, []
+        tree = ET.parse(path)
+        if not _replace_testcases(tree.getroot(), official):
+            return None, []
+        if status == "missing":
+            note = ("official testcase injected (this file has no test "
+                    "rows — Gradescope grades with the official tests)")
+        else:
+            note = ("official testcase injected in place of this file's "
+                    "modified testcase (Gradescope grades with the "
+                    "official tests)")
         d, base = os.path.split(path)
         temp_path = os.path.join(d, f".dlc_injected__{base}")
         tree.write(temp_path, encoding="utf-8", xml_declaration=True)
-        return temp_path, notes
+        return temp_path, [note]
     except Exception:
         return None, []
 

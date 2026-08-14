@@ -33,6 +33,7 @@ Last updated: 2026/7/03
 | `Tunnel` | Named net | `NetName`. Tunnels sharing a NetName are electrically connected. Can have `rotation` |
 | `ROM` | Read-only memory | `Bits` (data width), `AddrBits`, `Data` (hex bytes), `isProgramMemory`, `bigEndian`. DLC flags an empty `Data` field as `empty_rom` (warning) |
 | `Register` | Sequential register | `Bits`, optional `isProgramCounter` |
+| `RegisterFile` | Built-in register bank (Memory category): 2 async read ports + 1 clocked write port | `Bits`, `AddrBits`; seen in real student CPUs (2 of 6 in the r28 batch) |
 | `Const` | Constant value | `Value` (int), `Bits` |
 | `Ground`, `VDD` | Power rails | Single output pin. Can have `rotation`, `Bits` |
 | `Comparator` | A vs B (greater/equal/less) | `Bits`, `Signed` |
@@ -71,11 +72,12 @@ Digital's coordinate system: x increases rightward, y increases downward. Anchor
 | `BitExtender` | `in` (0, 0) | `out` (80, 0) | Width varies with outputBits; snap tolerance absorbs ±20 |
 | `BarrelShifter` | `in` (0, 0), `sh` (0, 40) | `out` (60, 20) | |
 | `Seven-Seg` | `a/b/c/d` at `(0,-40)/(20,-40)/(40,-40)/(60,-40)`; `e/f/g` at `(0,180)/(20,180)/(40,180)`; `dp` at `(60, 240)` | (no outputs — display sink only) | Verified against Lab 2 (rotation=0) and tier3_latched_display (rotation=3). The `dp` pin sits one row below `e/f/g`, aligned x-wise with `d`. |
-| `ROM` | `A` (0, 0), `sel` (0, 40) | `D` (80, 20) | Width varies with data width |
+| `ROM` | `A` (0, 0), `sel` (0, 40) | `D` (60, 20) | Box is 60 wide (SVG-verified, r30) — the old (80, 20) survived only via loose endpoint snapping |
+| `RegisterFile` | `Din` (0,0), `we` (0,20), `Rw` (0,40), `C` (0,60), `Ra` (0,80), `Rb` (0,100) | `Da` (80,0), `Db` (80,20) | Built-in register bank (Memory category); width **80**; reads combinational, write clocked; measured on a real student CPU (r28, re-landed r31) |
 | `Decoder` | `sel` (20, (n_outputs − 1) * 20) | `out_i` at (60, i*20) | **sel sits at the LAST output's height, NOT one row below like the Mux** — measured on a rotation-2 sel_bits=5 Decoder whose sel feed lands exactly at (20, 620); the old n*20 table falsely flagged its sel undriven |
 | `Demultiplexer` (sel_bits=1, n=2) | `in` (0, 20), `sel` (20, 40) | `out0` (40, 0), `out1` (40, 40) | mirror of the 2-input Mux |
 | `Demultiplexer` (sel_bits≥2, n≥4) | `in` (0, n*10), `sel` (20, n*20) | `out_i` at (40, i*20) | measured on a sel_bits=5 register-file write-enable fan-out; non-selected outputs drive 0 |
-| `PriorityEncoder` | `in_i` at (0, i*20) | `num` (80, 0) | |
+| `PriorityEncoder` | `in_i` at (0, i*20) | `num` (80, 0), `f` (80, 20) | `f` = 1-bit "any input set" flag; students wire it as ROM chip select (r30) |
 
 `flipSelPos` (Multiplexer / Demultiplexer / Decoder): Digital's "flip selector position"
 attribute moves the `sel` pin to the TOP edge at (20, −20); everything else is unchanged.
@@ -262,13 +264,18 @@ verified empirically:
   order** (re-confirmed: the answer alu declares FlagZ before Result in
   the file but places Result above FlagZ on canvas; Digital renders
   FlagZ on the top row).
-- **Gradescope-style injection**: when a file's own testcase has no data
-  rows, or its ROM Data is empty, the official testcase / the official
-  instruction program (data/official_tests_defaults.json, per filename)
-  is injected into a sibling temp copy at test time (dlc/testing/inject).
-  Programs are registered ONLY for instructor-given ROM content (cpu.dig
-  Instruction Memory) — never for ROMs that are the student's own work
-  (control-unit decode table).
+- **Gradescope-style injection (r31 policy)**: when a filename has an
+  official test set registered (data/official_tests_defaults.json or a
+  Settings entry) and the file's own testcase does not MATCH it
+  (missing, header-only, or modified — normalized-content hash), test
+  runs replace the file's testcases with the official rows in a sibling
+  temp copy (dlc/testing/inject); the panel says so from upload
+  (`official_test_status` in the file summary). ROM contents are NEVER
+  injected — a wrong/empty ROM is the student's own work and Layer 3's
+  teaching material, and official ROM/program data must never ship in
+  the tool. An empty ROM stays a Layer-1 WARNING that blocks nothing;
+  Mode B remains the test-expansion teacher on top of always-official
+  test runs.
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 
