@@ -1167,7 +1167,8 @@ function renderTestsForFile(file) {
   testsResultsEl.classList.add("empty");
 
   const hasTests = !!(file.summary && file.summary.has_testcases);
-  if (!hasTests) {
+  const officialAvailable = !!(file.summary && file.summary.official_test_available);
+  if (!hasTests && !officialAvailable) {
     runTestsBtn.disabled = true;
     runTestsBtn.classList.remove("running");
     runTestsBtn.textContent = "Run tests";
@@ -1196,8 +1197,9 @@ function renderTestsForFile(file) {
     runTestsBtn.disabled = false;
     runTestsBtn.classList.remove("running");
     runTestsBtn.textContent = "Run tests";
-    testsStatusEl.textContent =
-      `Ready: ${file.summary.testcase_count} testcase${file.summary.testcase_count === 1 ? "" : "s"} found. Click "Run tests" to execute.`;
+    testsStatusEl.textContent = hasTests
+      ? `Ready: ${file.summary.testcase_count} testcase${file.summary.testcase_count === 1 ? "" : "s"} found. Click "Run tests" to execute.`
+      : `Ready: this file has no testcase, but an official test set exists for "${file.filename}" — running injects it (Gradescope-style).`;
     testsStatusEl.className = "tests-status muted";
     hideProgress();
     return;
@@ -1232,6 +1234,9 @@ function renderTestsForFile(file) {
   const payload = slot.payload;
   if (!payload) return;
 
+  const injectedNote = (payload.injected || []).length
+    ? " Official content was injected for this run (empty testcase/ROM — Gradescope does the same)."
+    : "";
   if (payload.warning) {
     testsStatusEl.textContent = `Warning: ${payload.warning}`;
     testsStatusEl.className = "tests-status warning";
@@ -1241,7 +1246,7 @@ function renderTestsForFile(file) {
   } else {
     const allPassed = payload.all_passed === true;
     testsStatusEl.textContent =
-      allPassed ? "All rows passed." : "Some rows did not pass.";
+      (allPassed ? "All rows passed." : "Some rows did not pass.") + injectedNote;
     testsStatusEl.className =
       allPassed ? "tests-status passed" : "tests-status failed";
   }

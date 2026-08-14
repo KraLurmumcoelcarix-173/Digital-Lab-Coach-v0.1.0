@@ -184,6 +184,30 @@ def delete_test(filename: str) -> bool:
     return True
 
 
+def get_content(filename: str) -> str | None:
+    """The official testcase text for `filename` (user entry first, then
+    the shipped default), or None when neither layer has one."""
+    entry = _load().get(filename) or _defaults().get(filename)
+    content = (entry or {}).get("content")
+    return content if (content or "").strip() else None
+
+
+def get_rom_program(filename: str) -> dict | None:
+    """The official ROM program registered for `filename`, or None.
+
+    Shape: {"data": "<Digital ROM Data string>", ...optional metadata}.
+    Programs are registered only for files whose ROM content is
+    instructor-GIVEN (e.g. cpu.dig's Instruction Memory holds the
+    handout's assembled program). A ROM that is itself the student's
+    deliverable — like the control-unit decode table — must never get a
+    program entry: injecting it would hand out the answer."""
+    entry = _load().get(filename) or _defaults().get(filename)
+    prog = (entry or {}).get("rom_program")
+    if isinstance(prog, dict) and (prog.get("data") or "").strip():
+        return prog
+    return None
+
+
 def status_for(filename: str, raw_data_string: str) -> str | None:
     """'official' | 'modified' when the store (user entry first, then the
     shipped defaults) has this filename, else None (store silent => the

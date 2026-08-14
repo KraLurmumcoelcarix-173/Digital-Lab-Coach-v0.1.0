@@ -143,6 +143,9 @@ def _check_dangling_inputs(
     return out
 
 
+_CONSTANT_DRIVER_ELEMENTS = {"Ground", "VDD", "Const"}
+
+
 def _check_multi_drivers(circuit: Circuit, facts: CircuitFacts) -> list[Issue]:
     out: list[Issue] = []
     for bug in facts.bugs:
@@ -153,6 +156,40 @@ def _check_multi_drivers(circuit: Circuit, facts: CircuitFacts) -> list[Issue]:
             continue
         descs = [_pin_descr(circuit, d) for d in drivers]
         loc = (drivers[0]["x"], drivers[0]["y"])
+        # Digital raises the short-circuit error at RUN time, and only
+        # when the tied outputs actually disagree. A signal tied to one
+        # constant (e.g. a register's Q shorted to Ground as an "x0 is
+        # always 0" hack) runs cleanly as long as the values agree, so
+        # it is a warning, not an error. Two real outputs tied together
+        # stay an error: they will conflict as soon as they differ.
+        n_const = sum(
+            1 for d in drivers
+            if d.get("element_name") in _CONSTANT_DRIVER_ELEMENTS
+        )
+        is_const_tie = len(drivers) == 2 and n_const == 1
+        if is_const_tie:
+            out.append(Issue(
+                kind="multi_driver",
+                severity=IssueSeverity.WARNING,
+                title=f"Output tied to a constant: {', '.join(descs)}",
+                message=(
+                    f"{descs[0]} and {descs[1]} drive the same wire. "
+                    f"Digital only raises a short-circuit error at run "
+                    f"time if the two values ever disagree, so this runs "
+                    f"as long as the output always equals the constant — "
+                    f"but any write that changes the output will crash "
+                    f"the simulation."
+                ),
+                component_indices=bug.component_indices,
+                location=loc,
+                net_id=bug.net_id,
+                suggested_fix=(
+                    "If you only need a constant here, disconnect the "
+                    "other output; if you need the output, remove the "
+                    "constant."
+                ),
+            ))
+            continue
         out.append(Issue(
             kind="multi_driver",
             severity=IssueSeverity.ERROR,

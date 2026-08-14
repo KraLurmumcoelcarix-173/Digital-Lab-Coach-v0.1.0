@@ -298,6 +298,20 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         1 for c in circuit.components if c.element_name == "Testcase"
     )
 
+    # Gradescope-style: an official test set registered for this FILENAME
+    # means the file is runnable even when its own testcase is missing or
+    # header-only — the run injects the official rows (dlc/testing/inject).
+    official_available = False
+    try:
+        import os as _os
+        from dlc.l3 import official_store
+        name = _os.path.basename(circuit.source_path or "")
+        official_available = bool(name) and (
+            official_store.get_content(name) is not None
+        )
+    except Exception:
+        pass
+
     return {
         "source_path": circuit.source_path,
         "format_version": circuit.format_version,
@@ -307,6 +321,7 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         "subcircuits": subcircuits,
         "has_testcases": n_testcases > 0,
         "testcase_count": n_testcases,
+        "official_test_available": official_available,
         "net_stats": {
             "total": len(netlist.nets),
             "driven": n_driven,

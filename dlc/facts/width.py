@@ -95,6 +95,8 @@ def pin_width(component: Component, pin_name: str) -> int | None:
     if e == "PriorityEncoder":
         if pin_name == "num":
             return _selector_bits(component)
+        if pin_name == "f":
+            return 1
         if pin_name.startswith("in"):
             return 1
         return None

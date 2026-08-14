@@ -228,7 +228,47 @@ verified empirically:
 - For our parser: recursively load referenced subcircuits to fully analyze a top-level circuit.
 - Subcircuit cache is per-parse-session — same `.dig` referenced N times is loaded once. Circular references raise.
 - A referenced file with a bare name may live in any subfolder; we search recursively and pick the shallowest match (ambiguity is flagged but doesn't fail the parse).
-- **Subcircuit instance pin direction resolution**: the instance has no native geometry, so direction is inferred by splitting the instance's implicit pins at the x-midpoint (left = inputs, right = outputs), sorting each side by y, and zipping against the child circuit's `In`/`Out` elements sorted by y. Implicit-pin count is capped to the child's port count to prevent over-claim from neighboring routing.
+- **Subcircuit instance pin prediction**: every RESOLVED child gets
+  declared-pin geometry — inputs (In/Clock elements, child FILE order) at
+  `(0, i*20)` from the instance pos, outputs (file order) at
+  `(Width*20, i*20)`. A child with no `Width` attribute renders **3 grid
+  units (60 px) wide — Digital's real default** (SVG-verified on real
+  student trees; our old guess of 10 pushed outputs 140 px right and fed
+  the implicit-pin fallback, which then mislabeled pins). The implicit-pin
+  x-midpoint heuristic below now applies only to UNRESOLVED children
+  (missing files).
+- **Subcircuit instance pin direction resolution** (unresolved children only): the instance has no native geometry, so direction is inferred by splitting the instance's implicit pins at the x-midpoint (left = inputs, right = outputs), sorting each side by y, and zipping against the child circuit's `In`/`Out` elements sorted by y. Implicit-pin count is capped to the child's port count to prevent over-claim from neighboring routing.
+
+## L1 regression ground truths (SVG-probed on real lab-5 trees, jar-verified)
+
+- **PriorityEncoder has TWO outputs**: `num` at (80, 0) and `f` — the
+  1-bit "any input set" flag — at (80, 20). Students wire `f` as the
+  ROM's chip select (`PriorityEncoder.f -> ROM.sel`).
+- **ROM box is 60 wide**: A (0,0), sel (0,40), D (60,20). D at (80,20)
+  was wrong and survived only via loose endpoint snapping — and would
+  have blessed a wire Digital refuses ("No output connected to a wire").
+- **Endpoint snapping**: an OUTPUT pin may claim a nonzero-distance
+  endpoint only if that endpoint has wire-degree 1 (a terminating end).
+  Degree-2+ coords are routing (L-bends/junctions of other nets); letting
+  an unwired `gr`/`le` grab a corner 20 px away fabricated multi-driver
+  errors across whole comparator ladders.
+- **Multi-driver is a RUNTIME error in Digital**, raised only when tied
+  outputs actually disagree ("More than one output is active on a wire").
+  A register Q shorted to Ground as an "x0 is always 0" hack passes the
+  official register-file test (jar-verified, both v0.30 and v0.31). One
+  constant (Ground/VDD/Const) + one real output => WARNING; two real
+  outputs => still ERROR.
+- **Custom-component pins follow the child's FILE order, not canvas
+  order** (re-confirmed: the answer alu declares FlagZ before Result in
+  the file but places Result above FlagZ on canvas; Digital renders
+  FlagZ on the top row).
+- **Gradescope-style injection**: when a file's own testcase has no data
+  rows, or its ROM Data is empty, the official testcase / the official
+  instruction program (data/official_tests_defaults.json, per filename)
+  is injected into a sibling temp copy at test time (dlc/testing/inject).
+  Programs are registered ONLY for instructor-given ROM content (cpu.dig
+  Instruction Memory) — never for ROMs that are the student's own work
+  (control-unit decode table).
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 

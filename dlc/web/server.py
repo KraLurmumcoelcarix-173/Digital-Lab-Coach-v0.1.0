@@ -309,7 +309,26 @@ def _l1_error_block(circuit) -> str | None:
     )
 
 
+def _prepare_injection(target: dict):
+    """Gradescope-style injection for one run (see dlc/testing/inject.py):
+    returns (run_path, run_circuit_or_None, notes, temp_path). The caller
+    runs the jar on run_path and MUST call cleanup_injected(temp_path)
+    when done. run_circuit is the reparsed injected circuit (None when
+    nothing was injected — keep using the original)."""
+    from dlc.testing.inject import prepare_injected_run, cleanup_injected
+    name = target.get("name") or os.path.basename(target["path"])
+    temp_path, notes = prepare_injected_run(target["path"], name)
+    if not temp_path:
+        return target["path"], None, [], None
+    try:
+        return temp_path, parse_dig_file(temp_path), notes, temp_path
+    except Exception:
+        cleanup_injected(temp_path)
+        return target["path"], None, [], None
+
+
 def _run_general(target: dict, timeout: float) -> dict:
+    from dlc.testing.inject import cleanup_injected
     try:
         circuit = parse_dig_file(target["path"])
     except Exception as exc:
@@ -317,35 +336,43 @@ def _run_general(target: dict, timeout: float) -> dict:
             "ok": False, "warning": f"Parse failed: {exc}",
             "mode": "general", "specs": [], "all_passed": None,
         }
-    specs = extract_test_specs(circuit)
-    if not specs:
-        return {
-            "ok": True, "warning": None, "mode": "general",
-            "specs": [], "all_passed": None,
-        }
-    blocked = _l1_error_block(circuit)
-    if blocked:
-        return {
-            "ok": False, "warning": blocked,
-            "mode": "general", "specs": [], "all_passed": None,
-        }
-    jar_path = find_digital_jar()
-    if jar_path is None:
-        return {
-            "ok": False, "mode": "general",
-            "warning": "Digital.jar not configured. Open the jar picker.",
-            "specs": [], "all_passed": None,
-        }
-    code, output = run_digital_cli(target["path"], jar_path, timeout=timeout)
-    if code < 0:
-        msg = {
-            -1: "Digital CLI timed out",
-            -2: "java not on PATH",
-        }.get(code, f"Runner error: {output}")
-        return {
-            "ok": False, "warning": msg,
-            "mode": "general", "specs": [], "all_passed": None,
-        }
+    run_path, inj_circuit, inj_notes, inj_temp = _prepare_injection(target)
+    try:
+        specs = extract_test_specs(inj_circuit or circuit)
+        if not specs:
+            return {
+                "ok": True, "warning": None, "mode": "general",
+                "specs": [], "all_passed": None, "injected": inj_notes,
+            }
+        # Gate on the student's REAL file: the L1 board describes it, and
+        # injection never changes the structural story (data/tests only).
+        blocked = _l1_error_block(circuit)
+        if blocked:
+            return {
+                "ok": False, "warning": blocked,
+                "mode": "general", "specs": [], "all_passed": None,
+                "injected": inj_notes,
+            }
+        jar_path = find_digital_jar()
+        if jar_path is None:
+            return {
+                "ok": False, "mode": "general",
+                "warning": "Digital.jar not configured. Open the jar picker.",
+                "specs": [], "all_passed": None, "injected": inj_notes,
+            }
+        code, output = run_digital_cli(run_path, jar_path, timeout=timeout)
+        if code < 0:
+            msg = {
+                -1: "Digital CLI timed out",
+                -2: "java not on PATH",
+            }.get(code, f"Runner error: {output}")
+            return {
+                "ok": False, "warning": msg,
+                "mode": "general", "specs": [], "all_passed": None,
+                "injected": inj_notes,
+            }
+    finally:
+        cleanup_injected(inj_temp)
     run = parse_cli_output(output)
     by_name = run.by_name()
     spec_payloads = []
@@ -381,6 +408,7 @@ def _run_general(target: dict, timeout: float) -> dict:
     return {
         "ok": True, "warning": None, "mode": "general",
         "specs": spec_payloads, "all_passed": not any_failed,
+        "injected": inj_notes,
     }
 
 
@@ -389,6 +417,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
         with _JOBS_LOCK:
             _JOBS[job_id].update(updates)
 
+    from dlc.testing.inject import cleanup_injected
     try:
         circuit = parse_dig_file(target["path"])
     except Exception as exc:
@@ -398,8 +427,12 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
             "all_passed": None,
         })
         return
-    specs = extract_test_specs(circuit)
+    run_path, inj_circuit, inj_notes, inj_temp = _prepare_injection(target)
+    if inj_notes:
+        write({"injected": inj_notes})
+    specs = extract_test_specs(inj_circuit or circuit)
     if not specs:
+        cleanup_injected(inj_temp)
         write({
             "ok": True, "finished": True, "warning": None,
             "all_passed": None,
@@ -407,6 +440,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
         return
     blocked = _l1_error_block(circuit)
     if blocked:
+        cleanup_injected(inj_temp)
         write({
             "ok": False, "finished": True,
             "warning": blocked, "all_passed": None,
@@ -414,6 +448,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
         return
     jar_path = find_digital_jar()
     if jar_path is None:
+        cleanup_injected(inj_temp)
         write({
             "ok": False, "finished": True,
             "warning": (
@@ -453,10 +488,11 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
     # cumulative runner below.
     try:
         fast_results, fallback = per_file_run_fast(
-            specs, target["path"], jar_path=jar_path,
+            specs, run_path, jar_path=jar_path,
             timeout=max(timeout, 60.0),
         )
     except Exception as exc:
+        cleanup_injected(inj_temp)
         write({
             "ok": False, "finished": True,
             "warning": f"Test runner crashed: {type(exc).__name__}: {exc}",
@@ -484,7 +520,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
             continue
         try:
             for row_result in per_row_run_iter(
-                spec, target["path"], jar_path=jar_path, timeout=timeout,
+                spec, run_path, jar_path=jar_path, timeout=timeout,
             ):
                 payload = _row_payload(spec, row_result)
                 if row_result.status == "failed":
@@ -496,6 +532,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
                     _JOBS[job_id]["specs"][spec_idx]["rows"].append(payload)
                     _JOBS[job_id]["done_rows"] = done
         except Exception as exc:
+            cleanup_injected(inj_temp)
             write({
                 "ok": False, "finished": True,
                 "warning": f"Test runner crashed: {type(exc).__name__}: {exc}",
@@ -503,6 +540,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
             })
             return
 
+    cleanup_injected(inj_temp)
     write({
         "ok": True, "finished": True,
         "warning": (
@@ -537,28 +575,38 @@ def tests_all(req: TestsAllRequest) -> dict:
         files_payload.append(entry)
         try:
             circuit = parse_dig_file(f["path"])
-            specs = [s for s in extract_test_specs(circuit) if s.rows]
         except Exception as exc:
             entry.update(ok=False, status="parse_error",
                          warning=f"Parse failed: {exc}")
             n_error += 1
             continue
-        if not specs:
-            continue
-        n_with_tests += 1
-        blocked = _l1_error_block(circuit)
-        if blocked:
-            entry.update(ok=False, status="blocked", warning=blocked)
-            n_blocked += 1
-            continue
-        if jar_path is None:
-            entry.update(ok=False, status="error",
-                         warning="Digital.jar not configured. Open the jar picker.")
-            n_error += 1
-            continue
-        code, output = run_digital_cli(
-            f["path"], jar_path, timeout=req.timeout, verbose=True,
-        )
+        run_path, inj_circuit, inj_notes, inj_temp = _prepare_injection(f)
+        if inj_notes:
+            entry["injected"] = inj_notes
+        try:
+            specs = [
+                s for s in extract_test_specs(inj_circuit or circuit)
+                if s.rows
+            ]
+            if not specs:
+                continue
+            n_with_tests += 1
+            blocked = _l1_error_block(circuit)
+            if blocked:
+                entry.update(ok=False, status="blocked", warning=blocked)
+                n_blocked += 1
+                continue
+            if jar_path is None:
+                entry.update(ok=False, status="error",
+                             warning="Digital.jar not configured. Open the jar picker.")
+                n_error += 1
+                continue
+            code, output = run_digital_cli(
+                run_path, jar_path, timeout=req.timeout, verbose=True,
+            )
+        finally:
+            from dlc.testing.inject import cleanup_injected as _ci
+            _ci(inj_temp)
         if code < 0:
             msg = {-1: "Digital CLI timed out", -2: "java not on PATH"}.get(
                 code, f"Runner error: {output}")
@@ -678,6 +726,7 @@ def run_tests(req: TestsRequest) -> dict:
             status_code=404, detail=f"File {req.filename!r} not in session"
         )
 
+    from dlc.testing.inject import cleanup_injected
     try:
         circuit = parse_dig_file(target["path"])
     except Exception as exc:
@@ -688,26 +737,33 @@ def run_tests(req: TestsRequest) -> dict:
             "specs": [],
         }
 
-    specs = extract_test_specs(circuit)
+    run_path, inj_circuit, inj_notes, inj_temp = _prepare_injection(target)
+
+    specs = extract_test_specs(inj_circuit or circuit)
     if not specs:
+        cleanup_injected(inj_temp)
         return {
             "ok": True,
             "warning": None,
             "all_passed": None,
             "specs": [],
+            "injected": inj_notes,
         }
 
     blocked = _l1_error_block(circuit)
     if blocked:
+        cleanup_injected(inj_temp)
         return {
             "ok": False,
             "warning": blocked,
             "all_passed": None,
             "specs": [],
+            "injected": inj_notes,
         }
 
     jar_path = find_digital_jar()
     if jar_path is None:
+        cleanup_injected(inj_temp)
         return {
             "ok": False,
             "warning": (
@@ -716,45 +772,50 @@ def run_tests(req: TestsRequest) -> dict:
             ),
             "all_passed": None,
             "specs": [],
+            "injected": inj_notes,
         }
 
     spec_payloads: list[dict] = []
     any_failed = False
     any_runner_error = False
 
-    for spec in specs:
-        try:
-            row_results = per_row_run_auto(
-                spec, target["path"], jar_path=jar_path, timeout=req.timeout,
-            )
-        except Exception as exc:
-            return {
-                "ok": False,
-                "warning": f"Test runner crashed: {type(exc).__name__}: {exc}",
-                "all_passed": None,
-                "specs": [],
-            }
-        rows_by_idx = {row.line_index: row for row in spec.rows}
-        row_payload: list[dict] = []
-        for r in row_results:
-            row = rows_by_idx.get(r.row_index)
-            row_payload.append({
-                "index": r.row_index,
-                "raw": row.raw if row else "",
-                "status": r.status,
-                "error_message": r.error_message,
-                "mismatches": r.mismatches,
-            })
-            if r.status == "failed":
-                any_failed = True
-            if r.status == "error":
-                any_runner_error = True
+    try:
+        for spec in specs:
+            try:
+                row_results = per_row_run_auto(
+                    spec, run_path, jar_path=jar_path, timeout=req.timeout,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "warning": f"Test runner crashed: {type(exc).__name__}: {exc}",
+                    "all_passed": None,
+                    "specs": [],
+                    "injected": inj_notes,
+                }
+            rows_by_idx = {row.line_index: row for row in spec.rows}
+            row_payload: list[dict] = []
+            for r in row_results:
+                row = rows_by_idx.get(r.row_index)
+                row_payload.append({
+                    "index": r.row_index,
+                    "raw": row.raw if row else "",
+                    "status": r.status,
+                    "error_message": r.error_message,
+                    "mismatches": r.mismatches,
+                })
+                if r.status == "failed":
+                    any_failed = True
+                if r.status == "error":
+                    any_runner_error = True
 
-        spec_payloads.append({
-            "name": spec.name,
-            "headers": spec.headers,
-            "rows": row_payload,
-        })
+            spec_payloads.append({
+                "name": spec.name,
+                "headers": spec.headers,
+                "rows": row_payload,
+            })
+    finally:
+        cleanup_injected(inj_temp)
 
     return {
         "ok": True,
@@ -764,6 +825,7 @@ def run_tests(req: TestsRequest) -> dict:
         ),
         "all_passed": (not any_failed) and (not any_runner_error),
         "specs": spec_payloads,
+        "injected": inj_notes,
     }
 
 def _node_reactions(circuit, netlist, res) -> dict:

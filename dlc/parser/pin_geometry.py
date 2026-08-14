@@ -61,9 +61,11 @@ _BARREL_SHIFTER_PINS = [
 
 
 _ROM_PINS = [
+    # Verified against Digital's SVG export: the ROM box is 60 wide,
+    # A at (0,0), sel at (0,40), D on the right edge at (60,20).
     PinSpec("A",   0,  0,  "in"),
     PinSpec("sel", 0,  40, "in"),
-    PinSpec("D",   80, 20, "out"),
+    PinSpec("D",   60, 20, "out"),
 ]
 
 _SEVEN_SEG_PINS = [
@@ -313,11 +315,14 @@ def _demultiplexer_pins(comp: Component) -> list[PinSpec]:
 
 def _priority_encoder_pins(comp: Component) -> list[PinSpec]:
     """
-    PriorityEncoder: 2^Selector Bits priority inputs on the left, one
-    encoded selector output on the right. Approximate offsets verified
+    PriorityEncoder: 2^Selector Bits priority inputs on the left, two
+    outputs on the right: `num` (encoded selector) and `f` (1-bit "any
+    input set" flag, directly below num). Students wire f as a chip
+    select (e.g. PriorityEncoder.f -> ROM.sel).
     Example (Selector Bits=3, 8 inputs):
       in_i at (0, i*20)
-      out  at (80, 0)
+      num  at (80, 0)
+      f    at (80, 20)
     """
     sel_bits = int(comp.attributes.get("Selector Bits", 1))
     n_inputs = 2 ** sel_bits
@@ -325,6 +330,7 @@ def _priority_encoder_pins(comp: Component) -> list[PinSpec]:
     for i in range(n_inputs):
         pins.append(PinSpec(f"in_{i}", offset_x=0, offset_y=i * 20, direction="in"))
     pins.append(PinSpec("num", offset_x=80, offset_y=0, direction="out"))
+    pins.append(PinSpec("f",   offset_x=80, offset_y=20, direction="out"))
     return pins
 
 def _comparator_pins(comp: Component) -> list[PinSpec]:

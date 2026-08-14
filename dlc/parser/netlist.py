@@ -34,7 +34,9 @@ from dlc.parser.pin_geometry import absolute_pin_positions
 
 PIN_SNAP_TOLERANCE = 30 # Large enough to cover wide subcircuit instances
 IMPLICIT_PIN_RADIUS = 500
-_SUBCIRCUIT_DEFAULT_WIDTH_GRID = 10  # 200 units when child has no Width
+_SUBCIRCUIT_DEFAULT_WIDTH_GRID = 3  # Digital's default custom-shape width:
+# a child with no Width attribute renders 3 grid units (60 px) wide
+# (verified against Digital's own SVG export of such instances).
 NO_SIGNAL_ELEMENTS = {"Testcase", "Rectangle"}
 
 class _UnionFind:
@@ -199,11 +201,13 @@ def _subcircuit_pin_specs(child) -> list:
     return pins
 
 def _all_predicted_pins(circuit: Circuit) -> list:
+    # Every RESOLVED child gets declared-pin predictions: pins follow the
+    # child's In/Out file order, and the box width falls back to Digital's
+    # real default (3 grid) when the child has no Width attribute. Only
+    # unresolved children (missing files) are left to the implicit-pin path.
     sub_predicted = {}
     for sub_ref in circuit.subcircuits:
         if sub_ref.child_circuit is None:
-            continue
-        if "Width" not in sub_ref.child_circuit.attributes:
             continue
         sub_predicted[id(sub_ref.parent_component)] = sub_ref.child_circuit
     out = []
@@ -226,6 +230,7 @@ def _assign_endpoints_to_pins(
     predicted: list,
     endpoints: set,
     tolerance: int,
+    endpoint_degree: dict | None = None,
 ) -> dict:
 
     """
@@ -237,8 +242,14 @@ def _assign_endpoints_to_pins(
      Direction-aware tolerance:
 
     - INPUT (and bidir) pins: require **exact x-match** (gap_x = 0).
-    
-    - OUTPUT pins: keep the loose Manhattan tolerance.
+
+    - OUTPUT pins: keep the loose Manhattan tolerance, but a
+      nonzero-distance claim may only take a degree-1 endpoint (a wire
+      END). Degree-2+ coords are L-bends/junctions — routing of some
+      OTHER net passing nearby. Letting an unwired output grab one of
+      those merges it into a neighbor's net and fabricates phantom
+      multi-driver errors (seen on real comparator ladders where an
+      unused `gr`/`le` sat 20 px from an `eq` wire corner).
     """
     triples = []
     for ep in endpoints:
@@ -251,6 +262,9 @@ def _assign_endpoints_to_pins(
                     continue
             else:
                 if d > tolerance:
+                    continue
+                if d > 0 and endpoint_degree is not None \
+                        and endpoint_degree.get(ep, 0) != 1:
                     continue
             triples.append((d, c_idx, spec.name, ep))
     triples.sort()
@@ -348,7 +362,8 @@ def _attach_pins_endpoint_first(
 
     predicted = _all_predicted_pins(circuit)
     pin_to_coord = _assign_endpoints_to_pins(
-        predicted, endpoints, PIN_SNAP_TOLERANCE
+        predicted, endpoints, PIN_SNAP_TOLERANCE,
+        endpoint_degree=_wire_endpoint_degree(circuit),
     )
     snapped_endpoints: set = set(pin_to_coord.values())
     exact_match_targets: set = set()
@@ -428,8 +443,6 @@ def _attach_implicit_pins(
     sub_with_predicted = set()
     for sub_ref in circuit.subcircuits:
         if sub_ref.child_circuit is None:
-            continue
-        if "Width" not in sub_ref.child_circuit.attributes:
             continue
         for idx, comp in enumerate(circuit.components):
             if comp is sub_ref.parent_component:
