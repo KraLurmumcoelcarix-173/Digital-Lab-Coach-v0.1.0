@@ -70,9 +70,30 @@ _MAX_TOKENS = 3000
 # truncated a live full-decode-table derivation (r38, s008 control
 # unit) — 8000 gives the single-cluster frozen-trunk shape room.
 _MAX_TOKENS_PREMIUM = 8000
+# claude-opus-5 thinks by default; at the default effort it spends the
+# ENTIRE max_tokens budget on thinking blocks and the reply carries no
+# text at all — measured live: 5 straight calls, stop_reason
+# max_tokens, output = 100% thinking, 0 bytes of reply ("not a json
+# response"). The real fix is _effort_for below (caps thinking depth
+# server-side); the extra headroom + truncation retry are backstops.
+_MAX_TOKENS_REASONING = 16000
+
+
+def _effort_for(model: str) -> str | None:
+    """Server-side reasoning depth for models that think by default.
+
+    Mode A is a single-shot JSON task over machine-traced evidence —
+    low effort keeps opus-5's thinking bounded so the reply actually
+    reaches the JSON (and cuts latency toward the 180s call timeout).
+    Other models keep provider defaults."""
+    if str(model or "").startswith("claude-opus-5"):
+        return "low"
+    return None
 
 
 def _max_tokens_for(model: str) -> int:
+    if str(model or "").startswith("claude-opus-5"):
+        return _MAX_TOKENS_REASONING
     try:
         from dlc.llm.client import MODEL_CATALOG
         if (MODEL_CATALOG.get(model) or {}).get("tier") == "premium":
@@ -669,7 +690,8 @@ _DATA_REFUTED_STEER = (
 
 
 def _refutation_block(ops: list[dict], verdict: dict,
-                      circuit=None) -> str:
+                      circuit=None,
+                      target_rows: list[int] | None = None) -> str:
     payload = {
         "refuted_ops": ops,
         "rerun": {
@@ -685,8 +707,29 @@ def _refutation_block(ops: list[dict], verdict: dict,
             "warning": verdict["warning"],
         },
     }
+    # partial progress is a fact worth keeping — the cu 3-gate
+    # exam circuit needs TWO gate replacements, and a model told only
+    # "refuted" restarts from scratch instead of extending the op list.
+    fixed = []
+    if verdict.get("apply_ok") and not verdict.get("regressions"):
+        still = set(verdict.get("still_failing") or [])
+        fixed = sorted(i for i in (target_rows or []) if i not in still)
+    steer = ""
+    if fixed and target_rows and len(fixed) < len(target_rows):
+        payload["rows_these_ops_did_fix"] = fixed
+        steer = (
+            "\nMACHINE FACT: the refuted ops are PARTIALLY RIGHT — the "
+            f"re-run shows rows {fixed} now PASS and only rows "
+            f"{sorted(set(target_rows) - set(fixed))} still fail. More "
+            "than one component is broken: KEEP the refuted ops in your "
+            "next answer and ADD the op(s) fixing the remaining rows "
+            "(with the partial fix applied, those rows now select a "
+            "DIFFERENT wrong path — find the next wrongly-asserting "
+            "component in the values table)."
+        )
     return ("\n\n[REFUTED ATTEMPT]\n"
             + json.dumps(payload, indent=2, default=str)
+            + steer
             + (_DATA_REFUTED_STEER
                if _touches_stored_data([ops], circuit) else ""))
 
@@ -929,7 +972,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         nonlocal calls
         t0 = time.monotonic()
         r = call(prompt_text, api_key=api_key, model=model,
-                 max_tokens=_max_tokens_for(model))
+                 max_tokens=_max_tokens_for(model),
+                 effort=_effort_for(model))
         llm_seconds.append(round(time.monotonic() - t0, 2))
         calls += 1
         u = r.get("usage") or {}
@@ -1006,9 +1050,22 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             continue
         clean, err = validate_hypothesis(parse_agent_json(reply.get("text")))
         if err is not None:
-            retry = ask(prompt + "\n\n# FORMAT RETRY\nYour previous reply "
-                        f"was rejected: {err}. Output ONLY the JSON object "
-                        "specified above — no prose, no code fences.")
+            if reply.get("stop_reason") == "max_tokens":
+                # measured live on claude-opus-5: the reply was
+                # TRUNCATED at the token cap mid-JSON — the model likely
+                # had the answer and drowned it in visible reasoning.
+                retry_note = (
+                    "\n\n# FORMAT RETRY\nYour previous reply was CUT "
+                    "OFF at the output token limit before the JSON "
+                    "completed. Do NOT write analysis, derivations, or "
+                    "any text outside the JSON. Reason privately and "
+                    "output ONLY the finished JSON object, immediately.")
+            else:
+                retry_note = (
+                    "\n\n# FORMAT RETRY\nYour previous reply was "
+                    f"rejected: {err}. Output ONLY the JSON object "
+                    "specified above — no prose, no code fences.")
+            retry = ask(prompt + retry_note)
             clean = None
             if retry.get("ok"):
                 clean, err = validate_hypothesis(
@@ -1022,7 +1079,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         verdict = verify(clean["ops"], cluster_rows)
         if not verdict["confirmed"] and refuted_total < _MAX_REFUTED_IDEAS:
             retry = ask(prompt + _refutation_block(clean["ops"], verdict,
-                                                   circuit))
+                                                   circuit,
+                                                   target_rows=cluster_rows))
             if retry.get("ok"):
                 clean2, err2 = validate_hypothesis(
                     parse_agent_json(retry.get("text")))

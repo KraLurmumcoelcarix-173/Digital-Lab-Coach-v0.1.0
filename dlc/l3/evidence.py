@@ -723,6 +723,56 @@ def _data_output_bit_map(circuit, netlist, data_idx: int) -> dict:
     return out
 
 
+def _address_input_drivers(circuit, netlist, addr_net_id,
+                           storage_idx: int, rows) -> dict | None:
+    """r42: when a storage element's address is computed by a selector-
+    style component (priority encoder, multiplexer...), map each of THAT
+    component's input pins to the exact gate driving it plus the pin's
+    value on the failing rows.
+
+    Live conviction (cu 3-gate exam circuit): the model twice named the
+    right story — "the gate wired to encoder input 5 asserts on the
+    wrong rows" — and twice guessed the wrong component_index (59, then
+    a nonexistent 115) before finding the real one, burning the whole
+    refuted-ideas budget. Which gate feeds selector input k is pure
+    netlist fact; trace it instead of making the model guess."""
+    net = next((n for n in netlist.nets if n.net_id == addr_net_id), None)
+    if net is None:
+        return None
+    drivers = [p for p in net.pins
+               if p.direction == "out" and p.component_index != storage_idx]
+    if len(drivers) != 1:
+        return None
+    sel_idx = drivers[0].component_index
+    sel = circuit.components[sel_idx]
+    inputs: dict[str, dict] = {}
+    for n in netlist.nets:
+        mine = [p for p in n.pins
+                if p.component_index == sel_idx and p.direction == "in"]
+        if not mine:
+            continue
+        feeder = next((q for q in n.pins if q.direction == "out"
+                       and q.component_index != sel_idx), None)
+        values = {}
+        for r in rows:
+            nv = r.net_values.get(str(n.net_id))
+            if nv is not None:
+                values[str(r.row_index)] = nv.get("value")
+        for p in mine:
+            entry: dict = {}
+            if feeder is not None:
+                fc = circuit.components[feeder.component_index]
+                entry["driven_by"] = (
+                    f"{fc.element_name}[{feeder.component_index}]")
+            if values:
+                entry["values"] = values
+            if entry:
+                inputs[p.pin_name] = entry
+    if not inputs or len(inputs) > 16:
+        return None
+    return {"selector": f"{sel.element_name}[{sel_idx}]", "inputs": inputs}
+
+
 def suspect_wiring(circuit, netlist, indices: list[int],
                    rep_rows: list["RowEvidence"] | None = None,
                    hide_rom_words: bool = False) -> list[dict]:
@@ -843,6 +893,15 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
                     by_row[str(r.row_index)] = nv.get("value")
             if by_row:
                 rec["address_by_row"] = by_row
+            # r42: and WHO computes that address — the selector element
+            # plus, for each of its input pins, the exact gate driving
+            # it and the pin's value on the failing rows. The culprit
+            # index becomes a lookup, not a guess.
+            aid = _address_input_drivers(
+                circuit, netlist, a_nets[0],
+                rec["component_index"], cluster.rows)
+            if aid:
+                rec["address_input_drivers"] = aid
             bit_map = _data_output_bit_map(
                 circuit, netlist, rec["component_index"])
             if bit_map:

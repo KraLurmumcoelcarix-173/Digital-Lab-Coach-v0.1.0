@@ -869,3 +869,94 @@ def test_misdirected_data_op_is_retargeted_verified_and_stops(tmp_path):
     assert card["verified"]["confirmed"] is True
     assert card["fix"]["ops"][0]["component_index"] == 1   # the ROM
     assert any("redirected" in n for n in res["notes"])
+
+
+def test_truncated_reply_earns_a_json_only_retry():
+    # measured live: claude-opus-5 hit the output cap on all four
+    # calls of a run — every reply died as invalid_response. A reply
+    # whose stop_reason is max_tokens now earns a retry that names the
+    # truncation and demands JSON-only output.
+    replies = [
+        {"ok": True, "text": '{"contract": "l3.debug.v1.1", "hint": ',
+         "error": None, "usage": {"input_tokens": 1, "output_tokens": 1},
+         "stop_reason": "max_tokens", "model": "fake"},
+        {"ok": True, "text": json.dumps(_reply(GOOD_OPS)), "error": None,
+         "usage": {"input_tokens": 1, "output_tokens": 1},
+         "stop_reason": "end_turn", "model": "fake"},
+    ]
+    log = []
+    def call(prompt, **_kw):
+        log.append(prompt)
+        return replies[len(log) - 1]
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["llm_calls"] == 2
+    assert "CUT OFF at the output token limit" in log[1]
+    assert res["cards"] and res["cards"][0]["verified"]["confirmed"]
+
+
+def test_opus5_gets_reasoning_headroom():
+    from dlc.l3.debugger import _max_tokens_for
+    assert _max_tokens_for("claude-opus-5") == 16000
+    assert _max_tokens_for("claude-opus-4-8") == 8000
+    assert _max_tokens_for("claude-haiku-4-5-20251001") == 3000
+
+
+def test_refutation_block_names_partial_progress():
+    # r42 (cu 3-gate exam circuit): a refuted fix that turned SOME
+    # target rows green is partially right — the retry must say so and
+    # demand keep-and-extend instead of a from-scratch restart.
+    from dlc.l3.debugger import _refutation_block
+    ops = [{"op": "replace_element", "component_index": 5,
+            "new_element": "And"}]
+    verdict = {"apply_ok": True, "still_failing": [1], "regressions": [],
+               "details": {}, "warning": None}
+    txt = _refutation_block(ops, verdict, target_rows=[0, 1])
+    assert "PARTIALLY RIGHT" in txt
+    assert "KEEP the refuted ops" in txt
+    assert "rows_these_ops_did_fix" in txt
+
+    # a full miss earns no progress claim
+    verdict = {"apply_ok": True, "still_failing": [0, 1],
+               "regressions": [], "details": {}, "warning": None}
+    txt = _refutation_block(ops, verdict, target_rows=[0, 1])
+    assert "PARTIALLY RIGHT" not in txt
+
+    # progress bought with regressions is not progress
+    verdict = {"apply_ok": True, "still_failing": [1], "regressions": [4],
+               "details": {}, "warning": None}
+    txt = _refutation_block(ops, verdict, target_rows=[0, 1])
+    assert "PARTIALLY RIGHT" not in txt
+
+
+def test_prompt_teaches_the_wrong_address_rule():
+    # mis-selected addresses must beat data rewrites, and the
+    # culprit index comes from the machine-traced selector table.
+    from dlc.l3.debugger import _load_prompt
+    text = _load_prompt()
+    assert "WRONG ADDRESS beats wrong data" in text
+    assert "address_input_drivers" in text
+
+
+def test_opus5_thinking_depth_is_bounded():
+    """claude-opus-5 thinks by default and, uncapped, spends the whole
+    output budget on thinking blocks - the reply carries zero text.
+    Mode A must pin effort=low; other models
+    keep provider defaults."""
+    from dlc.l3.debugger import _effort_for
+    assert _effort_for("claude-opus-5") == "low"
+    assert _effort_for("claude-opus-4-8") is None
+    assert _effort_for("claude-haiku-4-5-20251001") is None
+    assert _effort_for(None) is None
+
+    seen = {}
+    def call(prompt, **kw):
+        seen.update(kw)
+        return {"ok": True, "text": json.dumps(_reply(GOOD_OPS)),
+                "error": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "model": "claude-opus-5"}
+    debug_circuit(_BUG3, call=call, use_manifest=False,
+                  failing_indices=[0, 1], model="claude-opus-5")
+    assert seen.get("effort") == "low"
+    assert seen.get("max_tokens") == 16000

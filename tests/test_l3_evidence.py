@@ -506,3 +506,39 @@ def test_suspect_attrs_show_student_words_hide_injected_ones():
     big = SimpleNamespace(element_name="ROM",
                           attributes={"Data": ",".join(["1"] * 33)})
     assert "stored_words" not in _suspect_attrs(big)
+
+
+def test_address_input_drivers_traces_selector_gates():
+    # the model twice named the right story
+    # ("the gate on encoder input 5 asserts on the wrong rows") and
+    # twice guessed a wrong component_index. Which gate feeds selector
+    # input k is netlist fact — trace it, with per-row values.
+    from types import SimpleNamespace as NS
+    from dlc.l3.evidence import _address_input_drivers
+
+    comps = [NS(element_name="ROM"), NS(element_name="PriorityEncoder"),
+             NS(element_name="And"), NS(element_name="Or")]
+    circuit = NS(components=comps)
+
+    def pin(ci, name, d):
+        return NS(component_index=ci, pin_name=name, direction=d)
+
+    nets = [
+        NS(net_id=10, pins=[pin(0, "A", "in"), pin(1, "num", "out")]),
+        NS(net_id=11, pins=[pin(1, "in_0", "in"), pin(2, "out", "out")]),
+        NS(net_id=12, pins=[pin(1, "in_1", "in"), pin(3, "out", "out")]),
+    ]
+    netlist = NS(nets=nets)
+    rows = [NS(row_index=0,
+               net_values={"11": {"value": 0}, "12": {"value": 1}})]
+
+    out = _address_input_drivers(circuit, netlist, 10, 0, rows)
+    assert out["selector"] == "PriorityEncoder[1]"
+    assert out["inputs"]["in_0"] == {"driven_by": "And[2]",
+                                     "values": {"0": 0}}
+    assert out["inputs"]["in_1"] == {"driven_by": "Or[3]",
+                                     "values": {"0": 1}}
+
+    # a multi-driven address net is ambiguous — trace nothing
+    nets[0].pins.append(pin(2, "out", "out"))
+    assert _address_input_drivers(circuit, netlist, 10, 0, rows) is None

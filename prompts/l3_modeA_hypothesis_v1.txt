@@ -69,6 +69,11 @@ failing rows actually show.
                                 every output column per failing row —
                                 use THESE numbers, never re-read the
                                 raw row text.
+    `address_input_drivers`     the selector computing the address
+                                (e.g. a priority encoder): for each of
+                                its input pins, the exact component
+                                driving it ("Or[112]") and that pin's
+                                value on the failing rows.
   Word for address k = set exactly the bits where
   expected_outputs_by_row of the row(s) mapping to k is 1, placed per
   output_bit_map. One word per address, nothing more.
@@ -76,6 +81,17 @@ failing rows actually show.
   derive what each failing row's address SHOULD store and compare;
   change only words the evidence convicts, keep every word that passing
   rows rely on.
+- WRONG ADDRESS beats wrong data: when `address_by_row` shows failing
+  rows selecting an address whose stored word serves OTHER (passing)
+  rows — or two failing rows demand DIFFERENT words at ONE address —
+  the stored data is innocent and rewriting it would break the passing
+  rows: the ADDRESS PATH is the bug. Read `address_input_drivers` to
+  see which selector inputs assert on the failing rows and exactly
+  which gate drives each one; a gate asserting on a row that should
+  not select it is the culprit — use its literal component_index. If
+  MORE THAN ONE input asserts at once, every wrongly-asserting gate is
+  broken: fix them ALL in ONE ops list (the selector's priority hides
+  the quieter wrong gates until the loudest is silenced).
 - A [ROM NOTE] block below means that ROM's content was loaded by the
   grader from the official course program for this run: those stored
   words are correct by definition — NEVER propose a Data change on that
@@ -96,7 +112,10 @@ component than those already tried. Work strictly from the values table:
 run the gate-kind sanity check over every suspect before answering, and
 prefer the single smallest op that flips the contradicting gate.
 
-# OUTPUT — one strict JSON object, nothing else (no prose, no fences)
+# OUTPUT — one strict JSON object, nothing else (no prose, no fences).
+# Reason PRIVATELY: any visible text outside the JSON is discarded, and
+# long visible derivations can hit the output limit and destroy your
+# reply. The finished JSON itself is small — under ~1000 tokens.
 {
   "contract": "l3.debug.v1.1",
   "confidence": 0.0 to 1.0,

@@ -44,6 +44,15 @@ MODEL_CATALOG: dict[str, dict] = {
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 2000
+# Hard per-request wall clock. A reasoning-heavy model that thinks for
+# minutes must FAIL the call (llm_error -> dropped idea / retry) instead
+# of hanging a student's Analyze click indefinitely (r42, measured:
+# claude-opus-5 calls passing 100-400s each). Override: DLC_LLM_TIMEOUT.
+def _request_timeout() -> float:
+    try:
+        return float(os.environ.get("DLC_LLM_TIMEOUT", "") or 180.0)
+    except ValueError:
+        return 180.0
 
 PROVIDER_KEY_FIELDS = {
     "anthropic": "anthropic_api_key",
@@ -112,27 +121,49 @@ def _friendly_error(exc, provider: str) -> str:
     if exc is None:
         return "Error"
     blob = f"{type(exc).__name__} {exc}".lower()
-    if any(s in blob for s in ("connection", "timeout", "getaddrinfo", "network",
+    if "timed out" in blob or "timeout" in blob:
+        return (f"The {provider} call exceeded the "
+                f"{int(_request_timeout())}s time limit and was cancelled - "
+                f"the model was taking too long; try again or pick a "
+                f"faster model.")
+    if any(s in blob for s in ("connection", "getaddrinfo", "network",
                                "name resolution", "temporary failure", "ssl",
                                "max retries", "failed to establish")):
         return (f"Couldn't reach {provider} - check your internet connection "
                 f"(a firewall or proxy may also be blocking it).")
     return f"{type(exc).__name__}: {exc}"
 
-def _call_anthropic(prompt, model, key, max_tokens, system) -> dict:
+def _is_anthropic_reasoning_model(model: str) -> bool:
+    return str(model or "").startswith("claude-opus-5")
+
+
+def _call_anthropic(prompt, model, key, max_tokens, system, effort=None) -> dict:
     if not _ANTHROPIC_AVAILABLE:
         return {"ok": False, "text": None,
                 "error": "anthropic SDK not installed (uv add anthropic)",
                 "usage": None, "model": model}
-    client = Anthropic(api_key=key)
+    client = Anthropic(api_key=key, timeout=_request_timeout())
+    # Reasoning-tier Claude models think by default and, at the default
+    # effort, can spend the ENTIRE max_tokens budget on (invisible)
+    # thinking blocks - the reply then contains zero text (r42, measured
+    # on claude-opus-5: 16000/16000 tokens of thinking, empty reply).
+    # Same safety net as the OpenAI reasoning branch below: bound the
+    # thinking depth server-side (thinking itself stays on) and make
+    # sure thinking + text fit under the cap.
+    if _is_anthropic_reasoning_model(model):
+        effort = effort or "low"
+        max_tokens = max(max_tokens, 8000)
+    kwargs = {
+        "model": model, "max_tokens": max_tokens,
+        "system": system or "You are a helpful circuit reasoning assistant.",
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if effort:
+        kwargs["output_config"] = {"effort": effort}
     last_err = None
     for attempt in range(3):
         try:
-            resp = client.messages.create(
-                model=model, max_tokens=max_tokens,
-                system=system or "You are a helpful circuit reasoning assistant.",
-                messages=[{"role": "user", "content": prompt}],
-            )
+            resp = client.messages.create(**kwargs)
             text = "".join(
                 block.text for block in resp.content
                 if getattr(block, "type", None) == "text"
@@ -140,6 +171,10 @@ def _call_anthropic(prompt, model, key, max_tokens, system) -> dict:
             return {"ok": True, "text": text, "error": None,
                     "usage": {"input_tokens": resp.usage.input_tokens,
                               "output_tokens": resp.usage.output_tokens},
+                    # "max_tokens" here = the reply was TRUNCATED at the
+                    # cap — callers use it to retry with a JSON-only
+                    # demand instead of guessing why parsing failed (r42)
+                    "stop_reason": getattr(resp, "stop_reason", None),
                     "model": model}
         except Exception as exc:
             last_err = exc
@@ -157,12 +192,12 @@ def _is_openai_reasoning_model(model: str) -> bool:
     return model.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
-def _call_openai(prompt, model, key, max_tokens, system) -> dict:
+def _call_openai(prompt, model, key, max_tokens, system, effort=None) -> dict:
     if not _OPENAI_AVAILABLE:
         return {"ok": False, "text": None,
                 "error": "openai SDK not installed (uv add openai)",
                 "usage": None, "model": model}
-    client = OpenAI(api_key=key)
+    client = OpenAI(api_key=key, timeout=_request_timeout())
     last_err = None
     for attempt in range(3):
         try:
@@ -177,7 +212,7 @@ def _call_openai(prompt, model, key, max_tokens, system) -> dict:
             }
             if _is_openai_reasoning_model(model):
                 kwargs["max_completion_tokens"] = max(max_tokens, 8000)
-                kwargs["reasoning_effort"] = "low"
+                kwargs["reasoning_effort"] = effort or "low"
             resp = client.chat.completions.create(**kwargs)
             text = (resp.choices[0].message.content or "").strip()
             usage = getattr(resp, "usage", None)
@@ -208,7 +243,7 @@ def _call_openai(prompt, model, key, max_tokens, system) -> dict:
 
 
 def call_llm(prompt, *, api_key=None, model=DEFAULT_MODEL,
-             max_tokens=DEFAULT_MAX_TOKENS, system=None):
+             max_tokens=DEFAULT_MAX_TOKENS, system=None, effort=None):
     info = MODEL_CATALOG.get(model)
     if info is None:
         return {"ok": False, "text": None,
@@ -223,9 +258,9 @@ def call_llm(prompt, *, api_key=None, model=DEFAULT_MODEL,
                           f"{PROVIDER_ENV_VARS[provider]}."),
                 "usage": None, "model": model}
     if provider == "anthropic":
-        return _call_anthropic(prompt, model, key, max_tokens, system)
+        return _call_anthropic(prompt, model, key, max_tokens, system, effort)
     if provider == "openai":
-        return _call_openai(prompt, model, key, max_tokens, system)
+        return _call_openai(prompt, model, key, max_tokens, system, effort)
     return {"ok": False, "text": None,
             "error": f"Provider {provider!r} not implemented.",
             "usage": None, "model": model}

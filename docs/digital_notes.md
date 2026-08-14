@@ -401,6 +401,45 @@ verified empirically:
   and s009 control units land a jar-verified full table in ~25s/2
   calls.
 
+## reasoning-tier models: bounded effort, timeouts, truncation retry
+
+- **claude-opus-5 replies were 100% thinking, 0 bytes of text**: the
+  model thinks by default; at the provider-default depth it spent the
+  ENTIRE max_tokens budget (8000, then 16000) on thinking blocks —
+  stop_reason max_tokens, extracted text empty, surfaced in the UI as
+  "not a json response" after minutes per call. The proposed fix was
+  likely being derived and then destroyed in transit.
+- **Bounded effort is the fix, not bigger caps**: the client now sends
+  `output_config={"effort": "low"}` for claude-opus-5 (thinking stays
+  on, depth capped server-side) plus a max_tokens floor of 8000 —
+  mirroring the existing gpt-5 branch. Mode A pins the same policy
+  explicitly (`_effort_for`) with 16000 headroom. Measured swing on
+  the same circuit/payload: 200s + 16000 tokens + empty reply →
+  11-34s, stop end_turn, complete JSON.
+- **Hard per-request wall clock (180s, DLC_LLM_TIMEOUT)**: a model
+  that thinks for minutes now fails the call with a clear message
+  instead of hanging the student's Analyze click.
+- **Truncation-aware format retry**: a reply whose stop_reason is
+  max_tokens earns a retry naming the CUT OFF and demanding
+  JSON-only output — distinct from the generic invalid-JSON retry.
+- **Selector inputs are machine-traced (`address_input_drivers`)**: on
+  a 3-gate exam control unit the model twice named the right story
+  ("the gate on encoder input 5 asserts on the wrong rows") and twice
+  guessed a wrong component_index (59, then a nonexistent 115),
+  burning the refuted-ideas budget. Storage suspects now carry the
+  selector element plus, per selector input pin, the exact driving
+  gate ("Or[112]") and that pin's value on the failing rows; the
+  prompt's WRONG-ADDRESS rule makes mis-selection beat data rewrites
+  and demands ALL wrongly-asserting gates be fixed in one ops list
+  (encoder priority masks the quieter wrong gate until the loudest
+  is silenced — the exam circuit needs Or[112]→And AND XOr[113]→And;
+  XOr[114] is test-invisible).
+- **Refutation retries name partial progress**: a refuted fix that
+  turned some target rows green (no regressions) now gets "PARTIALLY
+  RIGHT — rows X now pass, keep these ops and ADD what fixes the
+  rest" instead of a bare refusal, so multi-fault circuits converge
+  across retries instead of restarting from scratch.
+
 ## Known limitations to revisit (Keep updating during path 1 development)
 
 
