@@ -192,6 +192,26 @@ def get_content(filename: str) -> str | None:
     return content if (content or "").strip() else None
 
 
+def get_runtime_payload(filename: str, key: str) -> str | None:
+    """Course-configured runtime payload for `filename` — content the test
+    runner may substitute into a RUN COPY (e.g. cpu.dig's instruction
+    program for an empty Instruction Memory) but that must never surface
+    in any UI. Stored base64-encoded under 'runtime' in the shipped
+    defaults entry; deliberately absent from list_tests() and the user
+    layer, and never rendered by the Settings page."""
+    import base64
+    entry = _defaults().get(filename) or {}
+    blob = entry.get("runtime")
+    if not blob:
+        return None
+    try:
+        data = json.loads(base64.b64decode(blob).decode("utf-8"))
+    except Exception:
+        return None
+    v = data.get(key) if isinstance(data, dict) else None
+    return v if isinstance(v, str) and v.strip() else None
+
+
 def status_for(filename: str, raw_data_string: str) -> str | None:
     """'official' | 'modified' when the store (user entry first, then the
     shipped defaults) has this filename, else None (store silent => the

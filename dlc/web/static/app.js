@@ -1246,7 +1246,7 @@ function renderTestsForFile(file) {
   if (!payload) return;
 
   const injectedNote = (payload.injected || []).length
-    ? " This run used the official test set (yours was missing or modified — Gradescope grades the same way)."
+    ? " This run used official course content (missing/modified testcase or empty ROM substituted — Gradescope-style)."
     : "";
   if (payload.warning) {
     testsStatusEl.textContent = `Warning: ${payload.warning}`;
@@ -1272,7 +1272,14 @@ function renderTestsForFile(file) {
 runTestsBtn.addEventListener("click", async () => {
   if (!sessionId || loaded.length === 0) return;
   const file = loaded[currentIdx];
-  if (!file || !file.summary || !file.summary.has_testcases) return;
+  if (!file || !file.summary) return;
+  // Runnable with the file's own tests OR via official-test injection
+  // (official_test_status "missing"/"modified") — the render path enables
+  // the button for both, so the click gate must agree with it.
+  const s = file.summary;
+  const injectable = s.official_test_status === "missing"
+    || s.official_test_status === "modified";
+  if (!s.has_testcases && !injectable) return;
   if (fileL1Errors(file).length > 0) return;  // blocked: fix L1 errors first
   const filename = file.filename;
   const mode = perRowToggle.checked ? "per_row" : "general";
