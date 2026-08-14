@@ -377,6 +377,21 @@ def llm_debug(req: DebugRequest) -> dict:
         path, spec_name, on_temp = lt["path"], lt.get("spec_name"), True
         coach_rows = lt.get("coach_rows") or None
 
+    # Gradescope-style: when NOT on a coach temp, an empty/modified
+    # testcase means Mode A must debug against the OFFICIAL rows —
+    # otherwise a header-only testcase yields zero failing rows and the
+    # board wrongly reports "every row passes". Same sibling-temp
+    # mechanism as the Dashboard test runs.
+    inj_temp, inj_notes = (None, [])
+    if not on_temp:
+        from dlc.testing.inject import (
+            prepare_injected_run, cleanup_injected,
+        )
+        inj_temp, inj_notes = prepare_injected_run(path, req.filename)
+        if inj_temp:
+            path = inj_temp
+            spec_name = None         # injected spec is the only one
+
     try:
         result = debugger.debug_circuit(
             path, spec_name=spec_name, spec_index=req.spec_index,
@@ -385,6 +400,11 @@ def llm_debug(req: DebugRequest) -> dict:
     except Exception as exc:         # defense in depth
         return {"ok": False, "mode": "error",
                 "warning": f"Debug run failed: {type(exc).__name__}: {exc}"}
+    finally:
+        if inj_temp:
+            cleanup_injected(inj_temp)
+    if inj_notes:
+        result["injected"] = inj_notes
 
     consumed = (result.get("mode") == "analysis"
                 and bool(result.get("cards")))
@@ -424,15 +444,28 @@ def l3_accept_fix(req: AcceptFixRequest) -> dict:
     lt = (session or {}).get("l3_temp") or None
     prev_coach_rows: list[int] = []
     spec_name = req.spec_name
+    on_prev_temp = False
     if (lt and lt.get("for") == req.filename and lt.get("path")
             and os.path.exists(lt["path"])):
         path = lt["path"]
         prev_coach_rows = list(lt.get("coach_rows") or [])
         spec_name = spec_name or lt.get("spec_name")
+        on_prev_temp = True
 
     temp, rep = apply_patch(path, req.ops)
     if temp is None:
         return {"ok": False, "warning": rep.warning}
+
+    # Gradescope-style: when the fix was computed against the student's
+    # RAW file (no coach temp), the new temp is tool-owned scratch and an
+    # empty/modified testcase gets the official rows written in directly
+    # — otherwise the "show the green" rerun below sees zero rows and
+    # reports all-fixed on nothing. A temp descending from Mode B keeps
+    # its coach-added rows untouched.
+    if not on_prev_temp:
+        from dlc.testing.inject import inject_official_tests_in_place
+        if inject_official_tests_in_place(temp, req.filename):
+            spec_name = None   # injected spec ("official") is the only one
 
     temp_filename = f"{Path(req.filename).stem}__coach.dig"
     if session is not None:

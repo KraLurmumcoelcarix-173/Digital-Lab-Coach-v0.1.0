@@ -146,6 +146,25 @@ def _check_dangling_inputs(
 _CONSTANT_DRIVER_ELEMENTS = {"Ground", "VDD", "Const"}
 
 
+def _const_driver_value(circuit: Circuit, d: dict) -> int | None:
+    """The constant value a Ground/VDD/Const driver pushes, or None."""
+    idx = d.get("component_index")
+    if idx is None or not (0 <= idx < len(circuit.components)):
+        return None
+    comp = circuit.components[idx]
+    bits = int(comp.attributes.get("Bits", 1) or 1)
+    if comp.element_name == "Ground":
+        return 0
+    if comp.element_name == "VDD":
+        return (1 << bits) - 1
+    if comp.element_name == "Const":
+        try:
+            return int(comp.attributes.get("Value", 1)) & ((1 << bits) - 1)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _check_multi_drivers(circuit: Circuit, facts: CircuitFacts) -> list[Issue]:
     out: list[Issue] = []
     for bug in facts.bugs:
@@ -157,17 +176,107 @@ def _check_multi_drivers(circuit: Circuit, facts: CircuitFacts) -> list[Issue]:
         descs = [_pin_descr(circuit, d) for d in drivers]
         loc = (drivers[0]["x"], drivers[0]["y"])
         # Digital raises the short-circuit error at RUN time, and only
-        # when the tied outputs actually disagree. A signal tied to one
-        # constant (e.g. a register's Q shorted to Ground as an "x0 is
-        # always 0" hack) runs cleanly as long as the values agree, so
-        # it is a warning, not an error. Two real outputs tied together
-        # stay an error: they will conflict as soon as they differ.
-        n_const = sum(
-            1 for d in drivers
-            if d.get("element_name") in _CONSTANT_DRIVER_ELEMENTS
+        # when the tied outputs actually disagree — three jar-verified
+        # tolerances demote to WARNING (all found on real, Digital-clean
+        # student files):
+        #   * one real output tied to constants (register Q shorted to
+        #     Ground as an "x0 is always 0" hack) — runs while the
+        #     values agree;
+        #   * SAME-VALUED constants tied together (several Const(51)
+        #     elements feeding one tunnel name) — they always agree;
+        #   * a top-level In sharing the net (a test-harness tap):
+        #     Digital lets an In that the testcase doesn't drive yield
+        #     to the other driver.
+        # Two real outputs, or constants with DIFFERENT values, stay
+        # hard errors: they conflict as soon as values differ.
+        # An In yields ONLY in the test workflow: when the file has a
+        # testcase whose columns omit that In, the test vector never
+        # drives it, and Digital lets the other driver win. 
+        # An In the testcase DOES drive — or any In in a file with
+        # no testcase at all, where interactive mode drives every In —
+        # conflicts like a real output.
+        test_columns: set[str] = set()
+        has_testcase = False
+        for comp in circuit.components:
+            if comp.element_name != "Testcase":
+                continue
+            has_testcase = True
+            raw = comp.attributes.get("Testdata", "")
+            if isinstance(raw, str):
+                for line in raw.splitlines():
+                    line = line.split("#")[0].strip()
+                    if line:
+                        test_columns.update(line.split())
+                        break
+        n_signal = 0
+        n_in = 0
+        const_vals: list[int | None] = []
+        for d in drivers:
+            en = d.get("element_name")
+            if en in _CONSTANT_DRIVER_ELEMENTS:
+                const_vals.append(_const_driver_value(circuit, d))
+            elif en == "In":
+                idx = d.get("component_index")
+                label = (circuit.components[idx].label
+                         if idx is not None
+                         and 0 <= idx < len(circuit.components) else None)
+                if has_testcase and not (label and label in test_columns):
+                    n_in += 1         # test vector never drives this In
+                else:
+                    n_signal += 1
+            else:
+                n_signal += 1
+        consts_agree = (
+            not const_vals
+            or (None not in const_vals and len(set(const_vals)) == 1)
         )
-        is_const_tie = len(drivers) == 2 and n_const == 1
-        if is_const_tie:
+        is_tolerated = n_signal <= 1 and consts_agree
+        if is_tolerated and n_in and not const_vals and n_signal <= 1:
+            out.append(Issue(
+                kind="multi_driver",
+                severity=IssueSeverity.WARNING,
+                title=f"Input pin tied to a driven net: {', '.join(descs)}",
+                message=(
+                    f"{len(drivers)} drivers share this wire, including a "
+                    f"top-level In. Digital lets an In the testcase does "
+                    f"not drive yield to the other driver, so tests run — "
+                    f"but driving the In interactively while the other "
+                    f"output is active will conflict."
+                ),
+                component_indices=bug.component_indices,
+                location=loc,
+                net_id=bug.net_id,
+                suggested_fix=(
+                    "If the In is a leftover manual-test tap, remove it "
+                    "or its wire; the internal signal already drives this "
+                    "net."
+                ),
+            ))
+            continue
+        if is_tolerated and const_vals and n_signal == 0:
+            out.append(Issue(
+                kind="multi_driver",
+                severity=IssueSeverity.WARNING,
+                title=(
+                    f"Same-valued constants tied together: "
+                    f"{', '.join(descs)}"
+                ),
+                message=(
+                    f"{len(drivers)} constant drivers share this wire "
+                    f"(usually several equal Const elements feeding one "
+                    f"tunnel name). They always agree, so Digital runs "
+                    f"this fine — but one Const would be cleaner."
+                ),
+                component_indices=bug.component_indices,
+                location=loc,
+                net_id=bug.net_id,
+                suggested_fix=(
+                    "Keep a single Const (or a single tunnel source) and "
+                    "delete the duplicates."
+                ),
+            ))
+            continue
+        if is_tolerated and const_vals and n_signal == 1:
             out.append(Issue(
                 kind="multi_driver",
                 severity=IssueSeverity.WARNING,

@@ -201,3 +201,55 @@ def test_accept_fix_refuses_empty_ops():
     r = client.post("/api/l3/accept_fix", json={
         "session_id": sid, "filename": "Wrong_cin.dig", "ops": []})
     assert r.json()["ok"] is False
+
+
+def test_empty_testcase_debug_runs_on_injected_temp(monkeypatch, tmp_path):
+    # Gradescope-style: a cpu whose own testcase has no rows must be
+    # debugged against the OFFICIAL rows — without injection Mode A saw
+    # zero failing rows and wrongly reported "every row passes" (r34).
+    import io, os
+    empty_cpu = """<?xml version="1.0" encoding="utf-8"?>
+<circuit>
+  <version>2</version>
+  <attributes/>
+  <visualElements>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry><string>Label</string><string>clk</string></entry>
+      </elementAttributes>
+      <pos x="0" y="0"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry><string>Label</string><string>cpu</string></entry>
+        <entry><string>Testdata</string><testData><dataString>clk ReadData1 ReadData2
+</dataString></testData></entry>
+      </elementAttributes>
+      <pos x="0" y="200"/>
+    </visualElement>
+  </visualElements>
+  <wires/>
+</circuit>
+"""
+    r = client.post("/api/circuit", files=[
+        ("files", ("cpu.dig", io.BytesIO(empty_cpu.encode()),
+                   "application/xml"))])
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+
+    fake = _canned("analysis", [])
+    monkeypatch.setattr(debugger, "debug_circuit", fake)
+    res = client.post("/api/llm/debug", json={
+        "session_id": sid, "filename": "cpu.dig"}).json()
+
+    assert fake.calls, "debug_circuit was not reached"
+    called_path = fake.calls[0]["path"]
+    target = server._resolve_target(sid, "cpu.dig")
+    # the coordinator ran on the injected sibling temp, not the raw file
+    assert called_path != target["path"]
+    assert ".dlc_injected__" in os.path.basename(called_path)
+    assert res.get("injected"), "response should carry the injection note"
+    # and the temp was cleaned up after the run
+    assert not os.path.exists(called_path)

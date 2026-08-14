@@ -294,7 +294,7 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
          cause); rows with no column info can never count as scattered.
       2. STRUCTURAL — unbound columns; clock driven with no state element.
       3. PASS-RATE BARS, checked LAST (no focus amnesty anymore):
-           > 10 rows:  lazy when failing > max_failing AND pass rate < 80%
+           > 10 rows:  lazy when failing > max_failing AND pass rate < 20%
            6-10 rows:  lazy when pass rate < 60%
            1-5  rows:  lazy when pass rate < 30%
     ``row_mismatch_columns`` carries one set of mismatched output columns
@@ -352,12 +352,12 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
     passing = max(0, n_rows - failing_count)
     rate = passing / n_rows if n_rows else 0.0
     if n_rows >= 11:
-        if failing_count > max_failing and rate < 0.80:
+        if failing_count > max_failing and rate < 0.20:
             flags.append({
                 "kind": "too_many_failures",
                 "detail": (
                     f"{failing_count} of {n_rows} rows fail — more than "
-                    f"{max_failing}, with under 80% passing. That is "
+                    f"{max_failing}, with under 20% passing. That is "
                     f"usually a structural problem (wrong wiring plan, "
                     f"missing block), not one localized bug; revisit the "
                     f"design before chasing single rows."

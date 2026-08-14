@@ -223,8 +223,8 @@ def test_two_register_outputs_tied_is_still_an_error(tmp_path):
     )
     wires = (
         _w(0, 0, 60, 0) + _w(0, 20, 60, 20)
-        + _w(0, 0, 0, 100) + _w(0, 100, 60, 100)
-        + _w(0, 20, 0, 120) + _w(0, 120, 60, 120)
+        + _w(20, 0, 20, 100) + _w(20, 100, 60, 100)
+        + _w(40, 20, 40, 120) + _w(40, 120, 60, 120)
         + _w(120, 20, 140, 20)
         + _w(120, 120, 140, 120)
         + _w(140, 20, 140, 120)
@@ -344,3 +344,88 @@ def test_rom_run_length_data_expands():
     from dlc.sim.simulator import _rom_words
     rom = _c("ROM", **{"AddrBits": 4, "Bits": 8, "Data": "3*1f,2a"})
     assert _rom_words(rom) == [0x1F, 0x1F, 0x1F, 0x2A]
+
+
+# ---- r34: real Lab-1/2/5 false positives -----------------------------------
+
+def test_mirrored_splitter_pins_flip_up():
+    # SVG-verified on a real add-sub "32 -> 31, 1" sign extractor:
+    # mirror=true puts pin i at -i*spacing (out1 one row ABOVE the
+    # anchor). Without it the unwired 31-bit out0 loose-snapped onto the
+    # sign wire and produced width_mismatch on correct files.
+    s = _c("Splitter", **{"Input Splitting": "32",
+                          "Output Splitting": "31, 1", "mirror": True})
+    got = {p.name: (p.offset_x, p.offset_y) for p in get_pin_specs(s)}
+    assert got == {"in0": (0, 0), "out0": (20, 0), "out1": (20, -20)}
+
+
+def test_seven_seg_pins_sit_on_anchor_and_140():
+    # SVG-verified on a real Lab-2 file: a-d ON the anchor row, e/f/g/dp
+    # all at +140 (dp is NOT a row lower).
+    seg = _c("Seven-Seg")
+    got = {p.name: (p.offset_x, p.offset_y) for p in get_pin_specs(seg)}
+    assert got == {
+        "a": (0, 0), "b": (20, 0), "c": (40, 0), "d": (60, 0),
+        "e": (0, 140), "f": (20, 140), "g": (40, 140), "dp": (60, 140),
+    }
+
+
+def test_equal_valued_consts_tied_by_tunnels_is_warning(tmp_path):
+    # Real control-unit ladders reuse Const(51) via one tunnel name —
+    # several equal constants on one net always agree, and Digital runs
+    # them fine. Unequal constants stay an error.
+    def circuit(v2):
+        elements = (
+            _ve("Const", 0, 0, _entry("Value", 51, "long") + _entry("Bits", 7, "int"))
+            + _ve("Const", 0, 100, _entry("Value", v2, "long") + _entry("Bits", 7, "int"))
+            + _ve("Out", 200, 0, _entry("Label", "Y") + _entry("Bits", 7, "int"))
+        )
+        wires = (_w(0, 0, 100, 0) + _w(0, 100, 100, 100)
+                 + _w(100, 0, 100, 100) + _w(100, 0, 200, 0))
+        return _xml_circuit(elements, wires)
+
+    p = tmp_path / "consts.dig"
+    p.write_text(circuit(51), encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert len(md) == 1 and md[0].severity.value == "warning"
+
+    p.write_text(circuit(50), encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert md and all(i.severity.value == "error" for i in md)
+
+
+def test_testcase_unlisted_in_tap_is_warning(tmp_path):
+    # jar-probed (r34): an In the testcase does not drive YIELDS to the
+    # other driver — a real student cpu taps rs1/rs2/rd nets with In
+    # elements while the official testcase drives only clk. With no
+    # testcase at all every In drives (interactive mode) and the same
+    # short stays an error.
+    tap = (
+        _ve("In", 0, 0, _entry("Label", "rs1") + _entry("Bits", 5, "int"))
+        + _ve("In", 0, 100, _entry("Label", "src") + _entry("Bits", 5, "int"))
+        + _ve("Out", 200, 0, _entry("Label", "Y") + _entry("Bits", 5, "int"))
+    )
+    wires = (_w(0, 0, 100, 0) + _w(0, 100, 100, 100)
+             + _w(100, 0, 100, 100) + _w(100, 0, 200, 0))
+    with_test = _xml_circuit(
+        tap + (
+            "    <visualElement><elementName>Testcase</elementName>"
+            "<elementAttributes><entry><string>Testdata</string>"
+            "<testData><dataString>src Y\n1 1\n</dataString></testData>"
+            "</entry></elementAttributes><pos x=\"0\" y=\"300\"/>"
+            "</visualElement>\n"
+        ),
+        wires,
+    )
+    p = tmp_path / "tap.dig"
+    p.write_text(with_test, encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert len(md) == 1 and md[0].severity.value == "warning"
+
+    p.write_text(_xml_circuit(tap, wires), encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert md and all(i.severity.value == "error" for i in md)

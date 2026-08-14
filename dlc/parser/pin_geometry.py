@@ -83,14 +83,18 @@ _REGISTER_FILE_PINS = [
 ]
 
 _SEVEN_SEG_PINS = [
-    PinSpec("a",  offset_x=0,  offset_y=-40, direction="in"),
-    PinSpec("b",  offset_x=20, offset_y=-40, direction="in"),
-    PinSpec("c",  offset_x=40, offset_y=-40, direction="in"),
-    PinSpec("d",  offset_x=60, offset_y=-40, direction="in"),
-    PinSpec("e",  offset_x=0,  offset_y=180, direction="in"),
-    PinSpec("f",  offset_x=20, offset_y=180, direction="in"),
-    PinSpec("g",  offset_x=40, offset_y=180, direction="in"),
-    PinSpec("dp", offset_x=60, offset_y=240, direction="in"),
+    # SVG-verified on a real Lab-2 file (r34): the default Seven-Seg's
+    # pins sit ON the anchor row (a-d) and 140 below it (e,f,g,dp — one
+    # shared row, dp NOT lower). The old -40/180/240 offsets only ever
+    # worked because students park tunnels exactly one wire-length away.
+    PinSpec("a",  offset_x=0,  offset_y=0, direction="in"),
+    PinSpec("b",  offset_x=20, offset_y=0, direction="in"),
+    PinSpec("c",  offset_x=40, offset_y=0, direction="in"),
+    PinSpec("d",  offset_x=60, offset_y=0, direction="in"),
+    PinSpec("e",  offset_x=0,  offset_y=140, direction="in"),
+    PinSpec("f",  offset_x=20, offset_y=140, direction="in"),
+    PinSpec("g",  offset_x=40, offset_y=140, direction="in"),
+    PinSpec("dp", offset_x=60, offset_y=140, direction="in"),
 ]
 
 STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
@@ -234,12 +238,19 @@ def _multiplexer_pins(comp: Component) -> list[PinSpec]:
 
 def _splitter_pins(comp: Component) -> list[PinSpec]:
     """
-    Splitter. 
+    Splitter.
     Splitter / merger. Bit-group sizes determine pin count. Inputs on the
     left edge, outputs on the right edge. Pin spacing = 20 * splitterSpreading.
 
     splitterSpreading defaults to 1 (20-unit spacing). When set (e.g. =2),
-    pins are spaced 40 units apart
+    pins are spaced 40 units apart.
+
+    `mirror` (boolean) flips the shape vertically about the anchor row:
+    pin i sits at -i*spacing instead of +i*spacing (SVG-verified on a
+    real add-sub "32 -> 31,1" sign extractor: out0 stays on the anchor
+    row, out1 lands one row ABOVE). Without this, the unwired 31-bit
+    out0 loose-snapped onto the sign wire and produced width_mismatch
+    errors on correct student files.
     """
     in_split = str(comp.attributes.get("Input Splitting", "1"))
     out_split = str(comp.attributes.get("Output Splitting", "1"))
@@ -247,6 +258,8 @@ def _splitter_pins(comp: Component) -> list[PinSpec]:
     in_groups = [s.strip() for s in in_split.split(",") if s.strip()]
     out_groups = [s.strip() for s in out_split.split(",") if s.strip()]
     spacing = 20 * spread
+    if comp.attributes.get("mirror") in (True, "true", "True"):
+        spacing = -spacing
 
     pins: list[PinSpec] = []
     for i, _ in enumerate(in_groups):

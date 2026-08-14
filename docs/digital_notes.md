@@ -65,13 +65,13 @@ Digital's coordinate system: x increases rightward, y increases downward. Anchor
 | `Tunnel` | single bidir pin at anchor | | NetName unifies across the circuit |
 | `Multiplexer` (sel_bits=1, n=2) | `in0` (0, 0), `in1` (0, 40), `sel` (20, 40) | `out` (40, 20) | **Different spacing for 2-input vs 4+** |
 | `Multiplexer` (sel_bits≥2, n≥4) | `in_i` at (0, i*20), `sel` at (20, n*20) | `out` at (40, n*10) | |
-| `Splitter` | `in_i` at (0, i*spacing) | `out_i` at (20, i*spacing) | spacing = 20 × `splitterSpreading` (default 1, can be 2+) |
+| `Splitter` | `in_i` at (0, i*spacing) | `out_i` at (20, i*spacing) | spacing = 20 × `splitterSpreading` (default 1, can be 2+). **`mirror`=true negates the spacing** — pin i at −i*spacing, pin 0 stays on the anchor row (SVG-verified on a real add-sub "32 → 31,1" sign extractor, r34) |
 | `Register` | `D` (0, 0), `C` (0, 20), `en` (0, 40) | `Q` (60, 20) | `en` always present even when tied to Const(1) |
 | `Comparator` | `A` (0, 0), `B` (0, 20) | `gr` (60, 0), `eq` (60, 20), `le` (60, 40) | Width **60**, not 80 — common mistake |
 | `Add` | `a` (0, 0), `b` (0, 20), `c_i` (0, 40) | `s` (60, 0), `c_o` (60, 20) | Width **60**. Input order top-to-bottom matches Digital's UI: a, b, c_i. c_o at y=20 not y=40 — earlier-assumed (80, 40) layout consistently snapped to wire L-bends and produced phantom multi-drivers. |
 | `BitExtender` | `in` (0, 0) | `out` (80, 0) | Width varies with outputBits; snap tolerance absorbs ±20 |
 | `BarrelShifter` | `in` (0, 0), `sh` (0, 40) | `out` (60, 20) | |
-| `Seven-Seg` | `a/b/c/d` at `(0,-40)/(20,-40)/(40,-40)/(60,-40)`; `e/f/g` at `(0,180)/(20,180)/(40,180)`; `dp` at `(60, 240)` | (no outputs — display sink only) | Verified against Lab 2 (rotation=0) and tier3_latched_display (rotation=3). The `dp` pin sits one row below `e/f/g`, aligned x-wise with `d`. |
+| `Seven-Seg` | `a/b/c/d` at `(0,0)/(20,0)/(40,0)/(60,0)`; `e/f/g/dp` at `(0,140)/(20,140)/(40,140)/(60,140)` | (no outputs — display sink only) | **Corrected r34** via SVG export of a real Lab-2 file: pins sit ON the anchor row and at +140, `dp` on the SAME row as e/f/g. The old −40/180/240 offsets only ever matched because students park tunnels exactly one wire-length past the pins. |
 | `ROM` | `A` (0, 0), `sel` (0, 40) | `D` (60, 20) | Box is 60 wide (SVG-verified, r30) — the old (80, 20) survived only via loose endpoint snapping |
 | `RegisterFile` | `Din` (0,0), `we` (0,20), `Rw` (0,40), `C` (0,60), `Ra` (0,80), `Rb` (0,100) | `Da` (80,0), `Db` (80,20) | Built-in register bank (Memory category); width **80**; reads combinational, write clocked; measured on a real student CPU (r28, re-landed r31) |
 | `Decoder` | `sel` (20, (n_outputs − 1) * 20) | `out_i` at (60, i*20) | **sel sits at the LAST output's height, NOT one row below like the Mux** — measured on a rotation-2 sel_bits=5 Decoder whose sel feed lands exactly at (20, 620); the old n*20 table falsely flagged its sel undriven |
@@ -264,6 +264,22 @@ verified empirically:
   order** (re-confirmed: the answer alu declares FlagZ before Result in
   the file but places Result above FlagZ on canvas; Digital renders
   FlagZ on the top row).
+- **Multi-driver tolerances (r34, jar-probed)**: Digital's short-circuit
+  check fires at RUN time on value conflict, so three same-net driver
+  mixes run cleanly and are WARNINGS, not errors: (1) one real output +
+  agreeing constants; (2) several SAME-valued constants tied by one
+  tunnel name; (3) a top-level `In` the file's testcase does not drive —
+  the test vector never powers it, and the jar lets the other driver
+  win. An In that IS a testcase column, an In in a file with no
+  testcase (interactive mode drives every In), two real outputs, or
+  constants with different values all stay hard errors.
+- **Mode A debugs the injected run (r34)**: when the file's testcase is
+  missing/modified and an official set exists, /api/llm/debug builds the
+  same sibling injected temp the Dashboard runs use and debugs THAT —
+  otherwise a header-only testcase yields zero failing rows and the
+  board wrongly says "every row passes". Accept-Fix temps built from the
+  raw file get the official rows written in place; temps descending
+  from Mode B keep their coach-added rows untouched.
 - **Gradescope-style injection (r31 policy)**: when a filename has an
   official test set registered (data/official_tests_defaults.json or a
   Settings entry) and the file's own testcase does not MATCH it

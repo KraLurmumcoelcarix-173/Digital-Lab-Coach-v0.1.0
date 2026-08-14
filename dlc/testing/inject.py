@@ -197,6 +197,36 @@ def prepare_injected_run(path: str, filename: str) -> tuple[str | None, list[str
         return None, []
 
 
+def inject_official_tests_in_place(path: str, filename: str) -> list[str]:
+    """Apply testcase injection (only — never ROM) directly to `path`,
+    which must be a TOOL-OWNED scratch copy (an L3 coach temp), never a
+    student's real file. Returns the notes, [] when nothing applied.
+
+    Layer 3's fix-retest loop rebuilds a temp from the student's base
+    file: without this, an empty/modified testcase makes the retest see
+    zero (or non-official) rows and report "all fixed" on nothing."""
+    try:
+        from dlc.parser.dig_parser import parse_dig_file
+        circuit = parse_dig_file(path)
+        status = file_test_status(circuit, filename)
+        if status not in ("missing", "modified"):
+            return []
+        official = _official_testcase(filename)
+        if not official:
+            return []
+        tree = ET.parse(path)
+        if not _replace_testcases(tree.getroot(), official):
+            return []
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+        if status == "missing":
+            return ["official testcase injected (this file has no test "
+                    "rows — Gradescope grades with the official tests)"]
+        return ["official testcase injected in place of the modified "
+                "testcase (Gradescope grades with the official tests)"]
+    except Exception:
+        return []
+
+
 def cleanup_injected(temp_path: str | None) -> None:
     if not temp_path:
         return

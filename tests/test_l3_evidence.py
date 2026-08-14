@@ -157,15 +157,21 @@ def _spec_of(n):
 
 def test_tiered_pass_rate_bars():
     # exercised with the bars forced on (bug3 itself is a small circuit,
-    # exempt by default — asserted at the end). v0.1.0 bars: 80/60/30.
+    # exempt by default — asserted at the end). v0.1.0 bars: 20/60/30 —
+    # the >10-row bar was lowered from 80% to 20% (r34, instructor's
+    # call) so a 27%-passing real cpu still gets Mode A analysis.
     c, _nl, _g = _parsed(_BUG3)
     on = {"rate_gate_min_components": 0}
     # big suite: >10 failing alone is fine while >=80% still passes
     assert gross_check(c, _spec_of(200), failing_count=15, **on) == []
     # the old 90% bar rejected this near-passing suite; 85% is analyzable
     assert gross_check(c, _spec_of(100), failing_count=15, **on) == []
-    # big suite: >10 failing AND under 80% -> structural
-    kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 11, **on)]
+    # big suite: 45% passing (11 of 20 failing) is analyzable at the 20% bar
+    assert gross_check(c, _spec_of(20), failing_count=11, **on) == []
+    # a 27%-passing cpu-style suite is analyzable too (the r34 motivator)
+    assert gross_check(c, _spec_of(23), failing_count=17, **on) == []
+    # big suite: >10 failing AND under 20% -> structural
+    kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 17, **on)]
     assert kinds == ["too_many_failures"]
     # big suite: many rows failing but <=10 absolute -> still analyzable
     assert gross_check(c, _spec_of(12), failing_count=2, **on) == []
