@@ -339,6 +339,39 @@ class DebugRequest(BaseModel):
     model: str | None = None
 
 
+_ROM_HINT = (
+    "Check your ROM data: this analysis ran with the course program "
+    "loaded into your empty ROM, so the fix above covers the logic only "
+    "— your own file's ROM is still unprogrammed. Fill it in before "
+    "submitting."
+)
+
+
+def _rom_injected_notes(notes: list[str] | None) -> bool:
+    """Did prepare_injected_run fill ROM(s) for this run? Keyed on the
+    marker substring the inject note carries (see inject.py)."""
+    return any("course program was loaded" in n for n in (notes or []))
+
+
+def _apply_rom_hint(result: dict, rom_injected: bool) -> None:
+    """r38: a verified fix produced on a rom-injected run must remind the
+    student their OWN rom is still empty — the fix alone will not make
+    their submission pass. Rides every card's fix (a dedicated field plus
+    the student-visible explanation) and flags the result for the
+    benchmark."""
+    result["rom_injected"] = rom_injected
+    if not rom_injected:
+        return
+    for card in result.get("cards") or []:
+        fix = card.get("fix") or {}
+        fix["rom_hint"] = _ROM_HINT
+        expl = (fix.get("explanation_for_student") or "").rstrip()
+        if expl and not expl.endswith("."):
+            expl += "."
+        fix["explanation_for_student"] = (expl + " " + _ROM_HINT).strip()
+        card["fix"] = fix
+
+
 @router.post("/api/llm/debug")
 def llm_debug(req: DebugRequest) -> dict:
     """Mode A coordinator (explicit trigger only): per-row verdict →
@@ -392,6 +425,7 @@ def llm_debug(req: DebugRequest) -> dict:
             path = inj_temp
             spec_name = None         # injected spec is the only one
 
+    rom_injected = _rom_injected_notes(inj_notes)
     try:
         result = debugger.debug_circuit(
             path, spec_name=spec_name, spec_index=req.spec_index,
@@ -399,6 +433,7 @@ def llm_debug(req: DebugRequest) -> dict:
             # the REAL filename decides the control-unit lazy exemption —
             # coach temps carry generated names the path check would miss
             lazy_exempt=debugger._lazy_exempt_name(req.filename),
+            rom_injected=rom_injected,
         )
     except Exception as exc:         # defense in depth
         return {"ok": False, "mode": "error",
@@ -408,6 +443,7 @@ def llm_debug(req: DebugRequest) -> dict:
             cleanup_injected(inj_temp)
     if inj_notes:
         result["injected"] = inj_notes
+    _apply_rom_hint(result, rom_injected)
 
     consumed = (result.get("mode") == "analysis"
                 and bool(result.get("cards")))
@@ -490,9 +526,20 @@ def l3_accept_fix(req: AcceptFixRequest) -> dict:
             "coach_rows": prev_coach_rows,
         }
 
-    # show the green: per-row rerun of the FIXED temp (jar or evaluator)
+    # show the green: per-row rerun of the FIXED temp (jar or evaluator).
+    # run through the same injection as every other run — a
+    # rom-injected lab (cpu.dig) must re-test WITH the course program in
+    # its empty ROM, or a verified wiring fix would show every row red.
+    # The rom-filled sibling is runner-scoped and removed right after;
+    # the registered coach temp itself never stores official rom data.
+    inj2 = None
     try:
-        circ = parse_dig_file(temp)
+        from dlc.testing.inject import (
+            prepare_injected_run, cleanup_injected,
+        )
+        inj2, inj2_notes = prepare_injected_run(temp, req.filename)
+        run_path = inj2 or temp
+        circ = parse_dig_file(run_path)
         specs = extract_test_specs(circ)
         sp = next((s for s in specs if s.name == spec_name),
                   specs[0] if specs else None)
@@ -504,28 +551,34 @@ def l3_accept_fix(req: AcceptFixRequest) -> dict:
         from dlc.testing.runner import find_digital_jar
         jar = find_digital_jar()
         if jar:
-            rs = per_row_run_auto(sp, temp, jar_path=jar)
+            rs = per_row_run_auto(sp, run_path, jar_path=jar)
             rows = [{"index": r.row_index,
                      "raw": raw_by_idx.get(r.row_index, ""),
                      "status": "passed" if r.status == "passed"
                                else "failed"} for r in rs]
         else:
             from dlc.l3.debugger import _offline_failing
-            failing, _det = _offline_failing(temp, sp.name)
+            failing, _det = _offline_failing(run_path, sp.name)
             rows = [{"index": r.line_index, "raw": r.raw,
                      "status": "failed" if r.line_index in failing
                                else "passed"}
                     for r in sp.rows if not r.is_malformed]
         allp = all(r["status"] == "passed" for r in rows)
-        return {"ok": True, "temp_filename": temp_filename,
-                "spec": {"name": sp.name, "headers": list(sp.headers),
-                         "rows": rows, "all_passed": allp},
-                "all_passed": allp}
+        out = {"ok": True, "temp_filename": temp_filename,
+               "spec": {"name": sp.name, "headers": list(sp.headers),
+                        "rows": rows, "all_passed": allp},
+               "all_passed": allp}
+        if inj2_notes:
+            out["injected"] = inj2_notes
+        return out
     except Exception as exc:             # registered fine; rerun best-effort
         return {"ok": True, "temp_filename": temp_filename, "spec": None,
                 "all_passed": None,
                 "warning": (f"fix accepted onto the temp, but the rerun "
                             f"failed: {type(exc).__name__}: {exc}")}
+    finally:
+        if inj2:
+            cleanup_injected(inj2)
 
 
 class FixRetestRequest(BaseModel):

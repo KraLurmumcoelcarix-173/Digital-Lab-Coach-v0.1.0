@@ -692,7 +692,7 @@ def test_all_rows_error_with_unbound_columns_gets_rename_guidance(
 
 
 def test_control_unit_files_skip_the_lazy_gate(tmp_path):
-    # instructor ruling (marked temporary): control-unit files
+    # r37.1 instructor ruling (marked temporary): control-unit files
     # always analyze — the decode-table lab must reach Mode A no matter
     # how gross the failure shape looks. Same content under any other
     # name keeps every ratified lazy bar.
@@ -728,3 +728,32 @@ def test_control_unit_files_skip_the_lazy_gate(tmp_path):
                          failing_indices=[0, 1, 2, 3], jar_mismatches=cells)
     assert res2["mode"] == "analysis"
     assert any("lazy-gate checks skipped" in n for n in res2["notes"])
+
+
+def test_rom_injected_note_rides_every_cluster_prompt():
+    # r38: when the analyzed copy runs with grader-injected rom content,
+    # every cluster prompt carries the [ROM NOTE] so the model never
+    # proposes Data changes against official words. Plain runs don't.
+    # the template MENTIONS "[ROM NOTE]" in its reading guide, so the
+    # live block is recognized by its unique closing sentence
+    marker = "still has that ROM unprogrammed"
+    call = _fake([_reply(GOOD_OPS)])
+    debug_circuit(_BUG3, call=call, use_manifest=False,
+                  failing_indices=[0, 1], rom_injected=True)
+    assert marker in call.log[0]
+
+    call2 = _fake([_reply(GOOD_OPS)])
+    debug_circuit(_BUG3, call=call2, use_manifest=False,
+                  failing_indices=[0, 1])
+    assert marker not in call2.log[0]
+
+
+def test_prompt_checks_stored_data_first_not_last():
+    # r38 instructor ruling: the old "ROM data is a last resort" bias is
+    # gone; unverified stored data is now checked FIRST, and only
+    # grader-injected content is off limits (via the [ROM NOTE]).
+    from dlc.l3.debugger import _load_prompt
+    text = _load_prompt()
+    assert "LAST RESORT" not in text
+    assert "CHECK IT FIRST" in text
+    assert "[ROM NOTE]" in text

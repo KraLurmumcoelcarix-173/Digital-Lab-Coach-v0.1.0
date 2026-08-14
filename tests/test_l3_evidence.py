@@ -478,3 +478,26 @@ def test_dead_trunk_full_output_surface_is_analyzable():
     )
     assert res.mode == "analysis"
     assert res.failing_count == 5
+
+
+def test_suspect_attrs_show_student_words_hide_injected_ones():
+    # r38: a student's own small stored table rides the payload so a
+    # partially-wrong word can be convicted; grader-injected words never
+    # do (a reply echoing them would leak the course program).
+    from types import SimpleNamespace
+    from dlc.l3.evidence import _suspect_attrs
+
+    rom = SimpleNamespace(element_name="ROM",
+                          attributes={"AddrBits": 3, "Bits": 8,
+                                      "Data": "82,86,80"})
+    shown = _suspect_attrs(rom)
+    assert shown["stored_words"] == "82,86,80"
+    assert shown["data_words_stored"] == 3
+
+    hidden = _suspect_attrs(rom, hide_rom_words=True)
+    assert "stored_words" not in hidden
+    assert hidden["data_words_stored"] == 3
+
+    big = SimpleNamespace(element_name="ROM",
+                          attributes={"Data": ",".join(["1"] * 33)})
+    assert "stored_words" not in _suspect_attrs(big)

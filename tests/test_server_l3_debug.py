@@ -253,3 +253,128 @@ def test_empty_testcase_debug_runs_on_injected_temp(monkeypatch, tmp_path):
     assert res.get("injected"), "response should carry the injection note"
     # and the temp was cleaned up after the run
     assert not os.path.exists(called_path)
+
+
+# ---------------------------------------------------------------------------
+# r38: rom-injected runs — the model note, the student hint, the rerun
+# ---------------------------------------------------------------------------
+
+def test_rom_hint_rides_verified_cards_on_rom_injected_runs():
+    from dlc.web.l3_routes import _apply_rom_hint, _rom_injected_notes
+
+    assert _rom_injected_notes(
+        ["the course program was loaded into 1 empty ROM for this run "
+         "so your logic could be tested"]) is True
+    assert _rom_injected_notes(
+        ["official testcase injected (this file has no test rows)"]) is False
+    assert _rom_injected_notes(None) is False
+
+    result = {"mode": "analysis", "cards": [
+        {"fix": {"ops": [], "explanation_for_student": "rewire the mux"}}]}
+    _apply_rom_hint(result, True)
+    assert result["rom_injected"] is True
+    card_fix = result["cards"][0]["fix"]
+    assert "Check your ROM data" in card_fix["rom_hint"]
+    assert card_fix["explanation_for_student"].startswith("rewire the mux.")
+    assert "Check your ROM data" in card_fix["explanation_for_student"]
+
+    untouched = {"mode": "analysis", "cards": [
+        {"fix": {"ops": [], "explanation_for_student": "rewire the mux"}}]}
+    _apply_rom_hint(untouched, False)
+    assert untouched["rom_injected"] is False
+    assert "rom_hint" not in untouched["cards"][0]["fix"]
+
+
+def test_debug_endpoint_passes_rom_injected_and_applies_hint(
+        monkeypatch, tmp_path):
+    import shutil
+    sid = _upload_bug3()
+    fake = _canned("analysis", [
+        {"rank": 1, "fix": {"ops": [], "explanation_for_student": "fix X"}}])
+    monkeypatch.setattr(debugger, "debug_circuit", fake)
+
+    import dlc.testing.inject as inject_mod
+
+    def fake_prepare(path, filename):
+        temp = tmp_path / f".dlc_injected__{filename}"
+        shutil.copy(path, temp)
+        return str(temp), [
+            "the course program was loaded into 1 empty ROM for this run "
+            "so your logic could be tested"]
+    monkeypatch.setattr(inject_mod, "prepare_injected_run", fake_prepare)
+
+    body = _debug(sid)
+    assert body["rom_injected"] is True
+    assert fake.calls[-1]["rom_injected"] is True
+    assert "Check your ROM data" in body["cards"][0]["fix"]["rom_hint"]
+    assert "Check your ROM data" in (
+        body["cards"][0]["fix"]["explanation_for_student"])
+    assert any("course program" in n for n in body["injected"])
+
+
+def _rom_lab_defaults(tmp_path):
+    """A synthetic rom-injection lab registered via the defaults seam:
+    1-bit address ROM, official rows expect its (injected) words 5,6."""
+    import base64
+    import json as _json
+    defaults = {
+        "romlab.dig": {
+            "content": "A D\n0 5\n1 6",
+            "sha1": "0" * 40,
+            "runtime": base64.b64encode(
+                _json.dumps({"rom": "5,6"}).encode()).decode(),
+        }
+    }
+    p = tmp_path / "defaults.json"
+    p.write_text(_json.dumps(defaults), encoding="utf-8")
+    return p
+
+
+_ROM_LAB = (
+    '<?xml version="1.0" encoding="utf-8"?><circuit><version>2</version>'
+    '<attributes/><visualElements>'
+    '<visualElement><elementName>In</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>A</string></entry>'
+    '</elementAttributes><pos x="0" y="0"/></visualElement>'
+    '<visualElement><elementName>VDD</elementName><elementAttributes/>'
+    '<pos x="160" y="40"/></visualElement>'
+    '<visualElement><elementName>ROM</elementName><elementAttributes>'
+    '<entry><string>AddrBits</string><int>1</int></entry>'
+    '<entry><string>Bits</string><int>4</int></entry>'
+    '</elementAttributes><pos x="200" y="0"/></visualElement>'
+    '<visualElement><elementName>Out</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>D</string></entry>'
+    '<entry><string>Bits</string><int>4</int></entry>'
+    '</elementAttributes><pos x="400" y="20"/></visualElement>'
+    '</visualElements><wires>'
+    '<wire><p1 x="0" y="0"/><p2 x="200" y="0"/></wire>'
+    '<wire><p1 x="160" y="40"/><p2 x="200" y="40"/></wire>'
+    '<wire><p1 x="260" y="20"/><p2 x="400" y="20"/></wire>'
+    '</wires></circuit>'
+)
+
+
+def test_accept_fix_rerun_runs_with_injected_rom(monkeypatch, tmp_path):
+    # r38: the accept-fix "show the green" rerun must run through the
+    # same injection as every other run — on a rom-injection lab the
+    # temp's empty ROM gets the course program for the rerun, so a
+    # verified logic fix re-tests green instead of all-red. The
+    # registered coach temp itself keeps its ROM empty.
+    monkeypatch.setenv("DLC_OFFICIAL_DEFAULTS_PATH",
+                       str(_rom_lab_defaults(tmp_path)))
+    r = client.post("/api/circuit", files=[
+        ("files", ("romlab.dig", _ROM_LAB.encode(), "application/xml"))])
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+
+    noop = [{"op": "change_attribute", "component_index": 3,
+             "name": "Label", "value": "D"}]
+    body = client.post("/api/l3/accept_fix", json={
+        "session_id": sid, "filename": "romlab.dig", "ops": noop,
+    }).json()
+    assert body["ok"] is True
+    assert body["all_passed"] is True, body
+    assert any("course program" in n for n in body.get("injected", []))
+    # the registered temp never stores the official rom words
+    lt = server._SESSIONS[sid]["l3_temp"]
+    assert "5,6" not in open(lt["path"], encoding="utf-8").read()

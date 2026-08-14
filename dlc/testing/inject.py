@@ -181,6 +181,9 @@ def prepare_injected_run(path: str, filename: str) -> tuple[str | None, list[str
             if n:
                 changed = True
                 plural = "s" if n != 1 else ""
+                # "course program was loaded" is a MARKER: the Mode A
+                # route detects rom injection off this substring
+                # (l3_routes._rom_injected_notes) — keep it if rewording.
                 notes.append(
                     f"the course program was loaded into {n} empty "
                     f"ROM{plural} for this run so your logic could be "

@@ -343,7 +343,7 @@ verified empirically:
 - **Mode A daily cap is 1 (r37)** — a booked use requires a delivered
   verified card, and the stop condition bounds one run's spend, so a
   single daily analysis is a full analysis.
-- **Control-unit files skip the lazy gate (TEMPORARY instructor
+- **Control-unit files skip the lazy gate (r37.1, TEMPORARY instructor
   ruling — revisit on request)**: any file whose real name normalizes
   to control-unit (`control-unit.dig`, `controlunit.dig`, injected
   temps included) bypasses gross_check entirely and goes straight to
@@ -352,6 +352,30 @@ verified empirically:
   `req.filename` so coach temps qualify too). Refusal guards
   (build_refused / unbound_columns) and the failing-children gate
   still apply. All other filenames keep every ratified lazy bar.
+
+- **Stored data is checked FIRST, not last**:
+  the Mode A prompt's "ROM data is a last resort" bias is deleted.
+  Mixed rom+logic circuits sort evidence into the data signature
+  (frozen outputs, address/select resolving fine) vs the logic
+  signature (outputs varying in gate-explainable ways) and fix the
+  bucket the rows show. A student's OWN stored table (≤32 words) rides
+  the suspect attrs as `stored_words` so a partially-wrong word can be
+  convicted; empty ROMs keep the exact-op `data_note`.
+- **Rom-injected runs**: Mode A already debugs the rom-filled
+  injected temp (prepare_injected_run fills empty ROMs whenever a
+  runtime payload is registered, testcase status independent). New:
+  the run's prompts carry a [ROM NOTE] ("grader-loaded words are
+  correct by definition — never propose Data changes there"), injected
+  words are excluded from the payload (`hide_rom_words`), every
+  verified card gains a "Check your ROM data" hint (fix.rom_hint + the
+  student explanation) because the student's own file still has the
+  ROM unprogrammed, and the accept-fix "show the green" rerun now runs
+  through the same injection (rom-filled sibling, removed after; the
+  registered coach temp never stores official rom words).
+- **Premium max tokens 8000**: a live Opus full-decode-
+  table derivation still truncated at 6000 and died as
+  invalid_response; the single-cluster frozen-trunk shape needs the
+  headroom.
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 

@@ -64,10 +64,12 @@ _MAX_OPS = 6
 # `stopped_early` flag this produces.
 _MAX_REFUTED_IDEAS = 4
 _MAX_TOKENS = 3000
-# premium-tier models (Opus) reason longer before the JSON: at 3000 the
-# reply truncates mid-object and validates as invalid_response, wasting
-# the cluster's only shot — give them headroom.
-_MAX_TOKENS_PREMIUM = 6000
+# premium-tier models (Opus) reason longer before the JSON: too little
+# headroom truncates the reply mid-object and it validates as
+# invalid_response, wasting the cluster's only shot. 6000 still
+# truncated a live full-decode-table derivation (r38, s008 control
+# unit) — 8000 gives the single-cluster frozen-trunk shape room.
+_MAX_TOKENS_PREMIUM = 8000
 
 
 def _max_tokens_for(model: str) -> int:
@@ -604,6 +606,15 @@ def _touches_stored_data(ops_lists: list[list[dict]],
 # cannot be right — steer the retry to the ADDRESS/SELECT path instead
 # (the live failure mode on the control unit: the model kept rewriting
 # words when the bug was a detect gate feeding the priority encoder).
+_ROM_INJECTED_NOTE = (
+    "\n\n[ROM NOTE]\n"
+    "The empty ROM(s) in this circuit were loaded from the official "
+    "course program FOR THIS RUN by the grader. Those stored words are "
+    "correct by definition — never propose a Data change on them; the "
+    "failing rows come from wiring, selects, or other components. (The "
+    "student's own file still has that ROM unprogrammed.)"
+)
+
 _DATA_REFUTED_STEER = (
     "\nMACHINE FACT: a stored-Data rewrite was already applied and "
     "REFUTED by the re-run above — the stored words satisfy every row "
@@ -662,7 +673,7 @@ def dedupe_hypotheses(hyps: list[dict]) -> list[dict]:
 
 
 def _lazy_exempt_name(name: str | None) -> bool:
-    """Instructor ruling (marked TEMPORARY — revisit on request):
+    """Instructor ruling (r37.1, marked TEMPORARY — revisit on request):
     control-unit files always skip the lazy gate and go straight to
     analysis. Matched on the normalized filename (case/punctuation
     insensitive, tool-owned `.dlc_injected__` prefix stripped), so
@@ -688,6 +699,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   jar_mismatches: dict[int, list[dict]] | None = None,
                   coach_rows: list[int] | None = None,
                   lazy_exempt: bool | None = None,
+                  rom_injected: bool = False,
                   k_cards: int = K_CARDS) -> dict:
     """Run Mode A end to end for one circuit + testcase. Returns the
     contract §6 response dict; never raises for content-level problems.
@@ -703,7 +715,14 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     ``lazy_exempt`` skips the gross-check lazy gate (see
     ``_lazy_exempt_name``); None derives it from the file name — the
     web layer passes the REAL filename explicitly because coach temps
-    carry generated names."""
+    carry generated names.
+
+    ``rom_injected`` says the analyzed copy's empty ROM(s) were filled
+    from the official course program for this run (the web layer reads
+    it off the injection notes) — every cluster prompt then carries a
+    [ROM NOTE] telling the model those stored words are correct by
+    definition, so it never proposes Data changes against
+    grader-injected content (r38)."""
     model = model or _debug_model()
     if lazy_exempt is None:
         lazy_exempt = _lazy_exempt_name(dig_path)
@@ -829,6 +848,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         circuit, netlist, graph, spec, manifest=manifest,
         failing_indices=failing_indices, jar_mismatches=jar_mismatches,
         lazy_exempt=lazy_exempt,
+        # official words injected for this run never ride the payload —
+        # a reply echoing them would leak the course program (r38)
+        hide_rom_words=rom_injected,
     )
     notes.extend(evres.notes)
 
@@ -921,6 +943,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             notes.append("evidence payload was slimmed (net values limited "
                          "to suspect nets) to fit the model context.")
         prompt = prompt_template.replace("<<PAYLOAD_JSON>>", payload_json)
+        if rom_injected:
+            prompt += _ROM_INJECTED_NOTE
 
         reply = ask(prompt)
         if not reply.get("ok"):
@@ -994,7 +1018,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 prompt = prompt_template.replace(
                     "<<PAYLOAD_JSON>>",
                     json.dumps(payload, indent=2, default=str)) + (
-                    "\n\n[ESCALATION]\n"
+                    (_ROM_INJECTED_NOTE if rom_injected else "")
+                    + "\n\n[ESCALATION]\n"
                     + json.dumps({"refuted_ops": tried[ci]}, indent=2,
                                  default=str)
                     + (_DATA_REFUTED_STEER

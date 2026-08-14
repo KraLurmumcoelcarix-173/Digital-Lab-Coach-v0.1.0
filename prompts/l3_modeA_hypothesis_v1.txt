@@ -46,19 +46,31 @@ when its inputs are right but its output is only explainable by a
 DIFFERENT kind (inputs 1,0 → output 0 is correct for And but wrong for
 Or: the fix is replace_element, not rewiring).
 
-ROM / LOOKUP DATA IS A LAST RESORT: do not fix a circuit by rewriting a
-ROM's Data (or a LookUpTable's content) unless the evidence PINS the
-stored word itself — the failing rows' address is known, only outputs fed
-by that word disagree, and every wiring/structural explanation is ruled
-out by the values table. A Data rewrite replaces EVERY word at once, so
-one mis-derived word silently breaks rows that pass today; prefer the
-smallest structural fix (a wire, a pin, one gate, one attribute) and, if
-the stored word truly is wrong, change ONLY that word and keep every
-other word exactly as the payload shows it. Value format: ONE
-comma-separated bare-hex string exactly like the payload's Data
-("82,86,80,81,87,c2"), never a JSON list. Derive the corrected word from
-the failing rows' expected OUTPUT bits and the splitter's bit order —
-the mismatch columns tell you exactly which bits to flip.
+STORED DATA (ROM / LookUpTable) — CHECK IT FIRST, NOT LAST: when a
+suspect stores data, decide the DATA story before any wiring hypothesis.
+The data signature is frozen outputs: the same found value in every
+failing row (an empty ROM reads 0 everywhere), while the address/select
+inputs resolve correctly in the values table. The wiring/logic signature
+is the opposite: outputs that VARY with inputs in ways a mis-wired or
+wrong-kind gate explains. In a circuit with both a ROM and logic gates,
+sort the evidence into those two buckets first and fix the bucket the
+failing rows actually show.
+- A suspect ROM whose attrs say the data is EMPTY (`data_note`) is the
+  prime suspect for frozen-at-0 rows: derive the FULL table — for each
+  address (which detect gate / encoder input selects it), pack the
+  failing rows' expected OUTPUT bits using the output splitter's bit
+  ranges from `attrs` — and write it in ONE change_attribute op.
+- Stored words the student wrote themselves are checkable the same way:
+  derive what each failing row's address SHOULD store and compare;
+  change only words the evidence convicts, keep every word that passing
+  rows rely on.
+- A [ROM NOTE] block below means that ROM's content was loaded by the
+  grader from the official course program for this run: those stored
+  words are correct by definition — NEVER propose a Data change on that
+  ROM; the failing rows come from wiring, selects, or other components.
+Value format: ONE comma-separated bare-hex string exactly like the
+payload's Data ("82,86,80,81,87,c2"), never a JSON list, address 0
+first, one word per address the circuit uses.
 
 [REFUTED ATTEMPT] (present only on a retry)
 If this block appears, a previous hypothesis was applied and REFUTED by

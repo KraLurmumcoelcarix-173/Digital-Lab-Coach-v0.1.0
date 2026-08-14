@@ -626,11 +626,17 @@ _SUSPECT_ATTR_KEYS = (
 )
 
 
-def _suspect_attrs(comp) -> dict:
+def _suspect_attrs(comp, *, hide_rom_words: bool = False) -> dict:
     """The semantics-bearing attributes of one suspect component. This is
     what let the sub-agent derive a decode table: without the splitter's
     bit ranges and the ROM's shape, the r37 live run guessed the word
-    layout wrong on every try."""
+    layout wrong on every try.
+
+    ``hide_rom_words`` (a rom-injected run): stored words came from the
+    official course program and must never transit where a reply could
+    echo them back to the student — only the shape ships. A student's
+    OWN small table stays visible (r38) so a partially-wrong word can be
+    convicted and corrected instead of guessed."""
     out: dict = {}
     for k in _SUSPECT_ATTR_KEYS:
         v = comp.attributes.get(k)
@@ -648,11 +654,14 @@ def _suspect_attrs(comp) -> dict:
                 "\"Data\", \"value\": \"w0,w1,...\"} - comma-separated "
                 "hex words, address 0 first, one word PER ADDRESS the "
                 "circuit uses (the attribute name is Data, never Value).")
+        elif not hide_rom_words and len(tokens) <= 32:
+            out["stored_words"] = ",".join(tokens)
     return out
 
 
 def suspect_wiring(circuit, netlist, indices: list[int],
-                   rep_rows: list["RowEvidence"] | None = None) -> list[dict]:
+                   rep_rows: list["RowEvidence"] | None = None,
+                   hide_rom_words: bool = False) -> list[dict]:
     """Pin-level connection truth for the suspect components — for every
     suspect, each pin and the far ends of its net (the netlist already
     merges across tunnels). This is what lets the sub-agent tell WHICH of
@@ -669,7 +678,7 @@ def suspect_wiring(circuit, netlist, indices: list[int],
         if not (0 <= idx < len(circuit.components)):
             continue
         comp = circuit.components[idx]
-        attrs = _suspect_attrs(comp)
+        attrs = _suspect_attrs(comp, hide_rom_words=hide_rom_words)
         pins: list[dict] = []
         for net in netlist.nets:
             mine = [p for p in net.pins if p.component_index == idx]
@@ -709,7 +718,8 @@ def suspect_wiring(circuit, netlist, indices: list[int],
 
 def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
                   circuit=None, netlist=None,
-                  max_representatives: int = _MAX_REPRESENTATIVES) -> dict:
+                  max_representatives: int = _MAX_REPRESENTATIVES,
+                  hide_rom_words: bool = False) -> dict:
     reps = cluster.rows[:max_representatives]
     payload = {
         "contract": CONTRACT,
@@ -734,7 +744,7 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
     if circuit is not None and netlist is not None:
         payload["suspect_wiring"] = suspect_wiring(
             circuit, netlist, cluster.merged.suspect_indices(),
-            rep_rows=reps)
+            rep_rows=reps, hide_rom_words=hide_rom_words)
     return payload
 
 
@@ -750,7 +760,8 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                       max_clusters: int = _MAX_CLUSTERS,
                       max_representatives: int = _MAX_REPRESENTATIVES,
                       max_failing: int = GROSS_MAX_FAILING,
-                      lazy_exempt: bool = False) -> EvidenceResult:
+                      lazy_exempt: bool = False,
+                      hide_rom_words: bool = False) -> EvidenceResult:
     """Steps 2-4 of the coordinator pipeline for one testcase.
 
     ``failing_indices`` (row line_index values) is the jar's per-row
@@ -760,7 +771,7 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     itself, so the whole pipeline runs with no Digital.jar.
 
     ``lazy_exempt`` skips the gross-check lazy gate entirely (failing
-    rows go straight to analysis). Instructor ruling (marked
+    rows go straight to analysis). Instructor ruling (r37.1, marked
     temporary): control-unit files always analyze — the decode table is
     the one lab where Mode A must engage no matter how gross the
     failure shape looks."""
@@ -874,7 +885,8 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     res.payloads = [
         build_payload(compact_circuit, spec, c, circuit=circuit,
                       netlist=netlist,
-                      max_representatives=max_representatives)
+                      max_representatives=max_representatives,
+                      hide_rom_words=hide_rom_words)
         for c in clusters
     ]
     return res
