@@ -661,6 +661,24 @@ def dedupe_hypotheses(hyps: list[dict]) -> list[dict]:
     return sorted(by_ops.values(), key=_rank_key)
 
 
+def _lazy_exempt_name(name: str | None) -> bool:
+    """Instructor ruling (marked TEMPORARY — revisit on request):
+    control-unit files always skip the lazy gate and go straight to
+    analysis. Matched on the normalized filename (case/punctuation
+    insensitive, tool-owned `.dlc_injected__` prefix stripped), so
+    `control-unit.dig`, `controlunit.dig` and their injected temps all
+    qualify. Refusal guards (build refused / unbound columns) and the
+    failing-children gate still apply — an unrunnable file has nothing
+    to analyze."""
+    if not name:
+        return False
+    base = Path(str(name)).name
+    if base.startswith(".dlc_injected__"):
+        base = base[len(".dlc_injected__"):]
+    norm = "".join(ch for ch in base.lower() if ch.isalnum())
+    return norm in ("controlunitdig", "controlunit")
+
+
 def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   spec_index: int = 0, model: str | None = None,
                   call=None, api_key: str | None = None,
@@ -669,6 +687,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   failing_indices: list[int] | None = None,
                   jar_mismatches: dict[int, list[dict]] | None = None,
                   coach_rows: list[int] | None = None,
+                  lazy_exempt: bool | None = None,
                   k_cards: int = K_CARDS) -> dict:
     """Run Mode A end to end for one circuit + testcase. Returns the
     contract §6 response dict; never raises for content-level problems.
@@ -679,8 +698,15 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
 
     ``coach_rows`` names the spec rows that a Mode B accept ADDED (the
     web layer reads them off the registered temp) — the verifier judges
-    those by strict improvement, not perfection (see verify_ops)."""
+    those by strict improvement, not perfection (see verify_ops).
+
+    ``lazy_exempt`` skips the gross-check lazy gate (see
+    ``_lazy_exempt_name``); None derives it from the file name — the
+    web layer passes the REAL filename explicitly because coach temps
+    carry generated names."""
     model = model or _debug_model()
+    if lazy_exempt is None:
+        lazy_exempt = _lazy_exempt_name(dig_path)
     if call is None:
         call = call_llm
 
@@ -802,6 +828,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     evres = ev.assemble_evidence(
         circuit, netlist, graph, spec, manifest=manifest,
         failing_indices=failing_indices, jar_mismatches=jar_mismatches,
+        lazy_exempt=lazy_exempt,
     )
     notes.extend(evres.notes)
 

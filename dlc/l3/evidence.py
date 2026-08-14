@@ -749,14 +749,21 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                       compact_circuit: dict | None = None,
                       max_clusters: int = _MAX_CLUSTERS,
                       max_representatives: int = _MAX_REPRESENTATIVES,
-                      max_failing: int = GROSS_MAX_FAILING) -> EvidenceResult:
+                      max_failing: int = GROSS_MAX_FAILING,
+                      lazy_exempt: bool = False) -> EvidenceResult:
     """Steps 2-4 of the coordinator pipeline for one testcase.
 
     ``failing_indices`` (row line_index values) is the jar's per-row
     verdict and takes authority when given; ``jar_mismatches`` maps a
     failing index to Digital's expected-vs-found cells for it. Without
     ``failing_indices`` the evaluator sweeps every well-formed row
-    itself, so the whole pipeline runs with no Digital.jar."""
+    itself, so the whole pipeline runs with no Digital.jar.
+
+    ``lazy_exempt`` skips the gross-check lazy gate entirely (failing
+    rows go straight to analysis). Instructor ruling (marked
+    temporary): control-unit files always analyze — the decode table is
+    the one lab where Mode A must engage no matter how gross the
+    failure shape looks."""
     res = EvidenceResult(spec_name=spec.name, headers=list(spec.headers))
     bindings = match_variables_to_io(spec.headers, circuit)
     rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
@@ -807,13 +814,18 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
         res.mode = "clear"
         return res
 
-    flags = gross_check(circuit, spec, len(failing), max_failing=max_failing,
-                        row_mismatch_columns=row_mismatch_columns,
-                        row_mismatch_cells=row_mismatch_cells)
-    if flags:
-        res.mode = "lazy"
-        res.gross_flags = flags
-        return res
+    if lazy_exempt:
+        res.notes.append(
+            "lazy-gate checks skipped for this file (control-unit rule).")
+    else:
+        flags = gross_check(circuit, spec, len(failing),
+                            max_failing=max_failing,
+                            row_mismatch_columns=row_mismatch_columns,
+                            row_mismatch_cells=row_mismatch_cells)
+        if flags:
+            res.mode = "lazy"
+            res.gross_flags = flags
+            return res
 
     res.mode = "analysis"
     sel_cols = select_columns(circuit, netlist, spec, bindings)

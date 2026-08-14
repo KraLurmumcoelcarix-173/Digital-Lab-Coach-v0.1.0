@@ -343,6 +343,15 @@ verified empirically:
 - **Mode A daily cap is 1 (r37)** — a booked use requires a delivered
   verified card, and the stop condition bounds one run's spend, so a
   single daily analysis is a full analysis.
+- **Control-unit files skip the lazy gate (TEMPORARY instructor
+  ruling — revisit on request)**: any file whose real name normalizes
+  to control-unit (`control-unit.dig`, `controlunit.dig`, injected
+  temps included) bypasses gross_check entirely and goes straight to
+  analysis when rows fail (`_lazy_exempt_name` /
+  `assemble_evidence(lazy_exempt=True)`; the web layer keys on
+  `req.filename` so coach temps qualify too). Refusal guards
+  (build_refused / unbound_columns) and the failing-children gate
+  still apply. All other filenames keep every ratified lazy bar.
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 

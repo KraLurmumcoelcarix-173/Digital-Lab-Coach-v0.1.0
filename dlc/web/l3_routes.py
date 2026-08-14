@@ -396,6 +396,9 @@ def llm_debug(req: DebugRequest) -> dict:
         result = debugger.debug_circuit(
             path, spec_name=spec_name, spec_index=req.spec_index,
             model=req.model, coach_rows=coach_rows,
+            # the REAL filename decides the control-unit lazy exemption —
+            # coach temps carry generated names the path check would miss
+            lazy_exempt=debugger._lazy_exempt_name(req.filename),
         )
     except Exception as exc:         # defense in depth
         return {"ok": False, "mode": "error",

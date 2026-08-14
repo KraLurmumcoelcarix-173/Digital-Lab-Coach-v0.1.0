@@ -689,3 +689,42 @@ def test_all_rows_error_with_unbound_columns_gets_rename_guidance(
     assert "'Q'" in res["gross_flags"][0]["detail"]
     assert [s["kind"] for s in res["suggestions"]] == ["unbound_columns"]
     assert "Rename" in res["suggestions"][0]["hint"]
+
+
+def test_control_unit_files_skip_the_lazy_gate(tmp_path):
+    # instructor ruling (marked temporary): control-unit files
+    # always analyze — the decode-table lab must reach Mode A no matter
+    # how gross the failure shape looks. Same content under any other
+    # name keeps every ratified lazy bar.
+    from dlc.l3.debugger import _lazy_exempt_name
+    assert _lazy_exempt_name("control-unit.dig") is True
+    assert _lazy_exempt_name("ControlUnit.dig") is True
+    assert _lazy_exempt_name("/x/y/.dlc_injected__control-unit.dig") is True
+    assert _lazy_exempt_name("cpu.dig") is False
+    assert _lazy_exempt_name("register-file.dig") is False
+    assert _lazy_exempt_name(None) is False
+
+    # 160+ component LED lab in a would-be-lazy shape: 4 of 5 rows
+    # failing on scattered single columns (low pass rate, no frozen
+    # trunk). Under its own name: lazy. Renamed control-unit.dig: the
+    # SAME verdict shape goes to analysis.
+    led5 = Path(f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+                f"wrong_bool_LED5.dig")
+    cells = {0: [{"column": "Fa", "expected": "1", "found": "0"}],
+             1: [{"column": "Fb", "expected": "1", "found": "0"}],
+             2: [{"column": "Fe", "expected": "1", "found": "0"}],
+             3: [{"column": "Fg", "expected": "1", "found": "0"}]}
+
+    other = tmp_path / "led.dig"
+    other.write_text(led5.read_text(encoding="utf-8"), encoding="utf-8")
+    res = debug_circuit(str(other), call=_never, use_manifest=False,
+                        failing_indices=[0, 1, 2, 3], jar_mismatches=cells)
+    assert res["mode"] == "lazy"
+
+    cu = tmp_path / "control-unit.dig"
+    cu.write_text(led5.read_text(encoding="utf-8"), encoding="utf-8")
+    call = _fake(["nope", "still nope"])
+    res2 = debug_circuit(str(cu), call=call, use_manifest=False,
+                         failing_indices=[0, 1, 2, 3], jar_mismatches=cells)
+    assert res2["mode"] == "analysis"
+    assert any("lazy-gate checks skipped" in n for n in res2["notes"])
