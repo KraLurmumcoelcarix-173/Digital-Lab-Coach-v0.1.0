@@ -289,17 +289,31 @@ def _resolve_target(session_id: str, filename: str) -> dict:
     return target
 
 
-def _l1_error_block(circuit) -> str | None:
+_MUTE_THRESHOLD = 3  # matches the dashboard's "mute when tests pass" bar
+
+
+def _l1_error_block(circuit, target: dict | None = None) -> str | None:
     """Tests are refused while Layer 1 structural ERRORS (at any
     nesting depth) are unresolved — results from a structurally broken
     circuit are unreliable. Warnings don't block: the
     "mute when tests pass" flow depends on warnings staying testable.
+
+    Mute contract (r36): when a file's LAST run fully passed (either
+    mode — the session remembers it on the target dict) and its issue
+    count is within the mute threshold, the gate stands down entirely.
+    A run that proved "tests pass" must always be repeatable, per-row
+    or general; a muted note can never dead-end the Run button.
     """
     try:
-        n_err = len(check_all_l1_deep(circuit).errors())
+        issues = check_all_l1_deep(circuit)
+        n_err = len(issues.errors())
     except Exception:
         return None  # never let the gate itself break testing
     if n_err == 0:
+        return None
+    if (target is not None
+            and target.get("last_all_passed") is True
+            and len(issues.issues) <= _MUTE_THRESHOLD):
         return None
     plural = "s" if n_err != 1 else ""
     return (
@@ -346,7 +360,7 @@ def _run_general(target: dict, timeout: float) -> dict:
             }
         # Gate on the student's REAL file: the L1 board describes it, and
         # injection never changes the structural story (data/tests only).
-        blocked = _l1_error_block(circuit)
+        blocked = _l1_error_block(circuit, target)
         if blocked:
             return {
                 "ok": False, "warning": blocked,
@@ -405,6 +419,7 @@ def _run_general(target: dict, timeout: float) -> dict:
             "fail_pct": fail_pct,
             "row_count": len(spec.rows),
         })
+    target["last_all_passed"] = not any_failed
     return {
         "ok": True, "warning": None, "mode": "general",
         "specs": spec_payloads, "all_passed": not any_failed,
@@ -438,7 +453,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
             "all_passed": None,
         })
         return
-    blocked = _l1_error_block(circuit)
+    blocked = _l1_error_block(circuit, target)
     if blocked:
         cleanup_injected(inj_temp)
         write({
@@ -541,6 +556,7 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
             return
 
     cleanup_injected(inj_temp)
+    target["last_all_passed"] = (not any_failed) and (not any_runner_error)
     write({
         "ok": True, "finished": True,
         "warning": (
@@ -591,7 +607,7 @@ def tests_all(req: TestsAllRequest) -> dict:
             if not specs:
                 continue
             n_with_tests += 1
-            blocked = _l1_error_block(circuit)
+            blocked = _l1_error_block(circuit, f)
             if blocked:
                 entry.update(ok=False, status="blocked", warning=blocked)
                 n_blocked += 1
@@ -652,9 +668,11 @@ def tests_all(req: TestsAllRequest) -> dict:
             n_error += 1
         elif any_failed:
             entry.update(status="failed", all_passed=False)
+            f["last_all_passed"] = False
             n_failed += 1
         else:
             entry.update(status="passed", all_passed=True)
+            f["last_all_passed"] = True
             n_passed += 1
 
     return {
@@ -750,7 +768,7 @@ def run_tests(req: TestsRequest) -> dict:
             "injected": inj_notes,
         }
 
-    blocked = _l1_error_block(circuit)
+    blocked = _l1_error_block(circuit, target)
     if blocked:
         cleanup_injected(inj_temp)
         return {
@@ -817,6 +835,7 @@ def run_tests(req: TestsRequest) -> dict:
     finally:
         cleanup_injected(inj_temp)
 
+    target["last_all_passed"] = (not any_failed) and (not any_runner_error)
     return {
         "ok": True,
         "warning": (

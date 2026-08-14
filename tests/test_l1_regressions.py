@@ -429,3 +429,26 @@ def test_testcase_unlisted_in_tap_is_warning(tmp_path):
     md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
           if i.kind == "multi_driver"]
     assert md and all(i.severity.value == "error" for i in md)
+
+
+def test_mute_contract_unblocks_test_runs(tmp_path):
+    # r36: when the last run fully passed and the file sits within the
+    # mute threshold, the server-side L1 gate stands down — the run that
+    # proved "tests pass" must stay repeatable (per-row and general).
+    from dlc.web.server import _l1_error_block
+    elements = (
+        _ve("In", 0, 0, _entry("Label", "A"))
+        + _ve("And", 40, 0, _entry("wideShape", "true", "boolean"))
+        + _ve("Out", 160, 20, _entry("Label", "Y"))
+    )
+    # in1 (0,40) left unwired -> exactly one dangling_input error
+    wires = _w(0, 0, 40, 0) + _w(120, 20, 160, 20)
+    p = tmp_path / "one_err.dig"
+    p.write_text(_xml_circuit(elements, wires), encoding="utf-8")
+    c = parse_dig_file(str(p))
+    errs = check_all_l1(c).errors()
+    assert errs, "fixture must carry at least one L1 error"
+
+    assert _l1_error_block(c) is not None                       # default: blocked
+    assert _l1_error_block(c, {"last_all_passed": False}) is not None
+    assert _l1_error_block(c, {"last_all_passed": True}) is None   # mute hit

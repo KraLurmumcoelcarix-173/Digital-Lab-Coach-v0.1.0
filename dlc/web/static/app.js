@@ -1034,6 +1034,19 @@ function getFileTestsPassed(filename) {
   return null;
 }
 
+// "Mute when tests pass" is HIT for this file: toggle on, the last run
+// (per-row or general — both set all_passed) fully passed, and the
+// issue count is within the mute threshold. While hit, test runs stay
+// available in BOTH modes — a muted note must never dead-end the Run
+// button (the run that proved "tests pass" must always be repeatable).
+function fileMuteActive(file) {
+  if (!file || !muteToggle.checked) return false;
+  const issues = file.issues || [];
+  return getFileTestsPassed(file.filename) === true
+    && issues.length > 0
+    && issues.length <= MUTE_THRESHOLD;
+}
+
 function countsBadge(issues) {
   if (!issues || issues.length === 0) {
     return `<span class="ok">clean</span>`;
@@ -1179,7 +1192,7 @@ function renderTestsForFile(file) {
   }
 
   const l1Errors = fileL1Errors(file);
-  if (l1Errors.length > 0) {
+  if (l1Errors.length > 0 && !fileMuteActive(file)) {
     runTestsBtn.disabled = true;
     runTestsBtn.classList.remove("running");
     runTestsBtn.textContent = "Run tests";
@@ -1280,7 +1293,9 @@ runTestsBtn.addEventListener("click", async () => {
   const injectable = s.official_test_status === "missing"
     || s.official_test_status === "modified";
   if (!s.has_testcases && !injectable) return;
-  if (fileL1Errors(file).length > 0) return;  // blocked: fix L1 errors first
+  // blocked: fix L1 errors first — unless "mute when tests pass" is hit,
+  // where a proven-passing file stays re-runnable in both modes
+  if (fileL1Errors(file).length > 0 && !fileMuteActive(file)) return;
   const filename = file.filename;
   const mode = perRowToggle.checked ? "per_row" : "general";
 
