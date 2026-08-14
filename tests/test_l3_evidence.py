@@ -461,3 +461,20 @@ def test_rare_scattered_row_in_a_long_suite_passes():
     flags = gross_check(c, _spec_of(4), failing_count=4,
                         row_mismatch_columns=rows_cols[:4], **on)
     assert "scattered_failures" in [f["kind"] for f in flags]
+
+
+def test_dead_trunk_full_output_surface_is_analyzable():
+    # r37 (s008 control unit): every failing row wrong on EVERY output
+    # column = one mechanism upstream of all outputs (dead stage, empty
+    # decode ROM) — analyzable despite 0% passing. A shared SUBSET of
+    # columns keeps the ratified bars (tests above).
+    led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
+            f"wrong_bool_LED5.dig")
+    all_cols = [{"column": c, "expected": "1", "found": "0"}
+                for c in ("Fa", "Fb", "Fc", "Fd", "Fe", "Ff", "Fg")]
+    res = assemble_evidence_for_file(
+        led5, use_manifest=False, failing_indices=[0, 1, 2, 3, 4],
+        jar_mismatches={i: list(all_cols) for i in range(5)},
+    )
+    assert res.mode == "analysis"
+    assert res.failing_count == 5

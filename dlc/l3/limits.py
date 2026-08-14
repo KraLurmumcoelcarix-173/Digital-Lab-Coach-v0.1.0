@@ -1,14 +1,16 @@
 """Daily use-limit stub.
 
-Caps: Mode A 3/day, Mode B 2/day. Counters ALWAYS tick — dev
+Caps: Mode A 1/day, Mode B 2/day. Counters ALWAYS tick — dev
 telemetry should show real usage — but the BLOCK only applies when
 DLC_ENFORCE_LIMITS is on, so release enforcement is a single config flip.
 
-Mode A is 3 because of the ratified rerun-on-temp contract: 
-when Mode B ends all-set with accepted rows living on the coach
-temp, Mode A offers a re-run analysis of that temp. Starting that re-run
-does NOT require a remaining use; it books +1 modeA only when it
-completes — so a student doing the full loop still gets real Mode A runs.
+Mode A is 1: a run books a use ONLY when it
+delivers at least one verified card, and the r37 stop condition
+(debugger._MAX_REFUTED_IDEAS) bounds what one run can spend, so a
+single daily analysis is a real, complete analysis. The ratified
+rerun-on-temp contract still holds: when Mode B ends all-set with
+accepted rows living on the coach temp, STARTING that re-run does not
+require a remaining use; it books +1 modeA only when it completes.
 
 a Mode B scan that finds test/circuit disagreements is a
 REDIRECT to Mode A and consumes no usage. That is why ``allowed()`` and
@@ -28,7 +30,7 @@ import os
 import time
 from pathlib import Path
 
-CAPS = {"modeA": 3, "modeB": 2}
+CAPS = {"modeA": 1, "modeB": 2}
 
 
 def limits_path() -> Path:

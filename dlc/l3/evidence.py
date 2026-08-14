@@ -272,10 +272,83 @@ def _holds_state(circuit) -> bool:
     return False
 
 
+def _cell_int(raw) -> int | None:
+    """Parse a testcase/jar cell value ('1', '0b101', '0x1f', 12) or None."""
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, int):
+        return raw
+    s = str(raw).strip()
+    try:
+        return int(s, 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _frozen_trunk(spec: TestSpec, bindings,
+                  row_mismatch_cells: dict[int, list[dict]] | None) -> bool:
+    """True when the failing rows are fully explained by every output
+    being frozen at one constant value (see gross_check docstring)."""
+    if not row_mismatch_cells or len(row_mismatch_cells) < 2:
+        return False
+    hdr_idx = {h: i for i, h in enumerate(spec.headers)}
+    output_cols = {h for h, b in bindings.items() if b.role == "output"}
+    if not output_cols:
+        return False
+    frozen: dict[str, int] = {}
+    mismatched_rows: dict[str, set[int]] = {}
+    for idx, cells in row_mismatch_cells.items():
+        for c in cells or []:
+            col = c.get("column")
+            found = _cell_int(c.get("found"))
+            if not col or col not in output_cols or found is None:
+                return False
+            if frozen.setdefault(col, found) != found:
+                return False              # the column provably moves
+            mismatched_rows.setdefault(col, set()).add(idx)
+    if not frozen:
+        return False
+    rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
+
+    def _expected(idx: int, col: str) -> int | None:
+        row = rows_by_index.get(idx)
+        i = hdr_idx.get(col)
+        if row is None or i is None or i >= len(row.values):
+            return None
+        tok = row.values[i]
+        return tok.value if tok.kind == "int" else None
+    # Every row the circuit PASSES — and every passing cell of a failing
+    # row — must also be consistent with the frozen constants: a frozen
+    # column passes a cell only when its expected equals the frozen
+    # value, and a never-mismatching output must carry ONE constant
+    # expected everywhere it is checked. Any row that passed with a
+    # different expected proves that output moves — not a dead trunk.
+    # (This is what lets an all-zero-expectation row pass under a
+    # stuck-at-0 trunk without breaking the story.)
+    all_rows = [r.line_index for r in spec.rows if not r.is_malformed]
+    seen_const: dict[str, set[int]] = {}
+    for idx in all_rows:
+        for col in output_cols:
+            if col in frozen and idx in mismatched_rows.get(col, ()):
+                continue                       # the mismatch cell itself
+            exp = _expected(idx, col)
+            if exp is None:
+                continue                       # dontcare / unparseable
+            if col in frozen:
+                if exp != frozen[col]:
+                    return False
+            else:
+                seen_const.setdefault(col, set()).add(exp)
+                if len(seen_const[col]) > 1:
+                    return False
+    return True
+
+
 def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 max_failing: int = GROSS_MAX_FAILING,
                 rate_gate_min_components: int = RATE_GATE_MIN_COMPONENTS,
                 row_mismatch_columns: list[set] | None = None,
+                row_mismatch_cells: dict[int, list[dict]] | None = None,
                 ) -> list[dict]:
     """Deterministic checks that mean the circuit needs fundamentals, not
     a per-bug hypothesis hunt. Any flag → mode "lazy" (suggestion-only
@@ -298,11 +371,32 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
            6-10 rows:  lazy when pass rate < 60%
            1-5  rows:  lazy when pass rate < 30%
     ``row_mismatch_columns`` carries one set of mismatched output columns
-    per failing row (empty set = no column info for that row)."""
+    per failing row (empty set = no column info for that row).
+
+    FROZEN-TRUNK EXCEPTION: when the failing rows are fully
+    explained by "every output is stuck at one constant value" — each
+    mismatched column shows the SAME found value on every failing row,
+    and every output column that never mismatches has a CONSTANT
+    expected value across the failing rows (so nothing provably moves)
+    — the cause sits upstream of all outputs at once (a dead output
+    stage, an unprogrammed decode ROM reading 0s). That is one
+    mechanism, not scatter, so the scattered flag and the pass-rate
+    bars stand aside and Mode A analyzes it. Convicted on s008's
+    control unit: the empty decode ROM freezes all outputs at 0 and
+    fails all 8 official rows, and the fix is ONE attribute; the bars
+    used to reject it into the suggestion branch. An output that
+    demonstrably CHANGES across failing rows (a working segment next
+    to a wrong SOP output) breaks the frozen story and keeps the
+    ratified rules: the focus requisite and the pass-rate bars still
+    get the last word. Structural flags (unbound columns, clock
+    without state) always apply. Requires ``row_mismatch_cells``.
+    """
     flags: list[dict] = []
     bars_on = len(circuit.components) > rate_gate_min_components
+    bindings = match_variables_to_io(spec.headers, circuit)
+    frozen_trunk = _frozen_trunk(spec, bindings, row_mismatch_cells)
 
-    if bars_on and row_mismatch_columns:
+    if bars_on and row_mismatch_columns and not frozen_trunk:
         total_rows = spec.well_formed_row_count()
         scattered = [cols for cols in row_mismatch_columns
                      if len(cols) >= 4]
@@ -318,7 +412,6 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 ),
             })
 
-    bindings = match_variables_to_io(spec.headers, circuit)
     unbound = [h for h in spec.headers
                if bindings[h].role == "unbound"]
     if unbound:
@@ -345,8 +438,8 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 "state between rows (is the pipeline stage missing?)."
             ),
         })
-    if not bars_on:
-        n_rows = 0             # bars off: small circuit, always analyzable
+    if not bars_on or frozen_trunk:
+        n_rows = 0    # bars off: small circuit or one frozen trunk
     else:
         n_rows = spec.well_formed_row_count()
     passing = max(0, n_rows - failing_count)
@@ -521,6 +614,43 @@ def compact_circuit_facts(circuit, netlist=None, graph=None) -> dict:
     return _compact_facts(extract_facts(circuit, netlist, graph).to_dict())
 
 
+# Semantic (non-visual) attributes worth showing the sub-agent per
+# suspect. Data words are deliberately summarized, never listed: a ROM's
+# stored program may be tool-injected official content that must not
+# leave the backend.
+_SUSPECT_ATTR_KEYS = (
+    "AddrBits", "Bits", "Inputs", "Selector Bits",
+    "Input Splitting", "Output Splitting", "Value", "intFormat",
+    "inverterConfig", "flipSelPos", "Signed", "inputBits", "outputBits",
+    "splitterSpreading", "isProgramCounter",
+)
+
+
+def _suspect_attrs(comp) -> dict:
+    """The semantics-bearing attributes of one suspect component. This is
+    what let the sub-agent derive a decode table: without the splitter's
+    bit ranges and the ROM's shape, the r37 live run guessed the word
+    layout wrong on every try."""
+    out: dict = {}
+    for k in _SUSPECT_ATTR_KEYS:
+        v = comp.attributes.get(k)
+        if v not in (None, "", []):
+            out[k] = v
+    if comp.element_name in ("ROM", "RAM", "EEPROM", "RAMDualPort"):
+        raw = comp.attributes.get("Data", "")
+        tokens = [t for t in str(raw or "").replace(",", " ").split() if t]
+        out["data_words_stored"] = len(tokens)
+        if not tokens:
+            out["data_note"] = (
+                "Data is EMPTY - every address reads 0. To program it, "
+                "use exactly: {\"op\": \"change_attribute\", "
+                "\"component_index\": <this component>, \"name\": "
+                "\"Data\", \"value\": \"w0,w1,...\"} - comma-separated "
+                "hex words, address 0 first, one word PER ADDRESS the "
+                "circuit uses (the attribute name is Data, never Value).")
+    return out
+
+
 def suspect_wiring(circuit, netlist, indices: list[int],
                    rep_rows: list["RowEvidence"] | None = None) -> list[dict]:
     """Pin-level connection truth for the suspect components — for every
@@ -539,6 +669,7 @@ def suspect_wiring(circuit, netlist, indices: list[int],
         if not (0 <= idx < len(circuit.components)):
             continue
         comp = circuit.components[idx]
+        attrs = _suspect_attrs(comp)
         pins: list[dict] = []
         for net in netlist.nets:
             mine = [p for p in net.pins if p.component_index == idx]
@@ -568,8 +699,11 @@ def suspect_wiring(circuit, netlist, indices: list[int],
                 if values:
                     entry["values"] = values
                 pins.append(entry)
-        out.append({"component_index": idx, "element": comp.element_name,
-                    "label": comp.label, "pins": pins})
+        rec = {"component_index": idx, "element": comp.element_name,
+               "label": comp.label, "pins": pins}
+        if attrs:
+            rec["attrs"] = attrs
+        out.append(rec)
     return out
 
 
@@ -629,9 +763,11 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
 
     sims: dict[int, SimResult] = {}
     row_mismatch_columns: list[set] | None = None
+    row_mismatch_cells: dict[int, list[dict]] | None = None
     if failing_indices is None:
         failing: list[int] = []
         row_mismatch_columns = []
+        row_mismatch_cells = {}
         for row in spec.rows:
             if row.is_malformed:
                 res.notes.append(
@@ -651,6 +787,7 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                 sims[row.line_index] = sim
                 row_mismatch_columns.append(
                     {m.get("column") for m in mism if m.get("column")})
+                row_mismatch_cells[row.line_index] = list(mism)
     else:
         failing = list(failing_indices)
         if jar_mismatches:
@@ -659,6 +796,11 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                  if isinstance(c, dict) and c.get("column")}
                 for i in failing]
             row_mismatch_columns = sets if any(sets) else None
+            if row_mismatch_columns is not None:
+                row_mismatch_cells = {
+                    i: [c for c in (jar_mismatches.get(i) or [])
+                        if isinstance(c, dict)]
+                    for i in failing}
     res.failing_count = len(failing)
 
     if not failing:
@@ -666,7 +808,8 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
         return res
 
     flags = gross_check(circuit, spec, len(failing), max_failing=max_failing,
-                        row_mismatch_columns=row_mismatch_columns)
+                        row_mismatch_columns=row_mismatch_columns,
+                        row_mismatch_cells=row_mismatch_cells)
     if flags:
         res.mode = "lazy"
         res.gross_flags = flags
@@ -698,8 +841,21 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                 mismatches=[dict(c) for c in jar_cells or []],
             ))
 
-    clusters, cnotes = cluster_rows(evidence, cap=max_clusters)
-    res.notes.extend(cnotes)
+    if _frozen_trunk(spec, bindings, row_mismatch_cells) and evidence:
+        # One mechanism (the frozen-trunk premise) → ONE cluster: the
+        # sub-agent must repair EVERY failing row at once, so a partial
+        # decode table gets refuted-with-evidence instead of shipping as
+        # a per-row "verified" card (r37 live-run lesson: two confirmed
+        # cards each fixed one row of s008's ROM, none fixed the file).
+        first = evidence[0]
+        clusters = [Cluster(signature=_signature_dict(first),
+                            rows=list(evidence))]
+        res.notes.append(
+            "all failing rows show one frozen output stage — analyzed "
+            "as a single cluster so a fix must repair every row.")
+    else:
+        clusters, cnotes = cluster_rows(evidence, cap=max_clusters)
+        res.notes.extend(cnotes)
     res.clusters = clusters
     if compact_circuit is None:
         compact_circuit = compact_circuit_facts(circuit, netlist, graph)

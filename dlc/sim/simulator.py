@@ -200,9 +200,13 @@ def _eval_priority_encoder(comp, in_vals):
         name = f"in_{i}"
         if name in in_vals and in_vals[name]:
             highest = i
-    # `num` is defined only when at least one input is set; Digital pairs it
-    # with an `any`/valid flag. We report num when known, else 0.
-    return {"num": highest if highest is not None else 0}
+    # `num` is defined only when at least one input is set; Digital pairs
+    # it with the 1-bit `f` ("any input set") flag. Omitting `f` starved
+    # every ROM whose chip-select hangs off it — the r37 s008 control
+    # unit — leaving the whole output stage undefined while the jar ran
+    # it fine.
+    return {"num": highest if highest is not None else 0,
+            "f": 0 if highest is None else 1}
 
 
 def _eval_splitter(comp, in_vals):

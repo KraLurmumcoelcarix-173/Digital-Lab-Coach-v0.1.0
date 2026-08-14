@@ -165,7 +165,43 @@ def _const_driver_value(circuit: Circuit, d: dict) -> int | None:
     return None
 
 
-def _check_multi_drivers(circuit: Circuit, facts: CircuitFacts) -> list[Issue]:
+def _identical_gate_signature(
+    circuit: Circuit, netlist: NetList | None, comp_idx: int,
+):
+    """A hashable fingerprint of what a gate output computes, or None.
+
+    Two drivers with equal non-None signatures are the same Boolean
+    function of the same nets, so they can never disagree at run time.
+    Only plain commutative gates (And/Or/XOr/NAnd/NOr/XNOr) and Not
+    qualify; anything stateful, unresolved, or with a dangling input
+    returns None so the caller keeps the hard error.
+    """
+    from dlc.parser.pin_geometry import (
+        _NARY_GATE_ELEMENTS, inverted_input_names,
+    )
+
+    if netlist is None or not (0 <= comp_idx < len(circuit.components)):
+        return None
+    comp = circuit.components[comp_idx]
+    name = comp.element_name
+    if name != "Not" and name not in _NARY_GATE_ELEMENTS:
+        return None
+    expected = 1 if name == "Not" else int(comp.attributes.get("Inputs", 2) or 2)
+    inverted = set(inverted_input_names(comp))
+    inputs: list[tuple[int, bool]] = []
+    for net in netlist.nets:
+        for p in net.pins:
+            if p.component_index == comp_idx and p.direction == "in":
+                inputs.append((net.net_id, p.pin_name in inverted))
+    if len(inputs) != expected:
+        return None
+    bits = int(comp.attributes.get("Bits", 1) or 1)
+    return (name, bits, tuple(sorted(inputs)))
+
+
+def _check_multi_drivers(
+    circuit: Circuit, facts: CircuitFacts, netlist: NetList | None = None,
+) -> list[Issue]:
     out: list[Issue] = []
     for bug in facts.bugs:
         if bug.kind != "multi_driver":
@@ -299,6 +335,47 @@ def _check_multi_drivers(circuit: Circuit, facts: CircuitFacts) -> list[Issue]:
                 ),
             ))
             continue
+        if n_signal >= 2 and not const_vals and not n_in:
+            # Jar-verified 4th tolerance: several copies of the SAME
+            # gate (same type, same input nets, same inverted inputs)
+            # tied by one tunnel name — a Lab-2 pattern where a product
+            # term is rebuilt per segment block. Identical functions of
+            # identical nets always agree, so Digital runs it; a gate
+            # pair that differs in ANY of those stays a hard error
+            # (And+Or tied on the same inputs short-circuits the moment
+            # they disagree).
+            sigs = [
+                _identical_gate_signature(
+                    circuit, netlist, d.get("component_index"),
+                )
+                for d in drivers
+            ]
+            if None not in sigs and len(set(sigs)) == 1:
+                out.append(Issue(
+                    kind="multi_driver",
+                    severity=IssueSeverity.WARNING,
+                    title=(
+                        f"Duplicated identical gates tied together: "
+                        f"{', '.join(descs)}"
+                    ),
+                    message=(
+                        f"{len(drivers)} gates of the same type with the "
+                        f"same inputs drive this wire (usually the same "
+                        f"product term rebuilt in another block and tied "
+                        f"by a shared tunnel name). They always output "
+                        f"the same value, so Digital runs this fine — "
+                        f"but one copy is enough."
+                    ),
+                    component_indices=bug.component_indices,
+                    location=loc,
+                    net_id=bug.net_id,
+                    suggested_fix=(
+                        "Keep one copy of the gate and delete the "
+                        "duplicates; the shared tunnel name already "
+                        "carries its value everywhere."
+                    ),
+                ))
+                continue
         out.append(Issue(
             kind="multi_driver",
             severity=IssueSeverity.ERROR,
@@ -780,7 +857,7 @@ def check_wire_completeness(
 
     issues = IssueCollection()
     issues.extend(_check_dangling_inputs(circuit, facts, netlist))
-    issues.extend(_check_multi_drivers(circuit, facts))
+    issues.extend(_check_multi_drivers(circuit, facts, netlist))
     issues.extend(_check_missing_subcircuit(circuit, facts))
     issues.extend(_check_unused_top_outputs(circuit, facts))
     issues.extend(_check_isolated_components(circuit, netlist))

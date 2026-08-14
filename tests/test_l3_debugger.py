@@ -162,17 +162,30 @@ def test_refuted_fix_earns_one_retry_with_evidence():
 
 def test_refuted_rom_data_rewrite_steers_the_retry_off_the_table():
     # r27, from a live control-unit failure: once a Data rewrite is
-    # refuted, the retry must carry the machine fact that the stored
-    # words are consistent and point at the address/select path instead
-    rom_ops = [{"op": "change_attribute", "component_index": 16,
+    # refuted on a ROM that HOLDS words, the retry must carry the
+    # machine fact that the stored words are consistent and point at
+    # the address/select path instead. r37 refinement: a Data rewrite
+    # on an EMPTY ROM must NOT be steered off — the missing words ARE
+    # the bug there (s008's unprogrammed decode ROM), so the steer's
+    # premise ("the stored words satisfy every passing row") is false.
+    from types import SimpleNamespace
+    from dlc.l3.debugger import _touches_stored_data, _refutation_block
+
+    data_op = [{"op": "change_attribute", "component_index": 0,
                 "name": "Data", "value": "82,86"}]
-    call = _fake([_reply(rom_ops), _reply(GOOD_OPS)])
-    res = debug_circuit(_BUG3, call=call, use_manifest=False,
-                        failing_indices=[0, 1])
-    assert res["llm_calls"] == 2
-    assert "MACHINE FACT" in call.log[1]
-    assert "ADDRESS/SELECT path" in call.log[1]
-    # a refuted NON-data fix must not carry the steer (other test's log)
+    stored = SimpleNamespace(components=[
+        SimpleNamespace(attributes={"Data": "1,2,3"})])
+    empty = SimpleNamespace(components=[SimpleNamespace(attributes={})])
+    assert _touches_stored_data([data_op], stored) is True
+    assert _touches_stored_data([data_op], empty) is False
+    assert _touches_stored_data([data_op], None) is True  # unknown: steer
+    assert _touches_stored_data([GOOD_OPS], stored) is False
+
+    verdict = {"apply_ok": True, "still_failing": [0], "regressions": [],
+               "details": {}, "warning": None}
+    assert "MACHINE FACT" in _refutation_block(data_op, verdict, stored)
+    assert "MACHINE FACT" not in _refutation_block(data_op, verdict, empty)
+    # end to end: a refuted NON-data fix never carries the steer
     call2 = _fake([_reply(BAD_OPS), _reply(GOOD_OPS)])
     debug_circuit(_BUG3, call=call2, use_manifest=False,
                   failing_indices=[0, 1])
@@ -507,3 +520,172 @@ def test_debug_circuit_judges_coach_rows_by_improvement(tmp_path):
     assert card["verified"]["confirmed"] is True
     assert card["verified"]["coach_residuals"] == {10: ["Carry"]}
     assert card["fix"]["ops"] == MUX_FIX
+
+
+# ---------------------------------------------------------------------------
+# r37: runaway firewalls — build refusal, official child tests, stop budget
+# ---------------------------------------------------------------------------
+
+def test_all_rows_error_returns_build_refused_lazy(monkeypatch):
+    # jar-probed (r37, s008 tree): a dangling tunnel makes Digital refuse
+    # the whole build, so EVERY per-row result is an error. Analysis on
+    # an unbuildable circuit would only guess (and its verifier would
+    # refute every idea through the same refusal) — the run must stop
+    # free, pointing at the Layer 1 errors.
+    from types import SimpleNamespace
+    monkeypatch.setattr(debugger, "find_digital_jar", lambda: "fake.jar")
+    monkeypatch.setattr(
+        debugger, "per_row_run_auto",
+        lambda spec, path, jar_path=None: [
+            SimpleNamespace(status="error", row_index=i,
+                            error_message="A tunnel rd2 is not connected!",
+                            mismatches=[])
+            for i in range(4)
+        ])
+    res = debug_circuit(_BUG3, call=_never, use_manifest=False)
+    assert res["mode"] == "lazy"
+    assert res["llm_calls"] == 0
+    assert [f["kind"] for f in res["gross_flags"]] == ["build_refused"]
+    assert "rd2" in res["gross_flags"][0]["detail"]
+    assert [s["kind"] for s in res["suggestions"]] == ["build_refused"]
+    assert "Layer 1" in res["suggestions"][0]["hint"]
+
+
+def test_child_failing_official_tests_gates_the_parent(tmp_path):
+    # r37 (s008): the real bug lives in control-unit.dig, which carries NO
+    # testcase of its own — the official rows must be injected for the
+    # children gate to see it, or Mode A burns model calls on parent
+    # wiring that can never fix a child. Child = a synthetic control unit
+    # whose outputs are all grounded (fails the official add row).
+    child_parts = []
+    for i, (label, bits) in enumerate(
+            [("opcode", 7), ("funct3", 3), ("funct7", 7)]):
+        child_parts.append(
+            f'<visualElement><elementName>In</elementName><elementAttributes>'
+            f'<entry><string>Label</string><string>{label}</string></entry>'
+            f'<entry><string>Bits</string><int>{bits}</int></entry>'
+            f'</elementAttributes><pos x="0" y="{i * 60}"/></visualElement>')
+    outs = ["RegWrite", "ALUSrc", "ImmSrc1", "ImmSrc0",
+            "ALUOp3", "ALUOp2", "ALUOp1", "ALUOp0"]
+    wires = []
+    for i, label in enumerate(outs):
+        y = 300 + i * 40
+        child_parts.append(
+            f'<visualElement><elementName>Ground</elementName>'
+            f'<elementAttributes/><pos x="160" y="{y}"/></visualElement>')
+        child_parts.append(
+            f'<visualElement><elementName>Out</elementName><elementAttributes>'
+            f'<entry><string>Label</string><string>{label}</string></entry>'
+            f'</elementAttributes><pos x="200" y="{y}"/></visualElement>')
+        wires.append(f'<wire><p1 x="160" y="{y}"/><p2 x="200" y="{y}"/></wire>')
+    child = ('<?xml version="1.0" encoding="utf-8"?><circuit><version>2'
+             '</version><attributes/><visualElements>'
+             + "".join(child_parts)
+             + '</visualElements><wires>' + "".join(wires)
+             + '</wires></circuit>')
+    (tmp_path / "control-unit.dig").write_text(child, encoding="utf-8")
+
+    parent = ('<?xml version="1.0" encoding="utf-8"?><circuit><version>2'
+              '</version><attributes/><visualElements>'
+              '<visualElement><elementName>In</elementName>'
+              '<elementAttributes><entry><string>Label</string>'
+              '<string>A</string></entry></elementAttributes>'
+              '<pos x="0" y="0"/></visualElement>'
+              '<visualElement><elementName>Out</elementName>'
+              '<elementAttributes><entry><string>Label</string>'
+              '<string>X</string></entry></elementAttributes>'
+              '<pos x="200" y="0"/></visualElement>'
+              '<visualElement><elementName>control-unit.dig</elementName>'
+              '<elementAttributes/><pos x="0" y="200"/></visualElement>'
+              '<visualElement><elementName>Testcase</elementName>'
+              '<elementAttributes><entry><string>Testdata</string>'
+              '<testData><dataString>A X\n0 0</dataString></testData>'
+              '</entry></elementAttributes><pos x="0" y="400"/>'
+              '</visualElement>'
+              '</visualElements><wires><wire><p1 x="0" y="0"/>'
+              '<p2 x="200" y="0"/></wire></wires></circuit>')
+    p = tmp_path / "top.dig"
+    p.write_text(parent, encoding="utf-8")
+
+    res = debug_circuit(str(p), call=_never, use_manifest=False)
+    assert res["mode"] == "lazy"
+    assert res["llm_calls"] == 0
+    assert [f["kind"] for f in res["gross_flags"]] == [
+        "subcircuit_failing_official"]
+    assert "control-unit.dig" in res["gross_flags"][0]["detail"]
+    assert "official" in res["gross_flags"][0]["detail"]
+    # the tool-owned injected temp must not survive the gate
+    assert not list(tmp_path.glob(".dlc_injected__*"))
+
+
+def test_stop_condition_returns_best_solution_early(monkeypatch):
+    # r37 stop condition: once _MAX_REFUTED_IDEAS ideas are refuted with
+    # no confirmed card, the run stops spending (no refute retry, no
+    # escalation) and ships the best unverified idea — the benchmark's
+    # "best solution" hard trigger reads stopped_early.
+    monkeypatch.setattr(debugger, "_MAX_REFUTED_IDEAS", 1)
+    call = _fake([_reply(BAD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["mode"] == "analysis"
+    assert res["llm_calls"] == 1           # no retry, no escalation
+    assert res["stopped_early"] is True
+    assert res["refuted_ideas"] == 1
+    assert res["cards"] == []
+    assert res["best_unverified"] is not None
+    assert res["best_unverified"]["fix"]["ops"] == BAD_OPS
+    assert any("stopped after 1 refuted" in n for n in res["notes"])
+    assert len(res["timings"]["llm_s"]) == 1
+    assert len(res["timings"]["verify_s"]) == 1
+    assert res["timings"]["total_s"] >= 0
+
+
+def test_unstopped_run_reports_flag_false():
+    call = _fake([_reply(GOOD_OPS)])
+    res = debug_circuit(_BUG3, call=call, use_manifest=False,
+                        failing_indices=[0, 1])
+    assert res["stopped_early"] is False
+    assert res["refuted_ideas"] == 0
+    assert res["cards"] and res["cards"][0]["verified"]["confirmed"]
+
+
+def test_all_rows_error_with_unbound_columns_gets_rename_guidance(
+        monkeypatch, tmp_path):
+    # r37 (s008 raw control unit): Digital refuses with "Test signal
+    # funct3 not found" when the testcase columns don't match the port
+    # labels. That refusal is an INTERFACE problem, not wiring — the
+    # lazy result must say "rename your ports", not "fix Layer 1".
+    from types import SimpleNamespace
+    p = tmp_path / "renamed.dig"
+    p.write_text(
+        '<?xml version="1.0" encoding="utf-8"?><circuit><version>2'
+        '</version><attributes/><visualElements>'
+        '<visualElement><elementName>In</elementName><elementAttributes>'
+        '<entry><string>Label</string><string>A</string></entry>'
+        '</elementAttributes><pos x="0" y="0"/></visualElement>'
+        '<visualElement><elementName>Out</elementName><elementAttributes>'
+        '<entry><string>Label</string><string>X</string></entry>'
+        '</elementAttributes><pos x="200" y="0"/></visualElement>'
+        '<visualElement><elementName>Testcase</elementName>'
+        '<elementAttributes><entry><string>Testdata</string><testData>'
+        '<dataString>A Q\n0 0</dataString></testData></entry>'
+        '</elementAttributes><pos x="0" y="200"/></visualElement>'
+        '</visualElements><wires><wire><p1 x="0" y="0"/>'
+        '<p2 x="200" y="0"/></wire></wires></circuit>',
+        encoding="utf-8")
+    monkeypatch.setattr(debugger, "find_digital_jar", lambda: "fake.jar")
+    monkeypatch.setattr(
+        debugger, "per_row_run_auto",
+        lambda spec, path, jar_path=None: [
+            SimpleNamespace(status="error", row_index=0,
+                            error_message="Test signal Q not found in "
+                                          "the circuit!",
+                            mismatches=[])
+        ])
+    res = debug_circuit(str(p), call=_never, use_manifest=False)
+    assert res["mode"] == "lazy"
+    assert res["llm_calls"] == 0
+    assert [f["kind"] for f in res["gross_flags"]] == ["unbound_columns"]
+    assert "'Q'" in res["gross_flags"][0]["detail"]
+    assert [s["kind"] for s in res["suggestions"]] == ["unbound_columns"]
+    assert "Rename" in res["suggestions"][0]["hint"]

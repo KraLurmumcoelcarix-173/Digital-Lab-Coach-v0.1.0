@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from dlc.l3 import evidence as ev
@@ -53,6 +54,15 @@ from dlc.testing.spec import extract_test_specs, match_variables_to_io
 CONTRACT = "l3.debug.v1.1"
 K_CARDS = 3
 _MAX_OPS = 6
+# Stop condition: once this many ideas have been REFUTED by the
+# verifier in one run, stop spending model calls (skip further refute
+# retries, the escalation wave, and any untouched clusters) and return
+# the best surviving idea instead. 4 = two clusters' worth of
+# initial-idea + one-retry each — the typical cpu-tree shape — so a run
+# that can't land a verified fix ends after ~4 model calls instead of 8+.
+# The benchmark's "best solution" hard trigger reads the
+# `stopped_early` flag this produces.
+_MAX_REFUTED_IDEAS = 4
 _MAX_TOKENS = 3000
 # premium-tier models (Opus) reason longer before the JSON: at 3000 the
 # reply truncates mid-object and validates as invalid_response, wasting
@@ -376,6 +386,25 @@ _SUGGESTION_TABLE = {
                  "directly), then re-upload the whole tree."),
         "terms": ["subcircuit", "testcase", "modular design"],
     },
+    "subcircuit_failing_official": {
+        "question": ("Which subcircuit fails its OFFICIAL tests — and can "
+                     "the parent possibly work before it does?"),
+        "hint": ("Debug bottom-up: open the failing subcircuit as its own "
+                 "file — its official testcase loads automatically — fix "
+                 "it there (Mode A analyzes it directly), then re-run the "
+                 "whole tree."),
+        "terms": ["subcircuit", "testcase", "modular design"],
+    },
+    "build_refused": {
+        "question": ("Which red Layer 1 error is the build blocker — a "
+                     "dangling pin, an unconnected tunnel, or two outputs "
+                     "shorted together?"),
+        "hint": ("Digital could not even BUILD this circuit, so no row "
+                 "verdict is real and analysis would only guess. The red "
+                 "Layer 1 errors mirror the build blocker — fix them "
+                 "first, then re-run the tests and the analysis."),
+        "terms": ["wire", "tunnel", "pin"],
+    },
     "low_pass_rate": {
         "question": ("Pick ONE failing output: can you follow its value "
                      "backwards, gate by gate, for a single row?"),
@@ -468,12 +497,22 @@ def describe_ops(circuit, ops: list[dict]) -> list[str]:
     return out
 
 
-def _failing_children(circuit) -> list[tuple[str, int]]:
-    """(reference, failing-row count) for every resolved subcircuit whose
-    OWN embedded testcase fails under the evaluator. Parent-level analysis
-    is noise until the children hold — the coach says so instead of
-    drowning in a giant multi-cause evidence payload."""
-    out: list[tuple[str, int]] = []
+def _failing_children(circuit) -> list[tuple[str, int, str]]:
+    """(reference, failing-row count, test source) for every resolved
+    subcircuit that fails under the evaluator. Parent-level analysis is
+    noise until the children hold — the coach says so instead of drowning
+    in a giant multi-cause evidence payload.
+
+    Test source per child mirrors the Gradescope flow: a child whose
+    testcase is missing or modified gets the OFFICIAL rows injected
+    (tool-owned sibling temp, removed before returning) and reports
+    source "official"; otherwise its own embedded rows run ("own").
+    This is what routes a cpu tree whose real bug lives in
+    control-unit.dig to that file instead of burning model calls on
+    parent wiring that can never fix it."""
+    from dlc.testing.inject import prepare_injected_run, cleanup_injected
+
+    out: list[tuple[str, int, str]] = []
     seen: set[str] = set()
     for sub in circuit.subcircuits:
         ref = getattr(sub, "reference", None)
@@ -481,18 +520,24 @@ def _failing_children(circuit) -> list[tuple[str, int]]:
         if not ref or not path or ref in seen:
             continue
         seen.add(ref)
+        temp = None
         try:
-            child = parse_dig_file(str(path))
+            temp, _notes = prepare_injected_run(str(path), ref)
+            run_path, src = (temp, "official") if temp else (str(path), "own")
+            child = parse_dig_file(run_path)
             n = 0
             for spec in extract_test_specs(child):
                 if not spec.rows:
                     continue
-                failing, _ = _offline_failing(str(path), spec.name)
+                failing, _ = _offline_failing(run_path, spec.name)
                 n += len(failing)
             if n:
-                out.append((ref, n))
+                out.append((ref, n, src))
         except Exception:
             continue
+        finally:
+            if temp:
+                cleanup_injected(temp)
     return out
 
 
@@ -530,9 +575,27 @@ def _diagnosis_line(cluster) -> str:
     return line + "."
 
 
-def _touches_stored_data(ops_lists: list[list[dict]]) -> bool:
-    return any(isinstance(op, dict) and op.get("name") == "Data"
-               for ops in ops_lists for op in (ops or []))
+def _touches_stored_data(ops_lists: list[list[dict]],
+                         circuit=None) -> bool:
+    """A refuted Data rewrite justifies the r27 address-path steer ONLY
+    when the target ROM actually stores words today — the steer's
+    premise is "the stored words satisfy every passing row". A rewrite
+    of an EMPTY ROM refuted for having the WRONG words must keep the
+    Data path open (r37, s008's unprogrammed decode ROM)."""
+    for ops in ops_lists:
+        for op in (ops or []):
+            if not (isinstance(op, dict) and op.get("name") == "Data"):
+                continue
+            if circuit is None:
+                return True
+            idx = op.get("component_index")
+            if not (isinstance(idx, int)
+                    and 0 <= idx < len(circuit.components)):
+                return True
+            raw = circuit.components[idx].attributes.get("Data", "")
+            if str(raw or "").strip():
+                return True
+    return False
 
 
 # Machine fact appended once a ROM/LookUpTable Data rewrite has been
@@ -553,7 +616,8 @@ _DATA_REFUTED_STEER = (
 )
 
 
-def _refutation_block(ops: list[dict], verdict: dict) -> str:
+def _refutation_block(ops: list[dict], verdict: dict,
+                      circuit=None) -> str:
     payload = {
         "refuted_ops": ops,
         "rerun": {
@@ -571,7 +635,8 @@ def _refutation_block(ops: list[dict], verdict: dict) -> str:
     }
     return ("\n\n[REFUTED ATTEMPT]\n"
             + json.dumps(payload, indent=2, default=str)
-            + (_DATA_REFUTED_STEER if _touches_stored_data([ops]) else ""))
+            + (_DATA_REFUTED_STEER
+               if _touches_stored_data([ops], circuit) else ""))
 
 
 def _rank_key(h: dict):
@@ -656,11 +721,13 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     broken = _failing_children(circuit)
     if broken:
         flags = [{
-            "kind": "subcircuit_failing",
-            "detail": (f"subcircuit {ref!r} fails {n} of its own test "
-                       f"row(s) — fix that file first, then re-upload "
+            "kind": ("subcircuit_failing_official" if src == "official"
+                     else "subcircuit_failing"),
+            "detail": (f"subcircuit {ref!r} fails {n} of its "
+                       f"{'official' if src == 'official' else 'own'} "
+                       f"test row(s) — fix that file first, then re-run "
                        f"the tree."),
-        } for ref, n in broken]
+        } for ref, n, src in broken]
         return {
             "ok": True, "contract": CONTRACT, "model": model,
             "spec_name": spec.name, "failing_count": 0,
@@ -679,9 +746,49 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         try:
             results = per_row_run_auto(spec, str(dig_path), jar_path=jar)
             if results and all(r.status == "error" for r in results):
-                notes.append("Digital could not run this testcase "
-                             f"({results[0].error_message}); falling back "
-                             "to the built-in evaluator.")
+                # Every row erroring means Digital REFUSED the run, not
+                # that rows failed. Analysis on an unrunnable circuit
+                # only guesses — and its verifier would refute every
+                # idea through the same refusal, the r37 runaway. Stop
+                # here, free, with the blocker named. Two families:
+                # testcase columns that bind to no port (renamed labels
+                # — s008's op/f3/f7 control unit) get the rename
+                # guidance; anything else (unconnected tunnel, dangling
+                # pin) mirrors the red Layer 1 errors.
+                msg = results[0].error_message or "build error"
+                bindings = match_variables_to_io(spec.headers, circuit)
+                unbound = [h for h in spec.headers
+                           if bindings[h].role == "unbound"]
+                if unbound:
+                    flags = [{
+                        "kind": "unbound_columns",
+                        "detail": (
+                            "testcase column(s) "
+                            + ", ".join(repr(h) for h in unbound)
+                            + " match no input, output, or clock label "
+                            "in this circuit — Digital refuses the run "
+                            f"({msg}). Rename the ports to the lab's "
+                            "interface, then re-run."),
+                    }]
+                else:
+                    flags = [{
+                        "kind": "build_refused",
+                        "detail": (f"Digital refuses to build this "
+                                   f"circuit ({msg}). Fix the red "
+                                   f"Layer 1 errors first — they "
+                                   f"mirror this blocker — then "
+                                   f"re-run the analysis."),
+                    }]
+                return {
+                    "ok": True, "contract": CONTRACT, "model": model,
+                    "spec_name": spec.name, "failing_count": 0,
+                    "row_verdict_runner": "digital",
+                    "notes": notes, "usage": {"input_tokens": 0,
+                                              "output_tokens": 0},
+                    "llm_calls": 0, "mode": "lazy",
+                    "gross_flags": flags,
+                    "suggestions": lazy_suggestions(flags),
+                }
             else:
                 failing_indices = [r.row_index for r in results
                                    if r.status in ("failed", "error")]
@@ -722,11 +829,18 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     prompt_template = _load_prompt()
     usage = base["usage"]
     calls = 0
+    t_begin = time.monotonic()
+    llm_seconds: list[float] = []
+    verify_seconds: list[float] = []
+    refuted_total = 0
+    stopped_early = False
 
     def ask(prompt_text: str) -> dict:
         nonlocal calls
+        t0 = time.monotonic()
         r = call(prompt_text, api_key=api_key, model=model,
                  max_tokens=_max_tokens_for(model))
+        llm_seconds.append(round(time.monotonic() - t0, 2))
         calls += 1
         u = r.get("usage") or {}
         usage["input_tokens"] += u.get("input_tokens") or 0
@@ -750,8 +864,27 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     hypotheses: list[dict] = []
     dropped: list[dict] = []
 
+    def verify(ops: list[dict], rows: list[int]) -> dict:
+        """verify_ops with central timing + refuted-idea accounting."""
+        nonlocal refuted_total
+        t0 = time.monotonic()
+        v = verify_ops(str(dig_path), spec.name, ops, rows,
+                       original_failing, jar_path=jar_path,
+                       coach_targets=coach_targets)
+        verify_seconds.append(round(time.monotonic() - t0, 2))
+        if not v["confirmed"]:
+            refuted_total += 1
+        return v
+
     for ci, (cluster, payload) in enumerate(
             zip(evres.clusters, evres.payloads)):
+        if refuted_total >= _MAX_REFUTED_IDEAS:
+            stopped_early = True
+            notes.append(
+                f"analysis stopped after {refuted_total} refuted ideas — "
+                f"remaining cluster(s) skipped; the best surviving idea "
+                f"is returned below.")
+            break
         cluster_rows = [r.row_index for r in cluster.rows]
         payload_json = json.dumps(payload, indent=2, default=str)
         if len(payload_json) > 250_000:
@@ -782,21 +915,15 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                             "reason": "invalid_response", "detail": err})
             continue
 
-        verdict = verify_ops(str(dig_path), spec.name, clean["ops"],
-                             cluster_rows, original_failing,
-                             jar_path=jar_path,
-                             coach_targets=coach_targets)
-        if not verdict["confirmed"]:
-            retry = ask(prompt + _refutation_block(clean["ops"], verdict))
+        verdict = verify(clean["ops"], cluster_rows)
+        if not verdict["confirmed"] and refuted_total < _MAX_REFUTED_IDEAS:
+            retry = ask(prompt + _refutation_block(clean["ops"], verdict,
+                                                   circuit))
             if retry.get("ok"):
                 clean2, err2 = validate_hypothesis(
                     parse_agent_json(retry.get("text")))
                 if clean2 is not None:
-                    verdict2 = verify_ops(str(dig_path), spec.name,
-                                          clean2["ops"], cluster_rows,
-                                          original_failing,
-                                          jar_path=jar_path,
-                                          coach_targets=coach_targets)
+                    verdict2 = verify(clean2["ops"], cluster_rows)
                     if verdict2["confirmed"] or not verdict["apply_ok"]:
                         clean, verdict = clean2, verdict2
 
@@ -814,40 +941,54 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
     # replies never validated get no escalation — there is nothing to
     # refute, and two format failures already spent their budget.
     if hypotheses and not any(h["verdict"]["confirmed"] for h in hypotheses):
-        tried: dict[int, list] = {}
-        for h in hypotheses:
-            tried.setdefault(h["cluster_index"], []).append(h["ops"])
-        for ci, (cluster, payload) in enumerate(
-                zip(evres.clusters, evres.payloads)):
-            if ci not in tried:
-                continue
-            cluster_rows = [r.row_index for r in cluster.rows]
-            prompt = prompt_template.replace(
-                "<<PAYLOAD_JSON>>",
-                json.dumps(payload, indent=2, default=str)) + (
-                "\n\n[ESCALATION]\n"
-                + json.dumps({"refuted_ops": tried[ci]}, indent=2,
-                             default=str)
-                + (_DATA_REFUTED_STEER
-                   if _touches_stored_data(tried[ci]) else ""))
-            reply = ask(prompt)
-            if not reply.get("ok"):
-                continue
-            clean, _err = validate_hypothesis(
-                parse_agent_json(reply.get("text")))
-            if clean is None:
-                continue
-            verdict = verify_ops(str(dig_path), spec.name, clean["ops"],
-                                 cluster_rows, original_failing,
-                                 jar_path=jar_path,
-                                 coach_targets=coach_targets)
-            hypotheses.append({"cluster_index": ci,
-                               "cluster_rows": cluster_rows,
-                               "confidence": clean["confidence"],
-                               "hint": clean["hint"], "ops": clean["ops"],
-                               "explanation": clean["explanation"],
-                               "animation": clean["animation"],
-                               "verdict": verdict})
+        if refuted_total >= _MAX_REFUTED_IDEAS:
+            if not stopped_early:
+                stopped_early = True
+                notes.append(
+                    f"analysis stopped after {refuted_total} refuted "
+                    f"ideas — escalation skipped; the best surviving "
+                    f"idea is returned below.")
+        else:
+            tried: dict[int, list] = {}
+            for h in hypotheses:
+                tried.setdefault(h["cluster_index"], []).append(h["ops"])
+            for ci, (cluster, payload) in enumerate(
+                    zip(evres.clusters, evres.payloads)):
+                if ci not in tried:
+                    continue
+                if refuted_total >= _MAX_REFUTED_IDEAS:
+                    stopped_early = True
+                    notes.append(
+                        f"analysis stopped after {refuted_total} refuted "
+                        f"ideas — remaining escalation(s) skipped; the "
+                        f"best surviving idea is returned below.")
+                    break
+                cluster_rows = [r.row_index for r in cluster.rows]
+                prompt = prompt_template.replace(
+                    "<<PAYLOAD_JSON>>",
+                    json.dumps(payload, indent=2, default=str)) + (
+                    "\n\n[ESCALATION]\n"
+                    + json.dumps({"refuted_ops": tried[ci]}, indent=2,
+                                 default=str)
+                    + (_DATA_REFUTED_STEER
+                       if _touches_stored_data(tried[ci], circuit)
+                       else ""))
+                reply = ask(prompt)
+                if not reply.get("ok"):
+                    continue
+                clean, _err = validate_hypothesis(
+                    parse_agent_json(reply.get("text")))
+                if clean is None:
+                    continue
+                verdict = verify(clean["ops"], cluster_rows)
+                hypotheses.append({"cluster_index": ci,
+                                   "cluster_rows": cluster_rows,
+                                   "confidence": clean["confidence"],
+                                   "hint": clean["hint"],
+                                   "ops": clean["ops"],
+                                   "explanation": clean["explanation"],
+                                   "animation": clean["animation"],
+                                   "verdict": verdict})
 
     ranked = dedupe_hypotheses(hypotheses)
     cards: list[dict] = []
@@ -926,5 +1067,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             "cards": cards,
             "best_unverified": best_unverified,
             "dropped_ideas": dropped,
+            "stopped_early": stopped_early,
+            "refuted_ideas": refuted_total,
+            "timings": {"llm_s": llm_seconds, "verify_s": verify_seconds,
+                        "total_s": round(time.monotonic() - t_begin, 2)},
             "verify_runner": "digital" if jar else "evaluator",
             "usage": usage, "llm_calls": calls}

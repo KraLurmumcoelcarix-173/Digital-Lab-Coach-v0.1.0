@@ -431,6 +431,57 @@ def test_testcase_unlisted_in_tap_is_warning(tmp_path):
     assert md and all(i.severity.value == "error" for i in md)
 
 
+def test_duplicated_identical_gates_tied_is_warning(tmp_path):
+    # jar-probed (r37): a Lab-2 SOP decoder rebuilds the same product
+    # term in several segment blocks and ties every copy with one
+    # tunnel name. Identical gates on identical nets always agree, so
+    # Digital runs it. A pair that differs in gate type or in an
+    # inverter bubble can disagree and stays a hard error.
+    def circuit(second_gate, invert_second=False):
+        inv = (
+            "<entry><string>inverterConfig</string><inverterConfig>"
+            "<string>In_1</string></inverterConfig></entry>"
+            if invert_second else ""
+        )
+        wide = _entry("wideShape", "true", "boolean")
+        elements = (
+            _ve("In", 0, 0, _entry("Label", "A"))
+            + _ve("In", 0, 80, _entry("Label", "B"))
+            + _ve("And", 200, 0, wide)
+            + _ve(second_gate, 200, 120, wide + inv)
+            + _ve("Tunnel", 300, 20, _entry("NetName", "T"))
+            + _ve("Tunnel", 300, 140, _entry("NetName", "T"))
+            + _ve("Tunnel", 380, 60, _entry("NetName", "T"))
+            + _ve("Out", 400, 60, _entry("Label", "F"))
+        )
+        wires = (
+            _w(0, 0, 60, 0) + _w(60, 0, 200, 0)
+            + _w(60, 0, 60, 120) + _w(60, 120, 200, 120)
+            + _w(0, 80, 100, 80)
+            + _w(100, 40, 100, 80) + _w(100, 40, 200, 40)
+            + _w(100, 80, 100, 160) + _w(100, 160, 200, 160)
+            + _w(280, 20, 300, 20) + _w(280, 140, 300, 140)
+            + _w(380, 60, 400, 60)
+        )
+        return _xml_circuit(elements, wires)
+
+    p = tmp_path / "dup.dig"
+    p.write_text(circuit("And"), encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert len(md) == 1 and md[0].severity.value == "warning"
+
+    p.write_text(circuit("Or"), encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert md and all(i.severity.value == "error" for i in md)
+
+    p.write_text(circuit("And", invert_second=True), encoding="utf-8")
+    md = [i for i in check_all_l1(parse_dig_file(str(p))).issues
+          if i.kind == "multi_driver"]
+    assert md and all(i.severity.value == "error" for i in md)
+
+
 def test_mute_contract_unblocks_test_runs(tmp_path):
     # r36: when the last run fully passed and the file sits within the
     # mute threshold, the server-side L1 gate stands down — the run that

@@ -293,6 +293,57 @@ verified empirically:
   Mode B remains the test-expansion teacher on top of always-official
   test runs.
 
+- **Duplicated identical gates tied together demote to WARNING (r37)**:
+  jar-probed — two And gates with the same inputs driving one tunnel
+  net run fine (they always agree), while And+Or on the same inputs
+  short-circuit at run time. `_check_multi_drivers` demotes only when
+  every driver is a plain commutative gate (or Not) with the same
+  element, Bits, input NETS and inverter bubbles
+  (`_identical_gate_signature`); anything else stays a hard error.
+  Field source: a real Lab-2 SOP decoder rebuilding product terms per
+  segment block under one tunnel name.
+- **PriorityEncoder drives `f` in the evaluator (r37)**: Digital's PE
+  has `num` + a 1-bit `f` "any input set" flag. The evaluator only
+  produced `num`, so a ROM whose chip-select hangs off `f` never
+  evaluated and the whole output stage read undefined — while the jar
+  ran it fine (empty ROM words read 0). Both fixed: `f` is emitted and
+  empty ROMs read 0, so evaluator mismatch cells now match Digital's.
+- **Mode A runaway firewalls (r37)**: (1) children failing their
+  OFFICIAL tests (injected when missing/modified) gate the parent into
+  the free suggestion branch — the s008 cpu routes straight to
+  control-unit.dig, 0 model calls; (2) a jar per-row run where EVERY
+  row errors is a REFUSAL (unconnected tunnel / renamed test signals)
+  — returned as lazy `build_refused`, or `unbound_columns` with rename
+  guidance when testcase columns bind to no port, 0 model calls;
+  (3) `_MAX_REFUTED_IDEAS = 4` — after 4 verifier-refuted ideas the run
+  stops spending (no more retries/escalations/clusters), sets
+  `stopped_early`, and ships the best unverified idea (the benchmark's
+  best-solution hard trigger); (4) `timings` in the analysis payload
+  records per-call and per-verify seconds.
+- **Frozen-trunk exception to the lazy bars (r37)**: when the failing
+  rows are fully explained by "every output frozen at one constant"
+  (constant found per column, never-mismatching outputs carry one
+  constant expected, passing rows consistent), the scattered flag and
+  pass-rate bars stand aside, and all failing rows form ONE cluster so
+  a partial fix gets refuted instead of shipping as a per-row card.
+  Convicted on s008's empty decode ROM (8/8 rows, stuck at 0). Rows
+  failing in differing column sets keep every ratified bar.
+- **ROM-data steer only fires on stored words (r37)**: the r27
+  "do NOT propose another Data change" escalation steer presumes the
+  stored words satisfy the passing rows; on an EMPTY ROM the missing
+  words ARE the bug, so the steer is suppressed and suspect attrs
+  carry the exact `change_attribute`/`Data` op shape instead
+  (`_suspect_attrs`: AddrBits/Bits/splitting ranges/data_words_stored;
+  stored words themselves are never listed — injected official
+  programs must not leave the backend).
+- **Splitter attribute key is `Output Splitting`** (not `Splitting`),
+  and Digital rejects a `Splitting` entry silently — the box renders
+  with its default 8-bit output. Bit-group syntax `1,1,1,1` verified;
+  `1*4` also parses in Digital but our probe used the explicit form.
+- **Mode A daily cap is 1 (r37)** — a booked use requires a delivered
+  verified card, and the stop condition bounds one run's spend, so a
+  single daily analysis is a full analysis.
+
 ## Known limitations to revisit (Keep updating during path 1 development)
 
 
