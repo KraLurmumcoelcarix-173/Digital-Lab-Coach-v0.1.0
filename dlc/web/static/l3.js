@@ -2118,7 +2118,16 @@ function _l3DiagBoard() {
   if (!el) {
     el = document.createElement("div");
     el.id = "l3-diag-board";
-    el.innerHTML = `<div class="l3-diag-title">DIAGNOSIS</div>`;
+    el.innerHTML =
+      `<span class="l3-diag-icon" aria-hidden="true">&#10005;</span>` +
+      `<div class="l3-diag-content">` +
+      `<div class="l3-diag-title">Diagnosis</div>` +
+      `<div class="l3-diag-body"></div>` +
+      `</div>` +
+      `<button class="l3-diag-close" title="dismiss"` +
+      ` aria-label="dismiss">&#10005;</button>`;
+    el.querySelector(".l3-diag-close").onclick =
+      () => el.classList.add("hidden");
     pane.appendChild(el);
   }
   el.classList.remove("hidden");
@@ -2129,7 +2138,7 @@ async function _l3TypeLine(board, text) {
   if (!board) return;
   const line = document.createElement("div");
   line.className = "l3-diag-line";
-  board.appendChild(line);
+  (board.querySelector(".l3-diag-body") || board).appendChild(line);
   const t = String(text).slice(0, 160);
   for (let i = 1; i <= t.length; i += 2) {
     line.textContent = t.slice(0, i);
