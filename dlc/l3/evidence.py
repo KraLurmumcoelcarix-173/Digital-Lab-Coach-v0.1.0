@@ -46,7 +46,7 @@ CONTRACT = "l3.debug.v1.1"
 # More failing rows than this is a structural problem, not a localizable
 # bug — Mode A answers with the suggestion branch instead of burning a
 # hypothesis hunt (and a daily use) on a doomed circuit.
-GROSS_MAX_FAILING = 10
+GROSS_MAX_FAILING = 20
 
 # The tiered pass-rate bars only judge BIG circuits. A small circuit that
 # is otherwise Layer-3-ready is exactly the "close to the answer"

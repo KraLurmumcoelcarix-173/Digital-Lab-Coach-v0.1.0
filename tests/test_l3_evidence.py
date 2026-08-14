@@ -170,8 +170,11 @@ def test_tiered_pass_rate_bars():
     assert gross_check(c, _spec_of(20), failing_count=11, **on) == []
     # a 27%-passing cpu-style suite is analyzable too (the r34 motivator)
     assert gross_check(c, _spec_of(23), failing_count=17, **on) == []
-    # big suite: >10 failing AND under 20% -> structural
-    kinds = [f["kind"] for f in gross_check(c, _spec_of(20), 17, **on)]
+    # 19 of 23 failing = 17% passing, but <= 20 absolute failures is
+    # still analyzable (r35: max_failing raised from 10 to 20)
+    assert gross_check(c, _spec_of(23), failing_count=19, **on) == []
+    # big suite: MORE than 20 failing AND under 20% -> structural
+    kinds = [f["kind"] for f in gross_check(c, _spec_of(30), 25, **on)]
     assert kinds == ["too_many_failures"]
     # big suite: many rows failing but <=10 absolute -> still analyzable
     assert gross_check(c, _spec_of(12), failing_count=2, **on) == []
