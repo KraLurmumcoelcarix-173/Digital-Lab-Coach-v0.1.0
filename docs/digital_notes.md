@@ -376,6 +376,30 @@ verified empirically:
   table derivation still truncated at 6000 and died as
   invalid_response; the single-cluster frozen-trunk shape needs the
   headroom.
+- **Data ops are retargeted deterministically**: a
+  change_attribute/Data op aimed at a component that cannot store data
+  is redirected to the circuit's ONLY storage element before
+  verification (`_retarget_data_ops`; ambiguous multi-storage circuits
+  untouched). Live conviction: Opus wrote the correct decode table at
+  an And gate's index and the verifier refuted a no-op.
+- **A complete verified answer ends the run**:
+  when a confirmed fix leaves ZERO failing rows
+  (verify_ops.remaining_failing empty), remaining clusters and
+  escalations are skipped — "as long as an answer is verified, stop
+  layer 3 and return result."
+- **Frozen-trunk clusters carry the merged localizer report (r41 bug
+  fix)**: the r38 single-cluster branch dropped it, stripping
+  suspect_wiring from every frozen-trunk payload — the model had no
+  component indices at all.
+- **Storage suspects carry three machine-traced tables**:
+  `address_by_row` (which word each failing row reads),
+  `output_bit_map` (which stored bit feeds which named Out — traced
+  through splitters, immune to lying tunnel names like an ALUOp bus
+  named "opcode"), and `expected_outputs_by_row` (machine-parsed
+  expected ints — models kept misreading the whitespace-aligned raw
+  rows). Deriving a decode word is now a pure table join; both s008
+  and s009 control units land a jar-verified full table in ~25s/2
+  calls.
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 

@@ -626,7 +626,11 @@ _SUSPECT_ATTR_KEYS = (
 )
 
 
-def _suspect_attrs(comp, *, hide_rom_words: bool = False) -> dict:
+_DATA_ELEMENTS = ("ROM", "RAM", "EEPROM", "RAMDualPort", "LookUpTable")
+
+
+def _suspect_attrs(comp, *, hide_rom_words: bool = False,
+                   comp_index: int | None = None) -> dict:
     """The semantics-bearing attributes of one suspect component. This is
     what let the sub-agent derive a decode table: without the splitter's
     bit ranges and the ROM's shape, the r37 live run guessed the word
@@ -647,15 +651,75 @@ def _suspect_attrs(comp, *, hide_rom_words: bool = False) -> dict:
         tokens = [t for t in str(raw or "").replace(",", " ").split() if t]
         out["data_words_stored"] = len(tokens)
         if not tokens:
+            idx_txt = ("<this component>" if comp_index is None
+                       else str(comp_index))
             out["data_note"] = (
                 "Data is EMPTY - every address reads 0. To program it, "
                 "use exactly: {\"op\": \"change_attribute\", "
-                "\"component_index\": <this component>, \"name\": "
+                f"\"component_index\": {idx_txt}, \"name\": "
                 "\"Data\", \"value\": \"w0,w1,...\"} - comma-separated "
                 "hex words, address 0 first, one word PER ADDRESS the "
-                "circuit uses (the attribute name is Data, never Value).")
+                "circuit uses. The attribute name is Data, never Value, "
+                f"and the component_index MUST be {idx_txt} (this "
+                "storage element itself, never a gate).")
         elif not hide_rom_words and len(tokens) <= 32:
             out["stored_words"] = ",".join(tokens)
+    return out
+
+
+def _data_output_bit_map(circuit, netlist, data_idx: int) -> dict:
+    """{Out label: [stored-word bit positions]} for one storage element —
+    each data-output bit traced through splitters (tunnels merge inside
+    the netlist) to the named top-level Outs it reaches. r41: the live
+    s009 control unit names its ALUOp bus tunnel 'opcode', colliding
+    with the 'opcode' INPUT column; the model kept packing instruction
+    opcodes into the decode words. The bit map is pure structure the
+    tool can compute exactly, so the word layout stops being an
+    inference."""
+    from dlc.facts.splitter import parse_splitting
+
+    def net_of(comp_idx, pin_name):
+        for net in netlist.nets:
+            for p in net.pins:
+                if p.component_index == comp_idx and p.pin_name == pin_name:
+                    return net
+        return None
+
+    start = net_of(data_idx, "D")
+    if start is None:
+        return {}
+    bits = int(circuit.components[data_idx].attributes.get("Bits", 1) or 1)
+    out: dict[str, list[int]] = {}
+    # (net, {position on this net -> stored-word bit})
+    queue = [(start, {i: i for i in range(bits)})]
+    seen: set[int] = set()
+    while queue:
+        net, pos_map = queue.pop()
+        if net.net_id in seen:
+            continue
+        seen.add(net.net_id)
+        for p in net.pins:
+            comp = circuit.components[p.component_index]
+            if comp.element_name == "Out" and p.direction == "in":
+                label = comp.label or f"Out[{p.component_index}]"
+                got = sorted(pos_map.values())
+                if got:
+                    out[label] = got
+            elif (comp.element_name == "Splitter"
+                  and p.direction == "in"):
+                try:
+                    groups = parse_splitting(str(
+                        comp.attributes.get("Output Splitting", "")))
+                except ValueError:
+                    continue
+                for gi, grp in enumerate(groups):
+                    sub = {k - grp.bit_lo: v for k, v in pos_map.items()
+                           if grp.bit_lo <= k <= grp.bit_hi}
+                    if not sub:
+                        continue
+                    nxt = net_of(p.component_index, f"out{gi}")
+                    if nxt is not None:
+                        queue.append((nxt, sub))
     return out
 
 
@@ -678,7 +742,8 @@ def suspect_wiring(circuit, netlist, indices: list[int],
         if not (0 <= idx < len(circuit.components)):
             continue
         comp = circuit.components[idx]
-        attrs = _suspect_attrs(comp, hide_rom_words=hide_rom_words)
+        attrs = _suspect_attrs(comp, hide_rom_words=hide_rom_words,
+                               comp_index=idx)
         pins: list[dict] = []
         for net in netlist.nets:
             mine = [p for p in net.pins if p.component_index == idx]
@@ -742,9 +807,76 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
         "suspects": cluster.merged.to_dict(),
     }
     if circuit is not None and netlist is not None:
+        indices = list(cluster.merged.suspect_indices())
+        # Data-bearing elements ALWAYS ride the wiring facts in a rom
+        # circuit: the r41 live miss (an empty localizer report on a
+        # conformed control unit) left the model with no component index
+        # at all, so it wrote the correct decode table at an And gate's
+        # index. With the ROM present its attrs carry the exact op shape
+        # and its own index.
+        for i, comp in enumerate(circuit.components):
+            if comp.element_name in _DATA_ELEMENTS and i not in indices:
+                indices.append(i)
         payload["suspect_wiring"] = suspect_wiring(
-            circuit, netlist, cluster.merged.suspect_indices(),
+            circuit, netlist, indices,
             rep_rows=reps, hide_rom_words=hide_rom_words)
+        # r41: per-row ADDRESS readback for every storage element — the
+        # address its A pin resolved to on EACH failing row (all rows,
+        # not just representatives; every RowEvidence carries its own
+        # net values). This turns "which word does row N read" from a
+        # guess into data: the live s009 run derived addresses 6-7
+        # wrong because those rows' values were beyond the 2-rep cap —
+        # while shipping ALL rows' full net values drowned the model.
+        for rec in payload["suspect_wiring"]:
+            comp = circuit.components[rec["component_index"]]
+            if comp.element_name not in _DATA_ELEMENTS:
+                continue
+            a_nets = [p["net_id"] for p in rec["pins"]
+                      if p["pin"] == "A" and p["direction"] == "in"]
+            if not a_nets:
+                continue
+            key = str(a_nets[0])
+            by_row = {}
+            for r in cluster.rows:
+                nv = r.net_values.get(key)
+                if nv is not None:
+                    by_row[str(r.row_index)] = nv.get("value")
+            if by_row:
+                rec["address_by_row"] = by_row
+            bit_map = _data_output_bit_map(
+                circuit, netlist, rec["component_index"])
+            if bit_map:
+                rec["output_bit_map"] = {
+                    label: (f"bit {bits[0]}" if len(bits) == 1
+                            else f"bits {bits[0]}-{bits[-1]}")
+                    for label, bits in bit_map.items()}
+            # r41: expected output values per failing row, machine-
+            # parsed from the testcase — the live s009 runs read the
+            # whitespace-aligned raw rows by eye and kept packing bits
+            # one column off. With this + address_by_row + the bit map,
+            # deriving a stored word is a pure table join.
+            bindings = match_variables_to_io(spec.headers, circuit)
+            hdr_idx = {h: i for i, h in enumerate(spec.headers)}
+            spec_rows = {r.line_index: r for r in spec.rows
+                         if not r.is_malformed}
+            exp: dict[str, dict] = {}
+            for r in cluster.rows:
+                row = spec_rows.get(r.row_index)
+                if row is None:
+                    continue
+                vals = {}
+                for h, b in bindings.items():
+                    if b.role != "output":
+                        continue
+                    i = hdr_idx[h]
+                    if i < len(row.values):
+                        tok = row.values[i]
+                        if tok.kind == "int" and tok.value is not None:
+                            vals[h] = tok.value
+                if vals:
+                    exp[str(r.row_index)] = vals
+            if exp:
+                rec["expected_outputs_by_row"] = exp
     return payload
 
 
@@ -871,8 +1003,16 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
         # a per-row "verified" card (r37 live-run lesson: two confirmed
         # cards each fixed one row of s008's ROM, none fixed the file).
         first = evidence[0]
-        clusters = [Cluster(signature=_signature_dict(first),
-                            rows=list(evidence))]
+        clusters = [Cluster(
+            signature=_signature_dict(first),
+            rows=list(evidence),
+            # r41: the merged localizer report must ride here exactly
+            # like cluster_rows() does — leaving the default empty
+            # SuspectReport stripped suspect_wiring from every
+            # frozen-trunk payload, and the model wrote a correct
+            # decode table at a GATE's index for lack of any index.
+            merged=merge_reports([r.suspect_report for r in evidence]),
+        )]
         res.notes.append(
             "all failing rows show one frozen output stage — analyzed "
             "as a single cluster so a fix must repair every row.")

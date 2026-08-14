@@ -56,10 +56,22 @@ wrong-kind gate explains. In a circuit with both a ROM and logic gates,
 sort the evidence into those two buckets first and fix the bucket the
 failing rows actually show.
 - A suspect ROM whose attrs say the data is EMPTY (`data_note`) is the
-  prime suspect for frozen-at-0 rows: derive the FULL table — for each
-  address (which detect gate / encoder input selects it), pack the
-  failing rows' expected OUTPUT bits using the output splitter's bit
-  ranges from `attrs` — and write it in ONE change_attribute op.
+  prime suspect for frozen-at-0 rows: derive the FULL table and write
+  it in ONE change_attribute op. Its suspect_wiring record carries two
+  MACHINE-TRACED facts — treat them as ground truth over any tunnel or
+  signal NAME (student names lie; a bus named like an input column is
+  still just stored-word bits):
+    `address_by_row`            which stored-word address each failing
+                                row actually selects;
+    `output_bit_map`            which stored-word bit position feeds
+                                each named output ("RegWrite": "bit 7");
+    `expected_outputs_by_row`   the machine-parsed expected value of
+                                every output column per failing row —
+                                use THESE numbers, never re-read the
+                                raw row text.
+  Word for address k = set exactly the bits where
+  expected_outputs_by_row of the row(s) mapping to k is 1, placed per
+  output_bit_map. One word per address, nothing more.
 - Stored words the student wrote themselves are checkable the same way:
   derive what each failing row's address SHOULD store and compare;
   change only words the evidence convicts, keep every word that passing

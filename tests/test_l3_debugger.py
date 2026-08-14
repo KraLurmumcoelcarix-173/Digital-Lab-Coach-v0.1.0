@@ -757,3 +757,115 @@ def test_prompt_checks_stored_data_first_not_last():
     assert "LAST RESORT" not in text
     assert "CHECK IT FIRST" in text
     assert "[ROM NOTE]" in text
+
+
+# ---------------------------------------------------------------------------
+# Data-op retargeting + stop on a complete verified answer
+# ---------------------------------------------------------------------------
+
+def test_retarget_data_ops_unit():
+    from types import SimpleNamespace
+    from dlc.l3.debugger import _retarget_data_ops
+
+    def circ(*names):
+        return SimpleNamespace(components=[
+            SimpleNamespace(element_name=n, attributes={}) for n in names])
+
+    one_rom = circ("In", "ROM", "And", "Out")
+    bad = [{"op": "change_attribute", "component_index": 2,
+            "name": "Data", "value": "5,6"}]
+    fixed, note = _retarget_data_ops(one_rom, bad)
+    assert fixed[0]["component_index"] == 1
+    assert "redirected" in note
+
+    ok = [{"op": "change_attribute", "component_index": 1,
+           "name": "Data", "value": "5,6"}]
+    same, note2 = _retarget_data_ops(one_rom, ok)
+    assert same == ok and note2 is None
+
+    non_data = [{"op": "change_attribute", "component_index": 2,
+                 "name": "Value", "value": 0}]
+    same3, note3 = _retarget_data_ops(one_rom, non_data)
+    assert same3 == non_data and note3 is None
+
+    two_roms = circ("ROM", "ROM", "And")
+    same4, note4 = _retarget_data_ops(two_roms, bad)
+    assert same4 == bad and note4 is None    # ambiguous: never guess
+
+
+def test_verify_ops_exposes_remaining_failing():
+    good = verify_ops(_BUG3, "Testcase_12", GOOD_OPS,
+                      cluster_rows=[0, 1, 2, 3],
+                      original_failing=[0, 1, 2, 3])
+    assert good["remaining_failing"] == []
+    bad = verify_ops(_BUG3, "Testcase_12", BAD_OPS,
+                     cluster_rows=[0, 1, 2, 3],
+                     original_failing=[0, 1, 2, 3])
+    assert bad["remaining_failing"]
+
+
+_ROM_DECOY = (
+    '<?xml version="1.0" encoding="utf-8"?><circuit><version>2</version>'
+    '<attributes/><visualElements>'
+    '<visualElement><elementName>In</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>sel</string></entry>'
+    '</elementAttributes><pos x="0" y="0"/></visualElement>'
+    '<visualElement><elementName>ROM</elementName><elementAttributes>'
+    '<entry><string>AddrBits</string><int>1</int></entry>'
+    '<entry><string>Bits</string><int>4</int></entry>'
+    '</elementAttributes><pos x="200" y="0"/></visualElement>'
+    '<visualElement><elementName>Out</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>D</string></entry>'
+    '<entry><string>Bits</string><int>4</int></entry>'
+    '</elementAttributes><pos x="400" y="20"/></visualElement>'
+    '<visualElement><elementName>In</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>X</string></entry>'
+    '</elementAttributes><pos x="0" y="200"/></visualElement>'
+    '<visualElement><elementName>In</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>Y</string></entry>'
+    '</elementAttributes><pos x="0" y="280"/></visualElement>'
+    '<visualElement><elementName>And</elementName><elementAttributes>'
+    '<entry><string>wideShape</string><boolean>true</boolean></entry>'
+    '</elementAttributes><pos x="200" y="200"/></visualElement>'
+    '<visualElement><elementName>Out</elementName><elementAttributes>'
+    '<entry><string>Label</string><string>W</string></entry>'
+    '</elementAttributes><pos x="400" y="220"/></visualElement>'
+    '<visualElement><elementName>Testcase</elementName>'
+    '<elementAttributes><entry><string>Testdata</string><testData>'
+    '<dataString>sel X Y D W\n0 1 1 5 1\n1 1 0 6 0</dataString>'
+    '</testData></entry></elementAttributes><pos x="0" y="400"/>'
+    '</visualElement>'
+    '<visualElement><elementName>VDD</elementName><elementAttributes/>'
+    '<pos x="160" y="40"/></visualElement>'
+    '</visualElements><wires>'
+    '<wire><p1 x="160" y="40"/><p2 x="200" y="40"/></wire>'
+    '<wire><p1 x="0" y="0"/><p2 x="200" y="0"/></wire>'
+    '<wire><p1 x="260" y="20"/><p2 x="400" y="20"/></wire>'
+    '<wire><p1 x="0" y="200"/><p2 x="200" y="200"/></wire>'
+    '<wire><p1 x="0" y="280"/><p2 x="100" y="280"/></wire>'
+    '<wire><p1 x="100" y="240"/><p2 x="100" y="280"/></wire>'
+    '<wire><p1 x="100" y="240"/><p2 x="200" y="240"/></wire>'
+    '<wire><p1 x="280" y="220"/><p2 x="400" y="220"/></wire>'
+    '</wires></circuit>'
+)
+
+
+def test_misdirected_data_op_is_retargeted_verified_and_stops(tmp_path):
+    # r41 live case: the model derived the CORRECT rom table but wrote
+    # it at a gate's index; the verifier refuted a no-op and a correct
+    # answer was lost. Now the op is redirected to the only storage
+    # element, verifies, and — being a complete answer — ends the run.
+    p = tmp_path / "romdecoy.dig"
+    p.write_text(_ROM_DECOY, encoding="utf-8")
+    reply = _reply([{"op": "change_attribute", "component_index": 5,
+                     "name": "Data", "value": "5,6"}],
+                   why="the lookup stage reads 0 on every failing row")
+    call = _fake([reply])
+    res = debug_circuit(str(p), call=call, use_manifest=False)
+    assert res["mode"] == "analysis"
+    assert res["llm_calls"] == 1
+    assert len(res["cards"]) == 1
+    card = res["cards"][0]
+    assert card["verified"]["confirmed"] is True
+    assert card["fix"]["ops"][0]["component_index"] == 1   # the ROM
+    assert any("redirected" in n for n in res["notes"])

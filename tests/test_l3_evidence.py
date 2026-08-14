@@ -478,6 +478,11 @@ def test_dead_trunk_full_output_surface_is_analyzable():
     )
     assert res.mode == "analysis"
     assert res.failing_count == 5
+    # the single frozen-trunk cluster must carry the MERGED
+    # localizer report — an empty default stripped suspect_wiring from
+    # the payload and left the model with no component indices at all
+    assert res.clusters and res.clusters[0].merged.suspect_indices()
+    assert res.payloads[0].get("suspect_wiring")
 
 
 def test_suspect_attrs_show_student_words_hide_injected_ones():

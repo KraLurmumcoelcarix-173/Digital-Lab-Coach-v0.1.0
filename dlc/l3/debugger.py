@@ -349,6 +349,10 @@ def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
             still.append(idx)
     verdict["still_failing"] = still
     verdict["regressions"] = sorted(after - set(original_failing))
+    # every row still failing on the PATCHED circuit, cluster or not —
+    # empty means the fix is a FULL solution (r41: the coordinator stops
+    # the run on it: a verified complete answer ends Layer 3)
+    verdict["remaining_failing"] = sorted(after)
     verdict["confirmed"] = (not verdict["still_failing"]
                             and not verdict["regressions"])
     return verdict
@@ -575,6 +579,43 @@ def _diagnosis_line(cluster) -> str:
     if cat:
         line += f" (instruction category: {cat})"
     return line + "."
+
+
+_DATA_ELEMENTS = ("ROM", "RAM", "EEPROM", "RAMDualPort", "LookUpTable")
+
+
+def _retarget_data_ops(circuit, ops: list[dict]):
+    """(ops, note) with any change_attribute/Data op that targets a
+    component which cannot store data redirected to the circuit's single
+    data-bearing element — when exactly one exists. r41, from a live
+    run: Opus derived the correct decode table but wrote it at an And
+    gate's index (the localizer had produced no suspects, so no index
+    was visible); the verifier then rightly refuted a no-op patch and
+    the student lost a correct answer. A Data write on a gate is never
+    meaningful, so the redirect is safe; circuits with several storage
+    elements are left untouched (ambiguous)."""
+    roms = [i for i, c in enumerate(circuit.components)
+            if c.element_name in _DATA_ELEMENTS]
+    if len(roms) != 1:
+        return ops, None
+    out, moved = [], []
+    for op in ops:
+        if (isinstance(op, dict) and op.get("op") == "change_attribute"
+                and op.get("name") == "Data"):
+            idx = op.get("component_index")
+            ok = (isinstance(idx, int)
+                  and 0 <= idx < len(circuit.components)
+                  and circuit.components[idx].element_name
+                  in _DATA_ELEMENTS)
+            if not ok:
+                moved.append(idx)
+                op = {**op, "component_index": roms[0]}
+        out.append(op)
+    if not moved:
+        return ops, None
+    return out, (f"a stored-Data rewrite aimed at component(s) "
+                 f"{moved} was redirected to the circuit's only "
+                 f"storage element [{roms[0]}] before verification.")
 
 
 def _touches_stored_data(ops_lists: list[list[dict]],
@@ -925,6 +966,17 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             refuted_total += 1
         return v
 
+    def norm(clean: dict | None) -> dict | None:
+        """Deterministic op repair before any verify — see
+        _retarget_data_ops."""
+        if clean is None:
+            return None
+        ops2, note = _retarget_data_ops(circuit, clean["ops"])
+        if note and note not in notes:
+            notes.append(note)
+        clean["ops"] = ops2
+        return clean
+
     for ci, (cluster, payload) in enumerate(
             zip(evres.clusters, evres.payloads)):
         if refuted_total >= _MAX_REFUTED_IDEAS:
@@ -965,6 +1017,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             dropped.append({"cluster_rows": cluster_rows,
                             "reason": "invalid_response", "detail": err})
             continue
+        clean = norm(clean)
 
         verdict = verify(clean["ops"], cluster_rows)
         if not verdict["confirmed"] and refuted_total < _MAX_REFUTED_IDEAS:
@@ -974,6 +1027,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                 clean2, err2 = validate_hypothesis(
                     parse_agent_json(retry.get("text")))
                 if clean2 is not None:
+                    clean2 = norm(clean2)
                     verdict2 = verify(clean2["ops"], cluster_rows)
                     if verdict2["confirmed"] or not verdict["apply_ok"]:
                         clean, verdict = clean2, verdict2
@@ -984,6 +1038,15 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                            "explanation": clean["explanation"],
                            "animation": clean["animation"],
                            "verdict": verdict})
+        if verdict["confirmed"] and not verdict.get("remaining_failing"):
+            # a VERIFIED fix that leaves zero
+            # failing rows is a complete answer — stop Layer 3 and
+            # return it instead of spending calls on remaining clusters.
+            if ci + 1 < len(evres.clusters):
+                notes.append(
+                    "a verified fix repairs every failing row — "
+                    "remaining cluster(s) skipped.")
+            break
 
     # Escalation — one extra shot per cluster, ONLY when the whole run
     # would otherwise deliver nothing: all refuted ops are disclosed and
@@ -1032,6 +1095,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                     parse_agent_json(reply.get("text")))
                 if clean is None:
                     continue
+                clean = norm(clean)
                 verdict = verify(clean["ops"], cluster_rows)
                 hypotheses.append({"cluster_index": ci,
                                    "cluster_rows": cluster_rows,
@@ -1041,6 +1105,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                                    "explanation": clean["explanation"],
                                    "animation": clean["animation"],
                                    "verdict": verdict})
+                if (verdict["confirmed"]
+                        and not verdict.get("remaining_failing")):
+                    break        # complete verified answer — stop
 
     ranked = dedupe_hypotheses(hypotheses)
     cards: list[dict] = []
