@@ -1098,8 +1098,9 @@ function renderIssues(file) {
     const fixHtml = iss.suggested_fix
       ? `<div class="issue-fix">${escapeHtml(iss.suggested_fix)}</div>`
       : "";
+    const kindCls = iss.kind ? ` kind-${escapeHtml(iss.kind)}` : "";
     return `
-      <div class="issue-card sev-${escapeHtml(iss.severity)}" data-issue-idx="${idx}">
+      <div class="issue-card sev-${escapeHtml(iss.severity)}${kindCls}" data-issue-idx="${idx}">
         <span class="sev-badge">${escapeHtml(iss.severity)}</span>
         <span class="issue-title">${escapeHtml(iss.title)}</span>
         <div class="issue-msg">${escapeHtml(iss.message)}</div>

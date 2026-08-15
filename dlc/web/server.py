@@ -254,6 +254,28 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
             except Exception as exc:
                 issues_payload = []
                 issues_error = f"{type(exc).__name__}: {exc}"
+            # Purple advisory: pins the EFFECTIVE tests (own rows, or
+            # the official rows injection would run) never touch —
+            # redundant pin or incomplete test, student decides.
+            # Advisory only: any hiccup must never break an upload.
+            try:
+                from dlc.analyzer.test_io_coverage import (
+                    check_test_io_coverage)
+                from dlc.testing.inject import (
+                    prepare_injected_run, cleanup_injected)
+                from dlc.testing.spec import extract_test_specs
+                inj_temp, _ = prepare_injected_run(str(path), name)
+                try:
+                    spec_circuit = (parse_dig_file(inj_temp)
+                                    if inj_temp else c)
+                    specs = extract_test_specs(spec_circuit)
+                finally:
+                    cleanup_injected(inj_temp)
+                issues_payload.extend(
+                    i.to_dict()
+                    for i in check_test_io_coverage(c, specs))
+            except Exception:
+                pass
             results.append({
                 "filename": name,
                 "graph": to_cytoscape(c, nl, g),

@@ -440,6 +440,20 @@ verified empirically:
   rest" instead of a bare refusal, so multi-fault circuits converge
   across retries instead of restarting from scratch.
 
+## Purple advisory: pins the tests never touch
+
+- **check_test_io_coverage (dlc/analyzer/test_io_coverage.py)**: at
+  upload, top-level In/Out components no EFFECTIVE test column binds
+  (own rows, or the official rows injection would run) earn ONE purple
+  warning card naming them — "either these pins are redundant, or the
+  tests are incomplete." Field origin: a student cpu carried extra In
+  pins no test drove. Runs from the upload endpoint only (it needs the
+  specs; check_all_l1 stays purely structural), severity=warning so no
+  gate ever blocks on it, silent when no header matches at all (a
+  fully-unbound testcase is the rename story, not a coverage gap).
+  Sweep: 0 cards across all 60 sample circuits and the real student
+  labs on file — fires only on genuinely untested pins.
+
 ## Known limitations to revisit (Keep updating during path 1 development)
 
 

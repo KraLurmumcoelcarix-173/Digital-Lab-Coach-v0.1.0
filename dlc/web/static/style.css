@@ -492,6 +492,13 @@ main {
 .issue-card.sev-error   { border-left-color: #dc2626; }
 .issue-card.sev-warning { border-left-color: #d97706; }
 .issue-card.sev-info    { border-left-color: #2563eb; }
+/* purple advisory: test-coverage cards (pins the tests never touch) —
+   a nudge, not a structural finding; never blocks anything */
+.issue-card.kind-test_io_coverage {
+  border-left-color: #7c3aed;
+  background: #f5f3ff;
+}
+.issue-card.kind-test_io_coverage:hover { background: #ede9fe; }
 
 .issue-card .sev-badge {
   display: inline-block;
@@ -506,6 +513,7 @@ main {
 .issue-card.sev-error   .sev-badge { background: #fee2e2; color: #991b1b; }
 .issue-card.sev-warning .sev-badge { background: #fef3c7; color: #92400e; }
 .issue-card.sev-info    .sev-badge { background: #dbeafe; color: #1e40af; }
+.issue-card.kind-test_io_coverage .sev-badge { background: #ede9fe; color: #5b21b6; }
 
 .issue-card .issue-title { font-weight: 600; }
 .issue-card .issue-msg   { color: #374151; margin-top: 3px; }
