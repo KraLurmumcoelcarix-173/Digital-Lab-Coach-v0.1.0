@@ -31,6 +31,9 @@ MODEL_CATALOG: dict[str, dict] = {
     "claude-opus-5": {
         "label": "Claude Opus 5", "provider": "anthropic", "tier": "premium",
     },
+    "claude-sonnet-5": {
+        "label": "Claude Sonnet 5", "provider": "anthropic", "tier": "balanced",
+    },
     "gpt-4o-mini": {
         "label": "GPT-4o mini", "provider": "openai", "tier": "fast",
     },
@@ -134,7 +137,9 @@ def _friendly_error(exc, provider: str) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 def _is_anthropic_reasoning_model(model: str) -> bool:
-    return str(model or "").startswith("claude-opus-5")
+    # Claude 5-family models think by default; without bounded effort a
+    # reply can be 100% thinking blocks (measured on claude-opus-5).
+    return str(model or "").startswith(("claude-opus-5", "claude-sonnet-5"))
 
 
 def _call_anthropic(prompt, model, key, max_tokens, system, effort=None) -> dict:

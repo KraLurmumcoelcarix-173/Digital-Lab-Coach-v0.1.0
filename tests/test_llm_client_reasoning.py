@@ -71,3 +71,13 @@ def test_non_reasoning_models_keep_provider_defaults(_capture):
     kw = _capture.last_kwargs
     assert "output_config" not in kw
     assert kw["max_tokens"] == 2000
+
+
+def test_sonnet5_is_shaped_like_the_reasoning_tier(_capture):
+    # Claude 5-family models think by default — sonnet-5 gets the same
+    # bounded effort + token floor that saved opus-5 from empty replies.
+    resp = lc.call_llm("hi", model="claude-sonnet-5", max_tokens=2000)
+    assert resp["ok"] is True
+    kw = _capture.last_kwargs
+    assert kw["output_config"] == {"effort": "low"}
+    assert kw["max_tokens"] == 8000
