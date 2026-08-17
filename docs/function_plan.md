@@ -43,8 +43,8 @@
 | # | Name | Status |
 |---|---|:-:|
 | F17 | UI design | Ongoing. **Layer 1 signal-flow-on-row-click — Done**: clicking a test row colors every wire by value (1-bit green bright/dark, multi-bit blue + hex label, unresolved gray), real Digital component SVG glyphs, per-component reactions (7-seg lighting, mux/decoder selected-port ring, register value), a user-triggered clock-tick that steps signal flow through the remaining rows, a recursive subcircuit **drill-in** overlay, and a "snow storm" clear-page animation | Done |
-| F18 | Ablation condition controller | TBD |
+| F18 | Ablation condition controller | Done |
 | F19 | Telemetry logger & Proxy Server | TBD (frontend event log exists; SQLite sink TBD) |
 | F20 | Digital source-code dig (Path-3 plugin viability) | Waived |
-| F21 | Evaluation harness | L2 benchmark harness done (`dlc/evaluator/`: 6-model competition, grader selection, Pareto plots); 30-bug L1/L3 ablation harness TBD |
+| F21 | Evaluation harness | L2 benchmark harness done (`dlc/evaluator/`: 6-model competition, grader selection, Pareto plots); bug L1/L3 ablation harness Done |
 | F22 | CLI interface | TBD |

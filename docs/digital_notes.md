@@ -1,6 +1,6 @@
 # Digital Notes
 
-Last updated: 2026/7/03
+Last updated: 2026/8/16
 
 ---
 
@@ -241,7 +241,7 @@ verified empirically:
   (missing files).
 - **Subcircuit instance pin direction resolution** (unresolved children only): the instance has no native geometry, so direction is inferred by splitting the instance's implicit pins at the x-midpoint (left = inputs, right = outputs), sorting each side by y, and zipping against the child circuit's `In`/`Out` elements sorted by y. Implicit-pin count is capped to the child's port count to prevent over-claim from neighboring routing.
 
-## L1 regression ground truths (SVG-probed on real lab-5 trees, jar-verified)
+## L1 regression ground truths (SVG-probed on real labs jar-verified)
 
 - **PriorityEncoder has TWO outputs**: `num` at (80, 0) and `f` — the
   1-bit "any input set" flag — at (80, 20). Students wire `f` as the
@@ -453,6 +453,30 @@ verified empirically:
   fully-unbound testcase is the rename story, not a coverage gap).
   Sweep: 0 cards across all 60 sample circuits and the real student
   labs on file — fires only on genuinely untested pins.
+
+## Program-memory guard 
+
+- **Benchmark conviction**: on a cpu whose instruction memory held
+  wrong words, the premium model derived a complete WORKING course
+  program from the test expectations alone, three rounds out of three,
+  machine-verified — a card that does the student's assignment. On
+  labs where the course registers a runtime payload, the instruction
+  memory IS the deliverable.
+- **Deterministic strip**: Data ops aimed at an `isProgramMemory` ROM
+  on a payload-registered lab are removed in `norm()` before any
+  verification (`_protected_program_memory`; injected-temp filenames
+  normalize back to the real lab name). A hypothesis reduced to zero
+  ops drops as `program_memory_protected`. The model is told up front
+  via a [PROGRAM MEMORY] prompt block; the student gets a note with
+  the legitimate move: clear the ROM's Data and re-run — the grader
+  then loads the official program, so the datapath can be tested alone.
+- **L1 wording**: the empty_rom warning on payload-registered labs now
+  says the official program is loaded automatically for runs and that
+  the submitted file must still contain the student's own instruction
+  memory (green tests were hiding the gap).
+- Student-authored ROM content on every other lab (control-unit decode
+  tables, own lookup tables) stays fully fixable — the guard keys on
+  payload registration + isProgramMemory, nothing else.
 
 ## Known limitations to revisit (Keep updating during path 1 development)
 

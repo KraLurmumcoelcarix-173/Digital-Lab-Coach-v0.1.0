@@ -276,6 +276,30 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
                     for i in check_test_io_coverage(c, specs))
             except Exception:
                 pass
+            # on labs where the grader loads the course program
+            # into an EMPTY program ROM, the empty_rom warning must say
+            # so — students saw green tests + a generic warning and
+            # missed that their own file still ships no program.
+            try:
+                from dlc.l3.official_store import get_runtime_payload
+                if get_runtime_payload(name, "rom"):
+                    for iss in issues_payload:
+                        if iss.get("kind") != "empty_rom" or iss.get("scope"):
+                            continue
+                        idxs = iss.get("component_indices") or []
+                        if not any(c.components[i].attributes.get(
+                                "isProgramMemory") for i in idxs
+                                if 0 <= i < len(c.components)):
+                            continue
+                        iss["message"] += (
+                            " NOTE: for test runs and grading, the "
+                            "official course program is loaded into "
+                            "this ROM automatically — that is why "
+                            "tests can pass. Your submitted file must "
+                            "still contain YOUR OWN instruction "
+                            "memory; write it before submitting.")
+            except Exception:
+                pass
             results.append({
                 "filename": name,
                 "graph": to_cytoscape(c, nl, g),

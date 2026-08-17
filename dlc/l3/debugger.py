@@ -756,8 +756,51 @@ def dedupe_hypotheses(hyps: list[dict]) -> list[dict]:
     return sorted(by_ops.values(), key=_rank_key)
 
 
+def _protected_program_memory(circuit, source_name: str | None) -> set[int]:
+    """Indices of program-memory ROMs whose content the coach must never
+    write. On labs where the course registers a runtime payload, the program 
+    IS the student's own deliverable: the grader loads the official program 
+    only when the student leaves the ROM empty. Benchmark conviction: 
+    given a cpu with wrong program words, the premium model derived 
+    a complete working course program from the test expectations, 
+    three rounds out of three — a verified card that does the homework. 
+    Data ops on these ROMs are stripped deterministically; the student 
+    gets a hint and the clear-the-ROM tip instead."""
+    if circuit is None or not source_name:
+        return set()
+    base = Path(str(source_name)).name
+    if base.startswith(".dlc_injected__"):
+        base = base[len(".dlc_injected__"):]
+    try:
+        from dlc.l3.official_store import get_runtime_payload
+        if not get_runtime_payload(base, "rom"):
+            return set()
+    except Exception:
+        return set()
+    return {i for i, comp in enumerate(circuit.components)
+            if comp.attributes.get("isProgramMemory")}
+
+
+_PROGRAM_MEMORY_NOTE = (
+    "\n\n[PROGRAM MEMORY]\n"
+    "The instruction-memory ROM in this circuit holds the student's OWN "
+    "program — writing course-program words for them is out of scope, "
+    "and any Data change you propose on a program-memory ROM will be "
+    "stripped before verification. If the evidence says its content is "
+    "the problem, name the instruction memory in the hint and propose "
+    "ops only for other components."
+)
+
+_PROGMEM_STUDENT_NOTE = (
+    "The Instruction Memory holds your own program — the coach never "
+    "writes course-program words for you. If you suspect the program "
+    "itself: clear that ROM's Data and re-run; the grader then loads "
+    "the official course program, so you can test your datapath alone."
+)
+
+
 def _lazy_exempt_name(name: str | None) -> bool:
-    """Instructor ruling (r37.1, marked TEMPORARY — revisit on request):
+    """Instructor ruling:
     control-unit files always skip the lazy gate and go straight to
     analysis. Matched on the normalized filename (case/punctuation
     insensitive, tool-owned `.dlc_injected__` prefix stripped), so
@@ -784,6 +827,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   coach_rows: list[int] | None = None,
                   lazy_exempt: bool | None = None,
                   rom_injected: bool = False,
+                  source_filename: str | None = None,
                   k_cards: int = K_CARDS) -> dict:
     """Run Mode A end to end for one circuit + testcase. Returns the
     contract §6 response dict; never raises for content-level problems.
@@ -1010,14 +1054,42 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             refuted_total += 1
         return v
 
+    progmem = _protected_program_memory(circuit,
+                                        source_filename or dig_path)
+
     def norm(clean: dict | None) -> dict | None:
         """Deterministic op repair before any verify — see
-        _retarget_data_ops."""
+        _retarget_data_ops. Returns None when every op was a stripped
+        program-memory Data write (nothing left to verify)."""
         if clean is None:
             return None
         ops2, note = _retarget_data_ops(circuit, clean["ops"])
         if note and note not in notes:
             notes.append(note)
+        if progmem:
+            def _smuggles_program(op) -> bool:
+                if not isinstance(op, dict):
+                    return False
+                # direct write into a protected program ROM
+                if (op.get("name") == "Data"
+                        and op.get("component_index") in progmem):
+                    return True
+                # smuggle route: ADD a new storage element preloaded
+                # with words and rewire buses to it — the 6-op ceiling
+                # already makes real programs unbuildable this way, but
+                # the guard must not lean on that arithmetic
+                if (op.get("op") == "add_component"
+                        and isinstance(op.get("attributes"), dict)
+                        and "Data" in op["attributes"]):
+                    return True
+                return False
+            kept = [op for op in ops2 if not _smuggles_program(op)]
+            if len(kept) != len(ops2):
+                if _PROGMEM_STUDENT_NOTE not in notes:
+                    notes.append(_PROGMEM_STUDENT_NOTE)
+                ops2 = kept
+        if not ops2:
+            return None
         clean["ops"] = ops2
         return clean
 
@@ -1041,6 +1113,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         prompt = prompt_template.replace("<<PAYLOAD_JSON>>", payload_json)
         if rom_injected:
             prompt += _ROM_INJECTED_NOTE
+        if progmem:
+            prompt += _PROGRAM_MEMORY_NOTE
 
         reply = ask(prompt)
         if not reply.get("ok"):
@@ -1075,6 +1149,11 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                             "reason": "invalid_response", "detail": err})
             continue
         clean = norm(clean)
+        if clean is None:
+            dropped.append({"cluster_rows": cluster_rows,
+                            "reason": "program_memory_protected",
+                            "detail": _PROGMEM_STUDENT_NOTE})
+            continue
 
         verdict = verify(clean["ops"], cluster_rows)
         if not verdict["confirmed"] and refuted_total < _MAX_REFUTED_IDEAS:
@@ -1084,8 +1163,8 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             if retry.get("ok"):
                 clean2, err2 = validate_hypothesis(
                     parse_agent_json(retry.get("text")))
+                clean2 = norm(clean2)
                 if clean2 is not None:
-                    clean2 = norm(clean2)
                     verdict2 = verify(clean2["ops"], cluster_rows)
                     if verdict2["confirmed"] or not verdict["apply_ok"]:
                         clean, verdict = clean2, verdict2
@@ -1140,6 +1219,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                     "<<PAYLOAD_JSON>>",
                     json.dumps(payload, indent=2, default=str)) + (
                     (_ROM_INJECTED_NOTE if rom_injected else "")
+                    + (_PROGRAM_MEMORY_NOTE if progmem else "")
                     + "\n\n[ESCALATION]\n"
                     + json.dumps({"refuted_ops": tried[ci]}, indent=2,
                                  default=str)
@@ -1151,9 +1231,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                     continue
                 clean, _err = validate_hypothesis(
                     parse_agent_json(reply.get("text")))
+                clean = norm(clean)
                 if clean is None:
                     continue
-                clean = norm(clean)
                 verdict = verify(clean["ops"], cluster_rows)
                 hypotheses.append({"cluster_index": ci,
                                    "cluster_rows": cluster_rows,

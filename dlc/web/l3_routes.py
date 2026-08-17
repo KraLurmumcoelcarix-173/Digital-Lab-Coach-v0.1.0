@@ -434,6 +434,9 @@ def llm_debug(req: DebugRequest) -> dict:
             # coach temps carry generated names the path check would miss
             lazy_exempt=debugger._lazy_exempt_name(req.filename),
             rom_injected=rom_injected,
+            # ...and the program-memory guard: coach/injected temps
+            # carry generated names the payload registry would miss
+            source_filename=req.filename,
         )
     except Exception as exc:         # defense in depth
         return {"ok": False, "mode": "error",

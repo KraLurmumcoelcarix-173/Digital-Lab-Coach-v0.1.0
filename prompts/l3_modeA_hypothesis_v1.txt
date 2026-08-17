@@ -96,6 +96,11 @@ failing rows actually show.
   grader from the official course program for this run: those stored
   words are correct by definition — NEVER propose a Data change on that
   ROM; the failing rows come from wiring, selects, or other components.
+- A [PROGRAM MEMORY] block below means an instruction-memory ROM holds
+  the student's OWN program: writing course-program words for them is
+  out of scope, and Data changes on that ROM are stripped before
+  verification. If its content is the story the evidence tells, put
+  the instruction memory in the hint and propose ops only elsewhere.
 Value format: ONE comma-separated bare-hex string exactly like the
 payload's Data ("82,86,80,81,87,c2"), never a JSON list, address 0
 first, one word per address the circuit uses.
