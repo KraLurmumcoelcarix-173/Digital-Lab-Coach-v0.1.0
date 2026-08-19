@@ -35,19 +35,11 @@ def check_all_l1(circuit):
         circuit, netlist=netlist, facts=facts,
     ))
     out.extend(check_sequential(circuit, netlist=netlist))
-    # fold undriven errors caused by a missing child file into one
-    # follow-up note under their missing_subcircuit root cause. Runs here
-    # (not in a single checker) so it sees every checker's issues.
     return _link_cascades_to_missing(circuit, netlist, out)
 
 def check_all_l1_deep(circuit, _chain=None, _top_instance_idx=None):
-    """Run every L1 checker on `circuit` AND every resolved subcircuit.
-
-    Nested issues are tagged so the web UI can both list and highlight
-    them: `scope` carries the file breadcrumb, the title is prefixed
-    with it, `child_component_indices` keeps the indices valid inside
-    the child circuit, and `component_indices` is remapped to the
-    top-level subcircuit-instance component the issue lives under.
+    """
+    Run every L1 checker on `circuit` AND every resolved subcircuit.
     """
     if _chain is None:
         _chain = []
@@ -65,8 +57,10 @@ def check_all_l1_deep(circuit, _chain=None, _top_instance_idx=None):
         if sub_ref.child_circuit is None:
             continue
         if _top_instance_idx is None:
-            # First hop down: remember which TOP-level component this
-            # subtree hangs off, for graph highlighting.
+            """
+            First hop down: remember which TOP-level component this
+            subtree hangs off, for graph highlighting.
+            """
             inst_idx = next(
                 (k for k, comp in enumerate(circuit.components)
                  if comp is sub_ref.parent_component),

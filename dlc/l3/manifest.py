@@ -1,39 +1,3 @@
-"""Per-lab manifest: the deterministic intent-reference for Mode B.
-
-A manifest is one JSON file describing ONE lab:
-
-    {
-      "lab": "lab5",
-      "applies_to": ["cpu.dig", "alu.dig", ...],
-      "categories": {
-        "control-unit.dig": [
-          {"name": "addi", "when": {"opcode": "0b0010011", "funct3": "0b000"}},
-          ...
-        ]
-      },
-      "official_tests": {"cpu.dig": "<sha1 of the normalized dataString>"},
-      "reference_dir": null
-    }
-
-What each block buys, all deterministic:
-  categories       CATEGORY-graded coverage (ratified 07-11): a circuit is
-                   GREEN when every named category is touched by some row,
-                   however small the raw input-space percentage is.
-  official_tests   fingerprint of the instructor-issued testcase. If a
-                   student's testcase still hashes to it, a disagreement on
-                   that file is classified "official" — the test is right,
-                   the circuit is wrong, full stop.
-  reference_dir    folder holding the instructor's solution .dig files
-                   (NEVER shipped in the repo; typically set per machine via
-                   the DLC_REFERENCE_DIR env var, which overrides this
-                   field). With it, a proposed row can be judged against
-                   the reference before a student ever sees it.
-
-No manifest, or a tree no manifest applies to => every consumer behaves
-exactly as before. Manifests live in data/manifests/ (override the folder
-with DLC_MANIFEST_DIR).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -64,27 +28,15 @@ def load_manifests() -> list[dict]:
         try:
             m = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(m, dict) and m.get("applies_to"):
-                m["_file"] = p.name       # so notes can say WHICH json
+                m["_file"] = p.name
                 out.append(m)
         except Exception:
-            continue                      # a broken manifest never breaks scans
+            continue
     return out
 
 
 def find_manifest(filenames: set[str],
                   element_names: set[str] | None = None) -> dict | None:
-    """First manifest whose applies_to intersects the tree's file names.
-
-    ``element_names`` (the tree's component kinds) switches on the
-    STRUCTURAL fallback: when no filename matches, a manifest that lists
-    one of those kinds in ``applies_to_elements`` applies no matter what
-    the student named the file — the display-lab hook (every seven-seg
-    lab circuit carries a Seven-Seg element, whatever its filename). The
-    returned copy re-keys the manifest's categories onto the tree's
-    filenames, so every downstream per-file lookup works unchanged;
-    ``_element_matched`` records which kinds matched, for the scan note.
-    Name matches always win — a structural hook can never shadow a
-    manifest that claims the file explicitly."""
     manifests = load_manifests()
     for m in manifests:
         if filenames & set(m.get("applies_to", [])):
@@ -106,8 +58,6 @@ def find_manifest(filenames: set[str],
 
 
 def tree_element_names(circuit) -> set[str]:
-    """Every component kind in the tree (root + resolved children) — the
-    structural identity find_manifest's element fallback matches on."""
     out: set[str] = set()
     stack = [circuit]
     seen: set[int] = set()
@@ -131,13 +81,7 @@ def reference_dir(manifest: dict | None) -> Path | None:
     return Path(ref) if ref else None
 
 
-# ---------------------------------------------------------------------------
-# Official-test fingerprints
-# ---------------------------------------------------------------------------
-
 def normalized_test_hash(raw_data_string: str) -> str:
-    """sha1 over the dataString with comments stripped and whitespace
-    collapsed, so cosmetic edits don't break the fingerprint."""
     lines = []
     for line in (raw_data_string or "").splitlines():
         line = line.split("#", 1)[0].strip()
@@ -148,12 +92,6 @@ def normalized_test_hash(raw_data_string: str) -> str:
 
 def official_status(manifest: dict | None, file: str,
                     raw_data_string: str) -> str | None:
-    """'official' when the file's testcase still matches the instructor
-    fingerprint, 'modified' when a fingerprint exists but differs, None
-    when nothing is known about this file. The user-configured official
-    store (Settings ⚙) is consulted FIRST and works without any manifest —
-    it is the instructor-controlled truth; manifest fingerprints are the
-    shipped fallback."""
     from dlc.l3 import official_store
     st = official_store.status_for(file, raw_data_string)
     if st is not None:
@@ -165,10 +103,6 @@ def official_status(manifest: dict | None, file: str,
         return None
     return "official" if normalized_test_hash(raw_data_string) == want else "modified"
 
-
-# ---------------------------------------------------------------------------
-# Category-graded coverage
-# ---------------------------------------------------------------------------
 
 def _cell_value(cell: str) -> int | None:
     tok = _tokenize(cell)
@@ -185,9 +119,6 @@ def _norm_when(when: dict) -> dict[str, int]:
 
 
 def category_coverage(manifest: dict | None, file: str, spec) -> dict | None:
-    """{total, touched, missing} for the manifest categories bound to this
-    file, judged over the spec's rows; None when no categories apply or the
-    category columns aren't all present in the headers."""
     if not manifest:
         return None
     cats = (manifest.get("categories") or {}).get(file)
@@ -199,7 +130,7 @@ def category_coverage(manifest: dict | None, file: str, spec) -> dict | None:
     for cat in cats:
         when = _norm_when(cat.get("when", {}))
         if not when or any(c not in col_idx for c in when):
-            return None                    # predicate can't bind — stay silent
+            return None
         parsed.append((cat.get("name", "?"), when))
 
     touched: set[str] = set()
@@ -226,26 +157,7 @@ def category_coverage(manifest: dict | None, file: str, spec) -> dict | None:
         "missing": [n for n in names if n not in touched],
     }
 
-
-# ---------------------------------------------------------------------------
-# Program-word decoding: deterministic instruction-category
-# judgment for program-ROM extensions. The manifest's optional block
-#
-#   "program_decode": {
-#     "categories_from": "control-unit.dig",
-#     "fields": {"opcode": [0, 7], "funct3": [12, 3], "funct7": [25, 7],
-#                "rd": [7, 5], "rs1": [15, 5], "rs2": [20, 5]}
-#   }
-#
-# maps bit ranges [low_bit, width] of a program word onto the SAME column
-# names the categories_from file's category predicates use — so "which lab
-# instruction is this word, and which category does it close?" is decided
-# by decode, never by the model's own claim.
-# ---------------------------------------------------------------------------
-
 def program_rom_words(circuit) -> tuple[list[int], int] | None:
-    """(words, addr_bits) of the circuit's single program-memory ROM, else
-    None (absent or ambiguous)."""
     roms = []
     for comp in circuit.components:
         if comp.element_name != "ROM":
@@ -267,8 +179,6 @@ def program_rom_words(circuit) -> tuple[list[int], int] | None:
 
 
 def decode_program_word(manifest: dict | None, word: int) -> dict | None:
-    """{'category': name|None, 'fields': {...}} for one program word, or
-    None when the manifest defines no program_decode block."""
     pd = (manifest or {}).get("program_decode")
     if not isinstance(pd, dict) or not pd.get("fields"):
         return None
@@ -291,9 +201,6 @@ def decode_program_word(manifest: dict | None, word: int) -> dict | None:
 
 
 def program_categories(manifest: dict | None, words: list[int]) -> dict | None:
-    """Deterministic category coverage of a PROGRAM: which lab-defined
-    instruction categories the given words execute, and which are missing.
-    None when the manifest can't decode words."""
     pd = (manifest or {}).get("program_decode")
     if not isinstance(pd, dict):
         return None
@@ -312,32 +219,11 @@ def program_categories(manifest: dict | None, words: list[int]) -> dict | None:
         "missing": [n for n in names if n not in present],
     }
 
-
-# ---------------------------------------------------------------------------
-# RV32I word quality + encoding: the program_decode
-# block is RV32I-shaped by design (see its note), so the two ALU opcode
-# conventions below are manifest knowledge, not circuit guesses. Everything
-# here is deterministic and round-trip-verified against decode_program_word —
-# these helpers refuse to answer rather than answer wrong.
-# ---------------------------------------------------------------------------
-
-_OPCODE_RTYPE = 0b0110011      # R-type ALU: reads rs1+rs2, writes rd
-_OPCODE_ITYPE_ALU = 0b0010011  # I-type ALU: reads rs1+imm[31:20], writes rd
+_OPCODE_RTYPE = 0b0110011
+_OPCODE_ITYPE_ALU = 0b0010011
 
 
 def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
-    """Why this program word is a LAZY test, or None when it is fine (or
-    when the manifest lacks the fields to judge — never guess).
-
-    Lazy = the word can never distinguish a correct circuit from a broken
-    one: its operands are all zero (EVERY lab ALU instruction computes the
-    same 0, so the row cannot tell one operation from another), or it both
-    discards its result into x0 AND reads only x0 (nothing register-
-    dependent becomes observable). Deliberately narrow on the other side:
-    addi xN, x0, <imm≠0> is the idiomatic register loader, and
-    addi x0, xN, 0 is the lab's READ-BACK idiom — writing x0 while
-    exposing xN on a register-file read port — so neither is ever
-    flagged."""
     d = decode_program_word(manifest, word)
     if not d or not d["category"]:
         return None
@@ -348,7 +234,7 @@ def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
             return ("it reads x0 for BOTH operands — every lab instruction "
                     "computes 0 on (0, 0), so the row cannot tell one "
                     "operation from another")
-        return None                    # any nonzero source is observable
+        return None
     if op == _OPCODE_ITYPE_ALU:
         if rs1 == 0 and ((word >> 20) & 0xFFF) == 0:
             return ("it reads x0 with immediate 0 — every lab instruction "
@@ -357,18 +243,14 @@ def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
         if rd == 0 and rs1 == 0:
             return ("it discards its result into x0 and reads only x0 — "
                     "nothing register-dependent is observable")
-        return None                    # rd=x0 with rs1≠0 is the read-back
-    return None                        # rd/rs1 only architectural for ALU ops
+        return None
+    return None
 
 
 def encode_category_word(
     manifest: dict | None, category: str, *,
     rd: int = 0, rs1: int = 0, rs2: int = 0, imm: int = 0,
 ) -> int | None:
-    """Deterministically encode ONE program word of a named category using
-    the manifest's own field map + that category's `when` predicate. The
-    result is verified by decoding it back: anything that does not land on
-    the same category returns None instead of a wrong word."""
     pd = (manifest or {}).get("program_decode")
     if not isinstance(pd, dict) or not pd.get("fields"):
         return None
@@ -398,7 +280,7 @@ def encode_category_word(
             return None
         word |= bits
     if when.get("opcode") == _OPCODE_ITYPE_ALU:
-        word |= (imm & 0xFFF) << 20            # I-type immediate [31:20]
+        word |= (imm & 0xFFF) << 20
     else:
         word |= place("rs2", rs2) or 0
     for name, val in (("rd", rd), ("rs1", rs1)):
@@ -408,7 +290,7 @@ def encode_category_word(
         word |= bits
     d = decode_program_word(manifest, word)
     if not d or d["category"] != category:
-        return None                            # round-trip failed: no lies
+        return None
     return word
 
 
@@ -420,14 +302,6 @@ def _signed32(v: int) -> int:
 
 
 def constant_registers(manifest: dict | None, words: list[int]) -> dict[int, int]:
-    """Register file AFTER the program, for every register whose value is
-    deterministically computable from the ISA alone: constant propagation
-    over the lab's decoded ALU categories (registers start at 0; RV32I
-    add/sub/and/or/slt + addi/andi/slti semantics, 32-bit two's-complement,
-    returned unsigned). A write this walker cannot compute — an undecoded
-    word, an untracked category, an unknown source — DROPS its rd from the
-    result: false knowledge is the only failure mode that matters here.
-    Empty dict when the manifest cannot decode rd at all."""
     pd = (manifest or {}).get("program_decode") or {}
     if "rd" not in (pd.get("fields") or {}):
         return {}
@@ -443,7 +317,7 @@ def constant_registers(manifest: dict | None, words: list[int]) -> dict[int, int
         if cat and op == _OPCODE_ITYPE_ALU:
             a = known.get(f.get("rs1"))
             imm = (w >> 20) & 0xFFF
-            imm = imm - 0x1000 if imm & 0x800 else imm       # sign-extend
+            imm = imm - 0x1000 if imm & 0x800 else imm
             if a is not None:
                 if cat == "addi":
                     out = (a + imm) & _M32
@@ -465,9 +339,9 @@ def constant_registers(manifest: dict | None, words: list[int]) -> dict[int, int
                 elif cat == "slt":
                     out = 1 if _signed32(a) < _signed32(b) else 0
         if rd == 0:
-            continue                       # x0 is never written
+            continue
         if out is None:
-            known.pop(rd, None)            # can't compute => don't pretend
+            known.pop(rd, None)
         else:
             known[rd] = out
     return known
@@ -476,18 +350,6 @@ def constant_registers(manifest: dict | None, words: list[int]) -> dict[int, int
 def category_word_examples(
     manifest: dict | None, missing: list[str], existing_words: list[int] = (),
 ) -> list[dict]:
-    """Machine-verified, NON-lazy example encodings for the missing program
-    categories — [{category, word, asm, reads?}], in `missing` order.
-    Source registers prefer registers constant_registers PROVES hold
-    distinct non-zero values when the extension starts — those examples
-    test live data with no extra setup, and `reads` states the proven
-    values (signed) so expected outputs can be derived from ground truth.
-    Destination registers avoid every register the program writes. When
-    the program proves no usable sources, two fresh registers are used and
-    the addi example (when missing) doubles as their loader. Purely
-    illustrative — the proposer may pick other registers/values — but each
-    word is guaranteed to decode to its category and to pass the lazy
-    gate."""
     if not missing:
         return []
     written: set[int] = set()
@@ -498,7 +360,7 @@ def category_word_examples(
             written.add(d["fields"].get("rd") or 0)
     pool = [r for r in range(5, 32) if r not in written]
     if len(pool) < 2 + len(missing):
-        pool = list(range(5, 32))              # crowded program: just rotate
+        pool = list(range(5, 32))
     known = constant_registers(manifest, list(existing_words))
     cands = [(r, v) for r, v in known.items()
              if r != 0 and v != 0 and r in written]
@@ -526,9 +388,9 @@ def category_word_examples(
         if when.get("opcode") == _OPCODE_ITYPE_ALU:
             rs1, imm = (0, 7) if name == "addi" else (setup_a, 7)
             if name == "addi":
-                used_reads = {}                # reads only x0
+                used_reads = {}
                 if not reads:
-                    rd = setup_a   # doubles as the loader the others read
+                    rd = setup_a
             elif reads:
                 used_reads = {f"x{setup_a}": _signed32(known[setup_a])}
             word = encode_category_word(manifest, name, rd=rd, rs1=rs1, imm=imm)
@@ -538,11 +400,9 @@ def category_word_examples(
                 manifest, name, rd=rd, rs1=setup_a, rs2=setup_b)
             asm = f"{name} x{rd}, x{setup_a}, x{setup_b}"
         if word is None or lazy_word_reason(manifest, word) is not None:
-            continue                           # cannot verify: stay silent
+            continue
         entry = {"category": name, "word": f"{word:x}", "asm": asm}
         if used_reads:
-            # values PROVEN by constant propagation over the official
-            # program — ground truth for deriving expected outputs
             entry["reads"] = used_reads
         out.append(entry)
     return out
@@ -560,20 +420,6 @@ def synthesize_program_extension(
     headers: list[str],
     clock_col: str | None,
 ) -> dict | None:
-    """never-drop fallback: a MACHINE-BUILT program extension closing the
-    missing categories, with every row cell derived deterministically —
-    zero model involvement, so it cannot carry a wrong expectation.
-
-    Words come from category_word_examples (verified encodings; sources
-    prefer registers the program provably loaded). When no nonzero sources
-    are proven, two setup loads (addi xA,x0,7 / addi xB,x0,-3) are
-    prepended so the operations compute on distinct live values. Each row
-    asserts the register-file read ports (manifest observe mapping) with
-    the values constant propagation proves at that cycle — the ports show
-    reg[rs1]/reg[rs2] of the word being executed. Read-backs are NOT added
-    here; the proposer's _ensure_readbacks pass appends them exactly like
-    for a model group. Returns {program_words, rows, why} or None when the
-    manifest can't decode/observe enough to build rows."""
     pd = (manifest or {}).get("program_decode") or {}
     observe = pd.get("observe") or {}
     rs1_col = observe.get("rs1_port")
@@ -581,7 +427,6 @@ def synthesize_program_extension(
         return None
     rs2_col = observe.get("rs2_port")
 
-    # room check: worst case every gap word needs its own read-back later
     examples = category_word_examples(manifest, missing, existing_words)
     if not examples:
         return None
@@ -596,14 +441,14 @@ def synthesize_program_extension(
         imms = [7, -3]
         for i, r in enumerate(srcs[:2]):
             if known0.get(r):
-                continue               # already provably nonzero
+                continue
             w = encode_category_word(manifest, "addi", rd=r, rs1=0,
                                      imm=imms[i % 2])
             if w is None or w in existing_words:
                 return None
             setups.append(w)
-    budget = 12 - len(setups)          # matches the proposer's word cap
-    max_gap = max(1, budget // 2)      # leave room for one read-back each
+    budget = 12 - len(setups)
+    max_gap = max(1, budget // 2)
     trimmed = examples[:max_gap]
 
     words = setups + [int(e["word"], 16) for e in trimmed]
@@ -637,22 +482,9 @@ def synthesize_program_extension(
     return {"program_words": [f"{w:x}" for w in words],
             "rows": rows, "why": why}
 
-
-# ---------------------------------------------------------------------------
-# Reference verdicts (the deterministic wrong-row killer)
-# ---------------------------------------------------------------------------
-
 def reference_row_verdicts(
     ref_file: Path, headers: list[str], rows: list[str],
 ) -> list[dict]:
-    """Run each candidate row's INPUTS through the reference circuit and
-    compare the reference's outputs against the row's asserted outputs.
-
-    Verdict per row: 'agrees' | 'disagrees' (plus which columns) |
-    'unresolved' (reference evaluator couldn't settle an asserted output —
-    e.g. clocked designs, which need a replay context; those rows are left
-    for the normal inject verification instead).
-    """
     circuit = parse_dig_file(str(ref_file))
     netlist = build_netlist(circuit)
     graph = build_signal_graph(circuit, netlist)
@@ -669,7 +501,7 @@ def reference_row_verdicts(
         cells = raw.split("#", 1)[0].split()
         by_col = dict(zip(headers, cells))
 
-        class _Row:                        # inputs_for_row's duck shape
+        class _Row:
             pass
         shim = _Row()
         shim.values = [_tokenize(c) for c in cells]
@@ -681,7 +513,7 @@ def reference_row_verdicts(
         for col in out_cols:
             want = _cell_value(by_col.get(col, ""))
             if want is None:
-                continue                   # don't-care cell: nothing asserted
+                continue 
             b = bindings[col]
             got = res.output_values.get(col)
             if got is None:

@@ -104,9 +104,6 @@ def _parse_grader_json(text: str) -> dict | None:
 
 
 def _normalize_flag(f) -> dict | None:
-    """Flags are structured grader feedback about THE SUMMARY TEXT:
-    {"paragraph": 1-6|None, "quote": str, "issue": str}. Models that
-    ignore the shape and emit plain strings are normalized too."""
     if isinstance(f, dict):
         issue = str(f.get("issue", "")).strip()
         if not issue:
@@ -155,7 +152,6 @@ def grade_summary(
         return {"ok": False, "error": "No summary text to grade.", "total": None,
                 "sub_scores": [], "grader_model": grader_model, "usage": None}
 
-    # Deterministic sub-score (also handed to the grader to anchor completeness).
     det_score, det_rationale = _key_component_mention_score(facts, summary_text)
     key_list = ", ".join(sorted({n for (_k, n) in _key_component_targets(facts)})) or "(none)"
 
@@ -194,7 +190,7 @@ def grade_summary(
                 score = int(round(float(parsed.get(key, 0))))
             except (TypeError, ValueError):
                 score = 0
-            score = max(0, min(mx, score))                
+            score = max(0, min(mx, score))
             why = str(rationales.get(key, "")).strip()
         total += score
         sub_scores.append({

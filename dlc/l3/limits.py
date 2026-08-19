@@ -1,28 +1,3 @@
-"""Daily use-limit stub.
-
-Caps: Mode A 1/day, Mode B 2/day. Counters ALWAYS tick — dev
-telemetry should show real usage — but the BLOCK only applies when
-DLC_ENFORCE_LIMITS is on, so release enforcement is a single config flip.
-
-Mode A is 1: a run books a use ONLY when it
-delivers at least one verified card, and the r37 stop condition
-(debugger._MAX_REFUTED_IDEAS) bounds what one run can spend, so a
-single daily analysis is a real, complete analysis. The ratified
-rerun-on-temp contract still holds: when Mode B ends all-set with
-accepted rows living on the coach temp, STARTING that re-run does not
-require a remaining use; it books +1 modeA only when it completes.
-
-a Mode B scan that finds test/circuit disagreements is a
-REDIRECT to Mode A and consumes no usage. That is why ``allowed()`` and
-``consume()`` are separate calls: the endpoint checks ``allowed()`` up
-front, then consumes only after seeing an outcome that counts.
-
-Storage: one tiny JSON file (``~/.dlc/limits.json``; ``DLC_LIMITS_PATH``
-override keeps tests away from the developer's real home), keyed by local
-date so counters reset at midnight. "Per user" means per machine until the
-course proxy's per-student tokens arrive.
-"""
-
 from __future__ import annotations
 
 import json
@@ -51,7 +26,6 @@ def _today() -> str:
 
 
 def _load() -> dict:
-    """Current counters; silently resets on a new day or a corrupt file."""
     p = limits_path()
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -72,11 +46,10 @@ def _save(data: dict) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data), encoding="utf-8")
     except Exception:
-        pass                       # limits must never break the app
+        pass
 
 
 def state() -> dict:
-    """JSON-safe snapshot for endpoints/UI."""
     data = _load()
     used = data["used"]
     return {
@@ -89,7 +62,6 @@ def state() -> dict:
 
 
 def allowed(mode: str) -> bool:
-    """May a run of `mode` start now? Always True while enforcement is off."""
     if mode not in CAPS:
         return True
     if not enforced():
@@ -98,8 +70,6 @@ def allowed(mode: str) -> bool:
 
 
 def consume(mode: str) -> dict:
-    """Tick one use of `mode` (even when unenforced — the counters are the
-    telemetry) and return the fresh state()."""
     if mode in CAPS:
         data = _load()
         data["used"][mode] = data["used"].get(mode, 0) + 1
@@ -108,9 +78,6 @@ def consume(mode: str) -> dict:
 
 
 def refund(mode: str) -> dict:
-    """give one use of `mode` back (floor 0) and return the fresh
-    state(). Ratified rule: a run that delivers NO new tests must not cost
-    the student a use — the propose endpoint refunds the scan's tick."""
     if mode in CAPS:
         data = _load()
         data["used"][mode] = max(0, data["used"].get(mode, 0) - 1)

@@ -45,7 +45,7 @@ Lecture 20: More Stack Review and RISC-V Calling Convention
 Lecture 21: Pipeline Hazards
 Lecture 22: Source Bypassing/Forwarding
 Lecture 23: Intro to Memory
-Lecture 24: Caching
+Lecture 24: Caching, RAM
 Lecture 25: Caching, Stack Review, Hardware Security Conceptual expanding
 """
 
@@ -53,9 +53,6 @@ _SELECTOR_TYPES = {"Multiplexer", "Demultiplexer", "Decoder", "PriorityEncoder"}
 
 
 def _selector_facts(facts: dict) -> list[dict]:
-    """For each selector (mux/demux/decoder), map its data-input pins and
-    select pin to the component that drives each, so the LLM can state a
-    concrete select-value -> input mapping from topology instead of guessing."""
     comps = facts.get("components", []) or []
     nets = facts.get("nets", []) or []
 

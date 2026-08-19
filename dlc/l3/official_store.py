@@ -1,29 +1,3 @@
-"""User-configured official-test store (Settings ⚙ → Official tests).
-
-The shipped manifests carry lab fingerprints, but the tool is meant
-for anyone teaching with Digital: any instructor (or student) can register
-their own official test sets locally — filename + the testcase content —
-and Mode B then classifies disagreements on those files exactly like it
-does for manifest-fingerprinted ones. The store is the instructor's truth
-and takes precedence over manifest fingerprints.
-
-Storage: one JSON file, ~/.dlc/official_tests.json (override with the
-DLC_OFFICIAL_TESTS_PATH env var — tests point it into tmp):
-
-    {"cpu.dig": {"content": "<dataString text>", "sha1": "<normalized>"}}
-
-Matching is by FILENAME + normalized content hash (comments/whitespace
-ignored — same normalization as the manifest fingerprints), so a cosmetic
-edit doesn't break "official" while a changed row does.
-
-a DEFAULTS layer ships with the tool (data/official_tests_defaults.json
-— currently the lab5 cpu.dig + register-file.dig instructor tests, added at
-the course staff's direction). Defaults are always present, release builds
-included; a user entry with the same filename OVERRIDES its default, and
-deleting the override reverts to the default (defaults themselves cannot
-be deleted).
-"""
-
 from __future__ import annotations
 
 import json
@@ -38,11 +12,6 @@ def store_path() -> Path:
     env = os.environ.get("DLC_OFFICIAL_TESTS_PATH")
     return Path(env) if env else Path.home() / ".dlc" / "official_tests.json"
 
-
-# Digital's test language also allows program-like lines besides plain
-# value rows; lines opening with these keywords pass through (kept
-# permissive — the goal is to reject pasted garbage, not to re-implement
-# Digital's parser). \b so "repeat(3)" and "loop(i,4)" match too.
 import re as _re
 
 _TEST_KEYWORD_RE = _re.compile(
@@ -51,13 +20,6 @@ _TEST_KEYWORD_RE = _re.compile(
 
 
 def validate_test_content(content: str) -> None:
-    """Reject content that is not Digital test format BEFORE it can
-    become an official test. Mirrors our spec tokenizer (which mirrors
-    Digital's): first non-comment line = the header (signal names), then
-    value rows whose cells all tokenize to known kinds (0/1/hex/binary/
-    (-n)/C/X/Z or loop expressions) and match the header's column count;
-    Digital's program-style lines (let/repeat/loop/…) pass through.
-    Raises ValueError with a readable reason."""
     from dlc.testing.spec import _strip_inline_comment, _tokenize
     header: list[str] | None = None
     data_rows = 0
@@ -76,7 +38,7 @@ def validate_test_content(content: str) -> None:
             header = cells
             continue
         if _TEST_KEYWORD_RE.match(cells[0]):
-            data_rows += 1               # program-style line: Digital's own
+            data_rows += 1
             continue
         bad = [c for c in cells if _tokenize(c).kind == "unknown"]
         if bad:
@@ -117,7 +79,7 @@ def _load() -> dict[str, dict]:
         data = json.loads(p.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except Exception:
-        return {}                    # a corrupt store never breaks a scan
+        return {}
 
 
 def _save(data: dict[str, dict]) -> None:
@@ -127,9 +89,6 @@ def _save(data: dict[str, dict]) -> None:
 
 
 def list_tests() -> list[dict]:
-    """[{filename, sha1, content, source}], filename-sorted — the Settings
-    list. source: 'default' (shipped), 'user', or 'override' (a user entry
-    shadowing a default; deleting it reverts to the default)."""
     user = _load()
     merged: dict[str, dict] = {}
     for name, e in _defaults().items():
@@ -144,14 +103,6 @@ def list_tests() -> list[dict]:
 
 def save_test(filename: str, content: str, *,
               allow_default_override: bool = False) -> dict:
-    """Add or update one official test set. Returns the stored entry.
-
-    anyone may add
-    tests for their own labs, but content must BE Digital test format
-    (validate_test_content), the filename must be a .dig name, and a
-    shipped DEFAULT can never be edited by hand — the only way to change
-    a default's bar is the Adopt flow (which passes
-    allow_default_override=True with machine-verified content)."""
     from dlc.l3.manifest import normalized_test_hash
     name = (filename or "").strip()
     if not name:
@@ -174,8 +125,6 @@ def save_test(filename: str, content: str, *,
 
 
 def delete_test(filename: str) -> bool:
-    """Delete a USER entry (defaults are permanent — deleting an override
-    reverts the filename to its shipped default)."""
     data = _load()
     if filename not in data:
         return False
@@ -185,20 +134,12 @@ def delete_test(filename: str) -> bool:
 
 
 def get_content(filename: str) -> str | None:
-    """The official testcase text for `filename` (user entry first, then
-    the shipped default), or None when neither layer has one."""
     entry = _load().get(filename) or _defaults().get(filename)
     content = (entry or {}).get("content")
     return content if (content or "").strip() else None
 
 
 def get_runtime_payload(filename: str, key: str) -> str | None:
-    """Course-configured runtime payload for `filename` — content the test
-    runner may substitute into a RUN COPY (e.g. cpu.dig's instruction
-    program for an empty Instruction Memory) but that must never surface
-    in any UI. Stored base64-encoded under 'runtime' in the shipped
-    defaults entry; deliberately absent from list_tests() and the user
-    layer, and never rendered by the Settings page."""
     import base64
     entry = _defaults().get(filename) or {}
     blob = entry.get("runtime")
@@ -213,9 +154,6 @@ def get_runtime_payload(filename: str, key: str) -> str | None:
 
 
 def status_for(filename: str, raw_data_string: str) -> str | None:
-    """'official' | 'modified' when the store (user entry first, then the
-    shipped defaults) has this filename, else None (store silent => the
-    manifest fingerprints get their turn)."""
     entry = _load().get(filename) or _defaults().get(filename)
     if not entry or not entry.get("sha1"):
         return None

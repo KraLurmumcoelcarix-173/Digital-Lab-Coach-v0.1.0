@@ -1,18 +1,3 @@
-"""Mode B row proposer: ONE hidden model call, grounded on the
-coverage report, proposing non-redundant new test rows.
-
-Trust boundary: the model's output is treated as UNTRUSTED text. Every
-proposed row is (a) parsed from a strict JSON envelope, (b) validated
-against the target testcase's real header with the oracle's validator,
-and (c) deduplicated token-by-token against the rows the testcase already
-contains and against the other proposals. Only survivors reach the UI,
-and none of them touches a file until the student accepts them — at which
-point /api/l3/inject machine-verifies the lot on a temp copy.
-
-The prompt (prompts/l3_coverage_proposer_v1.txt) carries the v1 DRAFT of
-the F13 spoiler-guard: test rows only, gap-naming "why". The full guard rules + tests.
-"""
-
 from __future__ import annotations
 
 import json
@@ -28,18 +13,11 @@ from dlc.testing.spec import _tokenize, extract_test_specs, match_variables_to_i
 _PROMPT_DIR = Path(__file__).parent.parent.parent / "prompts"
 _PROMPT_NAME = "l3_coverage_proposer_v1.txt"
 
-_MAX_EXISTING_ROWS_SHOWN = 40    # keep the prompt lean on loop-heavy specs
-# — a gutted testcase (register-file down to 2 rows) must
-# be rebuildable in one run. A safety ceiling, never a target: the prompt
-# tells the model to use the number the gaps genuinely need.
-_MAX_TOTAL_ROWS = 50             # hard cap across all accepted proposals
-# a cpu missing all five R-type categories needs 5 gap
-# words + 5 read-backs; 8 forced the model to choose coverage OVER proof.
-_MAX_PROGRAM_WORDS = 12          # cap per program-extension proposal
+_MAX_EXISTING_ROWS_SHOWN = 40
+_MAX_TOTAL_ROWS = 50
 
-# The proposer needs real reasoning about machine state and lab ISAs —
-#  Override per install with l3_propose_model in
-# ~/.dlc/config.json or the DLC_L3_PROPOSE_MODEL env var.
+_MAX_PROGRAM_WORDS = 12
+
 _PROPOSE_MODEL_FALLBACK = "claude-sonnet-4-6"
 
 
@@ -61,15 +39,7 @@ def _propose_model() -> str:
 def _load_prompt() -> str:
     return (_PROMPT_DIR / _PROMPT_NAME).read_text(encoding="utf-8")
 
-
-# ---------------------------------------------------------------------------
-# Grounding: which files can receive rows, and what do they look like
-# ---------------------------------------------------------------------------
-
 def build_targets(report: TreeCoverageReport) -> list[dict]:
-    """One entry per injectable circuit in the tree (has a testcase and a
-    parseable file): headers, IO widths, and existing rows — everything the
-    model needs to write a legal, non-redundant row."""
     targets: list[dict] = []
     for cov in report.circuits:
         if not cov.has_testcases or not cov.path:
@@ -81,7 +51,7 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
             continue
         if not specs:
             continue
-        spec = specs[0]              # Mode B injects into the first testcase
+        spec = specs[0]
         existing = [r.raw.strip() for r in spec.rows if not r.is_malformed]
         shown = existing[:_MAX_EXISTING_ROWS_SHOWN]
         bindings = match_variables_to_io(spec.headers, circuit)
@@ -101,17 +71,12 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
             "clock_col": clock_col,
             "has_program_rom": False,
         }
-        # program-driven targets (cpu-like) — expose the existing
-        # program so the model can derive per-cycle register state.
         rom = _program_rom_of(circuit)
         if rom is not None:
             words, addr_bits = rom
             target["has_program_rom"] = True
             target["program_words"] = [f"{w:x}" for w in words]
             target["rom_capacity_left"] = max(0, (1 << addr_bits) - len(words))
-            # Deterministic category truth: which lab instructions the
-            # program already executes, and which are missing — decoded
-            # from the words, never guessed by the model.
             from dlc.l3 import manifest as mf
             m = mf.find_manifest({c.file for c in report.circuits},
                                  element_names=set(report.element_names))
@@ -120,8 +85,6 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
                 target["program_categories_present"] = pc["present"]
                 target["program_categories_missing"] = pc["missing"]
                 if pc["missing"]:
-                    # verified, non-lazy encoding templates per missing
-                    # category — ground truth the model can build on
                     ex = mf.category_word_examples(m, pc["missing"], words)
                     if ex:
                         target["program_word_examples"] = ex
@@ -139,20 +102,13 @@ def build_prompt(report: TreeCoverageReport, targets: list[dict]) -> str:
     template = _load_prompt()
     slim = report.to_dict()
     for c in slim["circuits"]:
-        c.pop("flags", None)         # clean scans have none; drop the field
-        c.pop("path", None)          # never leak local filesystem paths
+        c.pop("flags", None)
+        c.pop("path", None)
     return (template
             .replace("<<REPORT_JSON>>", json.dumps(slim, indent=1))
             .replace("<<TARGETS_JSON>>", json.dumps(targets, indent=1)))
 
-
-# ---------------------------------------------------------------------------
-# Untrusted-output handling
-# ---------------------------------------------------------------------------
-
 def parse_proposals(text: str) -> list[dict]:
-    """Extract the proposals list from the model's reply. Tolerates prose
-    or code fences around ONE JSON object; returns [] when nothing sane."""
     if not text:
         return []
     m = re.search(r"\{.*\}", text, re.S)
@@ -182,7 +138,7 @@ def parse_proposals(text: str) -> list[dict]:
             "why": str(p.get("why", "")).strip(),
         }
         pw = p.get("program_words")
-        if isinstance(pw, list):        # 2.10: optional program extension
+        if isinstance(pw, list):
             pw = [str(w).strip() for w in pw if str(w).strip()]
             if pw:
                 entry["program_words"] = pw
@@ -191,8 +147,6 @@ def parse_proposals(text: str) -> list[dict]:
 
 
 def _row_key(raw: str, headers: list[str]) -> tuple:
-    """Comparison key for redundancy: token VALUES, not spelling — `10`,
-    `0xA` and `0b1010` are the same row cell."""
     cells = raw.split("#", 1)[0].split()
     key = []
     for cell in cells[:len(headers)]:
@@ -204,9 +158,6 @@ def _row_key(raw: str, headers: list[str]) -> tuple:
 def validate_and_dedupe(
     proposals: list[dict], targets: list[dict], manifest: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Split the model's proposals into (valid, rejected). Rejected entries
-    carry a `reason`; valid rows are legal for their spec, non-duplicate,
-    and capped at _MAX_TOTAL_ROWS across all groups."""
     by_file = {t["file"]: t for t in targets}
     seen: dict[str, set] = {t["file"]: set() for t in targets}
     for t in targets:
@@ -221,7 +172,7 @@ def validate_and_dedupe(
         if t is None or p["spec_name"] != t["spec_name"]:
             rejected.append({**p, "reason": "unknown target file or testcase"})
             continue
-        if p.get("program_words"):         
+        if p.get("program_words"):
             ok_entry, reason = _validate_program_group(p, t, manifest)
             if ok_entry is not None:
                 valid.append(ok_entry)
@@ -235,7 +186,6 @@ def validate_and_dedupe(
                 bad.append((raw, f"over the {_MAX_TOTAL_ROWS}-row cap"))
                 continue
             try:
-                # header-shape + token legality, same validator inject uses
                 _validate_against_headers(raw, t["headers"], p["spec_name"])
             except ValueError as exc:
                 bad.append((raw, str(exc)))
@@ -259,13 +209,6 @@ def validate_and_dedupe(
 def _validate_program_group(
     p: dict, t: dict, manifest: dict | None = None,
 ) -> tuple[dict | None, str]:
-    """validate an atomic program-extension proposal (words + rows).
-    Returns (valid_entry, "") or (None, reason). Row dedupe is skipped (a
-    fresh SECOND testcase has a different replay context by design), but
-    WORDS are deduped against the existing program, and — when the manifest
-    can decode — each word must be an instruction the lab defines; its
-    category is recorded in `word_info` so the UI states deterministically
-    what the extension tests, instead of trusting the model's claim."""
     from dlc.l3.oracle import parse_program_words
     if not (t.get("has_clock") and t.get("has_program_rom")):
         return None, ("program_words are only valid for clocked targets "
@@ -305,8 +248,6 @@ def _validate_program_group(
             if not d or not d["category"]:
                 return None, (f"word {w:x} is not an instruction this lab "
                               f"defines — the lab ISA cannot execute it")
-            # anti-lazy gate: a word whose result is discarded or
-            # identical across every lab instruction proves nothing.
             lazy = mf.lazy_word_reason(manifest, w)
             if lazy:
                 return None, (f"word {w:x} ({d['category']}) is a lazy "
@@ -342,15 +283,6 @@ def _validate_program_group(
 def _ensure_readbacks(
     entry: dict, t: dict, manifest: dict | None, existing_words: set[int],
 ) -> tuple[dict | None, str]:
-    """R4 observability guarantee (Charles: "reading a reg that just got
-    edited is more important"): every register the extension WRITES must be
-    READ by a later extension word — otherwise the write is unobservable
-    and the whole group proves decode, not the datapath. For each
-    unobserved register this appends the lab's read-back idiom
-    (addi x0, xN, 0) with the expected value derived by constant
-    propagation over official program + extension — machine truth, never a
-    guess. When the manifest carries no observe mapping (or a value can't
-    be proven), the group is rejected with a readable reason instead."""
     from dlc.l3 import manifest as mf
     words = [int(w, 16) for w in entry["program_words"]]
     decoded = [mf.decode_program_word(manifest, w) for w in words]
@@ -440,8 +372,6 @@ def _ensure_readbacks(
 
 
 def _validate_against_headers(raw: str, headers: list[str], spec_name: str) -> None:
-    """Reuse the oracle's row validator without re-parsing the file: build a
-    minimal spec-shaped object carrying just the headers."""
     class _HeaderOnly:
         pass
     shim = _HeaderOnly()
@@ -450,10 +380,6 @@ def _validate_against_headers(raw: str, headers: list[str], spec_name: str) -> N
     validate_rows(shim, [InjectedRow(raw=raw)])
 
 
-# ---------------------------------------------------------------------------
-# The one hidden call
-# ---------------------------------------------------------------------------
-
 def propose_rows(
     dig_path: str,
     *,
@@ -461,15 +387,6 @@ def propose_rows(
     api_key: str | None = None,
     call=None,
 ) -> dict:
-    """Scan → prompt → ONE model call → parse/validate/dedupe.
-
-    Returns {ok, proposals, rejected, model, error, notes}. `call` is
-    injectable (and resolved at RUN time, so tests may also monkeypatch
-    module-level call_llm) — tests never touch the network. A scan that
-    still has disagreements refuses to propose (the UI redirects to
-    Mode A first), and so does a scan stopped by the Case 3.B
-    select-coverage gate (the student owes one row per op value first).
-    """
     if call is None:
         call = call_llm
     report = scan_tree_coverage(dig_path)
@@ -480,9 +397,6 @@ def propose_rows(
                           "resolve that before asking for new rows."),
                 "notes": []}
     if report.select_gate:
-        # Case 3.B refusal, zero model calls: an op value the tests never
-        # define has no anchor for INTENDED semantics — a proposed row
-        # there is a guess that can enshrine the very bug it should catch.
         gaps = "; ".join(
             f"{e['file']}: input '{e['input']}' value"
             f"{'s' if len(e['missing']) != 1 else ''} "
@@ -504,10 +418,6 @@ def propose_rows(
                 "error": "No testcase anywhere in this tree to extend.",
                 "notes": []}
 
-    # Category definitions ride INTO the prompt: the report's notes name
-    # missing categories, but the model needs each category's exact
-    # `when` input cells (and the lab's stated conventions) to write the
-    # row the "why" claims — re-derived bit orders were the #1 wasted row.
     from dlc.l3 import manifest as mf
     m = mf.find_manifest({t["file"] for t in targets},
                          element_names=set(report.element_names))
@@ -521,8 +431,6 @@ def propose_rows(
 
     prompt = build_prompt(report, targets)
     used_model = model or _propose_model()
-    # stronger models front-load visible analysis before the JSON;
-    # 1500 tokens truncated mid-thought and parsed as "nothing usable".
     resp = call(prompt, model=used_model, max_tokens=4000,
                 feature="modeB")
     if not resp.get("ok"):
@@ -533,8 +441,6 @@ def propose_rows(
 
     proposals = parse_proposals(resp.get("text") or "")
     if not proposals and (resp.get("text") or "").strip():
-        # the model sometimes writes analysis and never reaches the
-        # JSON. One bounded retry with a terse reminder fixes most of it.
         resp2 = call(prompt + "\n\nREMINDER: output ONLY the JSON object "
                      "now — no analysis text.",
                      model=used_model, max_tokens=4000, feature="modeB")
@@ -548,19 +454,6 @@ def propose_rows(
     valid, rejected = validate_and_dedupe(proposals, targets, manifest=m)
     notes: list[str] = []
 
-    # HARDENING, strongest gates first:
-    # 1) deterministic REPLAY pre-gate — for clocked targets, replay
-    #    through the official rows then each proposed row. With a
-    #    reference the replay is intended truth and disagreement DROPS;
-    #    without one the only oracle is the student's own circuit, whose
-    #    disagreement is not truth about intent (the row may be wrong OR
-    #    the circuit buggy right there — case 3), so those rows are
-    #    delivered as DISPUTED instead.
-    # 2) deterministic reference check — a row the lab reference disagrees
-    #    with is WRONG and is dropped before the student ever sees it;
-    # 3) model self-check — for un-referenced combinational targets, the
-    #    model must independently re-derive its own rows' outputs; an
-    #    unconfirmed row is delivered as DISPUTED.
     paths = {c.file: c.path for c in report.circuits if c.path}
     valid, rejected, notes = _category_gate(valid, rejected, notes, targets, m)
     valid, rejected, notes = _replay_gate(valid, rejected, notes, targets, paths)
@@ -568,9 +461,6 @@ def propose_rows(
     valid, rejected, notes = _selfcheck_gate(
         valid, rejected, notes, targets, call, used_model,
     )
-    # never-drop guarantee: a program-driven target with missing
-    # categories must not end the run empty-handed just because the
-    # model's extension died in the gates — synthesize one.
     valid, rejected, notes = _synthesis_fallback(
         valid, rejected, notes, targets, m, paths,
     )
@@ -600,14 +490,6 @@ def _classify_reason(reason: str) -> str:
 
 
 def _synthesis_fallback(valid, rejected, notes, targets, manifest, paths):
-    """never-drop guarantee: when a
-    program-driven target still has missing categories and NO model
-    extension survived the gates, build one deterministically —
-    synthesize_program_extension derives every value by constant
-    propagation, then the group walks the SAME validation (decode, lazy,
-    auto-read-backs) and replay gates as any model group. If even the
-    machine-built group dies (e.g. a broken circuit with no reference
-    configured), its reason is reported honestly instead."""
     if not manifest:
         return valid, rejected, notes
     from dlc.l3 import manifest as mf
@@ -617,7 +499,7 @@ def _synthesis_fallback(valid, rejected, notes, targets, manifest, paths):
             continue
         if any(g["file"] == t["file"] and g.get("program_words")
                for g in valid):
-            continue                     # a model extension survived
+            continue
         try:
             existing = [int(w, 16) for w in t.get("program_words", [])]
             syn = mf.synthesize_program_extension(
@@ -625,7 +507,7 @@ def _synthesis_fallback(valid, rejected, notes, targets, manifest, paths):
                 t["headers"], t.get("clock_col"),
             )
         except Exception:
-            syn = None                   # a broken synthesis never blocks
+            syn = None
         if not syn:
             continue
         p = {"file": t["file"], "spec_name": t["spec_name"], **syn}
@@ -637,7 +519,6 @@ def _synthesis_fallback(valid, rejected, notes, targets, manifest, paths):
         entry["synthesized"] = True
         v2, r2, _ = _replay_gate([entry], [], [], targets, paths)
         if v2:
-            # the card's own "why" says machine-built — no extra note
             valid.append(v2[0])
         else:
             rejected.extend(r2)
@@ -654,7 +535,7 @@ def _category_gate(valid, rejected, notes, targets, manifest):
         cats = cats_by_file.get(g["file"])
         t = next((x for x in targets if x["file"] == g["file"]), None)
         if not cats or t is None or g.get("program_words"):
-            kept.append(g)               # program words judged by decode gate
+            kept.append(g)
             continue
         headers = t["headers"]
         pred_cols = set()
@@ -699,24 +580,6 @@ def _category_gate(valid, rejected, notes, targets, manifest):
 
 
 def _replay_gate(valid, rejected, notes, targets, paths):
-    """deterministic pre-check for CLOCKED targets — replay through the
-    official rows, then evaluate each proposed row in sequence.
-
-    WITH a configured lab reference the replay is INTENDED truth: rows
-    whose asserted outputs disagree are wrong and DROP (prefix rows after
-    a dropped one drop with it — their state context is gone; program
-    extensions drop as a unit). A correct row for a student whose bug
-    hides in an untested category survives here and then fails on the
-    student's temp at Accept — exactly the hand-off Mode A wants.
-
-    WITHOUT a reference the only replay oracle is the student's OWN
-    circuit, and its disagreement is NOT truth about intent: either the
-    row's expectation is wrong (e.g. it ignores the state the circuit
-    holds at that step) or the circuit is buggy exactly there — the
-    case-3 hand-off. Same epistemic state as the model self-check, so
-    such rows are DELIVERED AS DISPUTED (computed values attached),
-    never silently dropped; the student decides, and Accept runs the
-    truth on the temp copy. A replay that errors never blocks."""
     from dlc.l3 import manifest as mf
     from dlc.l3.coverage import replay_appended_rows
     m = mf.find_manifest({t["file"] for t in targets})
@@ -734,12 +597,12 @@ def _replay_gate(valid, rejected, notes, targets, paths):
         on_reference = False
         try:
             if ref_file is not None and ref_file.is_file():
-                try:                     # intended truth beats student state
+                try:
                     verdicts = replay_appended_rows(
                         str(ref_file), g["spec_name"], g["rows"],
                         g.get("program_words"))
                     on_reference = True
-                except Exception:        # e.g. renamed testcase in the ref
+                except Exception:
                     verdicts = replay_appended_rows(
                         path, g["spec_name"], g["rows"],
                         g.get("program_words"))
@@ -747,13 +610,10 @@ def _replay_gate(valid, rejected, notes, targets, paths):
                 verdicts = replay_appended_rows(
                     path, g["spec_name"], g["rows"], g.get("program_words"))
         except Exception:
-            kept.append(g)               # a broken replay never blocks
+            kept.append(g)
             continue
 
         if not on_reference:
-            # student-circuit replay: disagreement => DISPUTED, keep all.
-            # No prefix logic needed — the replay threads the circuit's
-            # own state through every row regardless of assertions.
             marks = sorted(i for i, v in enumerate(verdicts)
                            if v["verdict"] == "disagrees")
             if marks:
@@ -767,7 +627,7 @@ def _replay_gate(valid, rejected, notes, targets, paths):
             kept.append(g)
             continue
 
-        if g.get("program_words"):       # atomic: any disagreement kills all
+        if g.get("program_words"):
             bad = [v for v in verdicts if v["verdict"] == "disagrees"]
             if bad:
                 rejected.append({
@@ -776,17 +636,12 @@ def _replay_gate(valid, rejected, notes, targets, paths):
                     "why": g.get("why", ""),
                     "reason": ("expected values don't match the machine "
                                "state at that point in the program"),
-                    # per-row pairing so the UI can show each dropped
-                    # row WITH its own mismatch instead of one wall of text
                     "details": [{"row": v["row"], "detail": v["detail"]}
                                 for v in bad],
                 })
             else:
                 kept.append(g)
             continue
-        # Prefix-keep: a clocked row's expectations were derived under the
-        # state left by the rows BEFORE it — once one row drops, every
-        # later row's context is gone, so they drop with it.
         good: list[str] = []
         bad_hit = False
         for v in verdicts:
@@ -822,9 +677,6 @@ def _replay_gate(valid, rejected, notes, targets, paths):
 
 
 def _reference_gate(valid, rejected, notes, targets):
-    """judge every surviving row against the lab reference circuit,
-    when one is configured. Deterministic; 'unresolved' rows pass through
-    to the normal inject verification."""
     from dlc.l3 import manifest as mf
     m = mf.find_manifest({t["file"] for t in targets})
     ref_dir = mf.reference_dir(m)
@@ -844,7 +696,7 @@ def _reference_gate(valid, rejected, notes, targets):
                 ref_file, t["headers"], g["rows"],
             )
         except Exception:
-            kept.append(g)               # a broken reference never blocks
+            kept.append(g)
             continue
         checked = True
         good = [v["row"] for v in verdicts if v["verdict"] != "disagrees"]
@@ -863,12 +715,8 @@ _SELFCHECK_PROMPT = "l3_row_selfcheck_v1.txt"
 
 
 def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
-    """Second model pass: re-derive outputs for the surviving rows with the
-    output cells hidden; keep only rows whose asserted outputs the model
-    reproduces (null = unsure = drop). Skipped for clocked targets (a lone
-    row has no replay context) — those rely on the reference/inject."""
     by_file = {t["file"]: t for t in targets}
-    candidates = []                       # (group_idx, row_idx_in_group)
+    candidates = []
     payload_rows = []
     for gi, g in enumerate(valid):
         t = by_file.get(g["file"])
@@ -930,7 +778,7 @@ def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
                 want = _row_cell_value(by_col.get(col))
                 got = _row_cell_value(outs.get(col))
                 if want is None:
-                    continue              # don't-care in the proposal
+                    continue
                 if got is None or got != want:
                     ok = False
                     break
@@ -940,14 +788,6 @@ def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
         notes.append("self-check confirmed every proposed row.")
         return valid, rejected, notes
 
-    # No machine truth stands behind this gate (the model re-deriving its
-    # own rows blind), so an unconfirmed row is DELIVERED AS DISPUTED,
-    # never silently dropped: either the row is wrong or the circuit
-    # hides a bug exactly there, and only the student can decide (accept
-    # → temp rerun → the accept-failed popup → Mode A). The same rule
-    # covers the replay gate when it runs on the student's own circuit.
-    # Every gate that does hold real truth — format, duplicate, category,
-    # lazy, replay-on-reference, reference — still drops as before.
     n_disputed = 0
     for gi, g in enumerate(valid):
         marks = sorted(ri for (gj, ri) in drop if gj == gi)

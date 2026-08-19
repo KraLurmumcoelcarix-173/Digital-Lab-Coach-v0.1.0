@@ -36,11 +36,6 @@ class Issue:
     location: tuple[int, int] | None = None
     suggested_fix: str | None = None
     net_id: int | None = None
-    # Deep-check provenance. scope is the subcircuit breadcrumb
-    # ("alu.dig > add-sub.dig"), None for top-level issues. For a
-    # nested issue, component_indices is remapped to the TOP-level
-    # subcircuit-instance component (so UI highlighting works on the
-    # top graph) and the original child-circuit indices move here.
     scope: str | None = None
     child_component_indices: list[int] = field(default_factory=list)
 
@@ -92,7 +87,6 @@ class IssueCollection:
 
 
 def _pin_descr(circuit: Circuit, pin_dict: dict) -> str:
-    """Render a pin from a BugFact.detail entry as 'DisplayName.pin_name'."""
     idx = pin_dict["component_index"]
     comp = circuit.components[idx]
     return f"{_component_display_name(comp, idx)}.{pin_dict['pin_name']}"
@@ -147,7 +141,6 @@ _CONSTANT_DRIVER_ELEMENTS = {"Ground", "VDD", "Const"}
 
 
 def _const_driver_value(circuit: Circuit, d: dict) -> int | None:
-    """The constant value a Ground/VDD/Const driver pushes, or None."""
     idx = d.get("component_index")
     if idx is None or not (0 <= idx < len(circuit.components)):
         return None
@@ -168,14 +161,6 @@ def _const_driver_value(circuit: Circuit, d: dict) -> int | None:
 def _identical_gate_signature(
     circuit: Circuit, netlist: NetList | None, comp_idx: int,
 ):
-    """A hashable fingerprint of what a gate output computes, or None.
-
-    Two drivers with equal non-None signatures are the same Boolean
-    function of the same nets, so they can never disagree at run time.
-    Only plain commutative gates (And/Or/XOr/NAnd/NOr/XNOr) and Not
-    qualify; anything stateful, unresolved, or with a dangling input
-    returns None so the caller keeps the hard error.
-    """
     from dlc.parser.pin_geometry import (
         _NARY_GATE_ELEMENTS, inverted_input_names,
     )
@@ -211,26 +196,6 @@ def _check_multi_drivers(
             continue
         descs = [_pin_descr(circuit, d) for d in drivers]
         loc = (drivers[0]["x"], drivers[0]["y"])
-        # Digital raises the short-circuit error at RUN time, and only
-        # when the tied outputs actually disagree — three jar-verified
-        # tolerances demote to WARNING (all found on real, Digital-clean
-        # student files):
-        #   * one real output tied to constants (register Q shorted to
-        #     Ground as an "x0 is always 0" hack) — runs while the
-        #     values agree;
-        #   * SAME-VALUED constants tied together (several Const(51)
-        #     elements feeding one tunnel name) — they always agree;
-        #   * a top-level In sharing the net (a test-harness tap):
-        #     Digital lets an In that the testcase doesn't drive yield
-        #     to the other driver.
-        # Two real outputs, or constants with DIFFERENT values, stay
-        # hard errors: they conflict as soon as values differ.
-        # An In yields ONLY in the test workflow: when the file has a
-        # testcase whose columns omit that In, the test vector never
-        # drives it, and Digital lets the other driver win. 
-        # An In the testcase DOES drive — or any In in a file with
-        # no testcase at all, where interactive mode drives every In —
-        # conflicts like a real output.
         test_columns: set[str] = set()
         has_testcase = False
         for comp in circuit.components:
@@ -257,7 +222,7 @@ def _check_multi_drivers(
                          if idx is not None
                          and 0 <= idx < len(circuit.components) else None)
                 if has_testcase and not (label and label in test_columns):
-                    n_in += 1         # test vector never drives this In
+                    n_in += 1
                 else:
                     n_signal += 1
             else:
@@ -336,14 +301,6 @@ def _check_multi_drivers(
             ))
             continue
         if n_signal >= 2 and not const_vals and not n_in:
-            # Jar-verified 4th tolerance: several copies of the SAME
-            # gate (same type, same input nets, same inverted inputs)
-            # tied by one tunnel name — a Lab-2 pattern where a product
-            # term is rebuilt per segment block. Identical functions of
-            # identical nets always agree, so Digital runs it; a gate
-            # pair that differs in ANY of those stays a hard error
-            # (And+Or tied on the same inputs short-circuits the moment
-            # they disagree).
             sigs = [
                 _identical_gate_signature(
                     circuit, netlist, d.get("component_index"),
@@ -642,16 +599,6 @@ def _check_empty_tunnels(
             ))
     return out
 
-# --- cascade linking ---------------------------------------------------
-# One missing child file makes every net its outputs would drive read as
-# "undriven", so a student sees a pile of unrelated-looking dangling_input /
-# unused_top_output / dangling_subcircuit_input ERRORS whose real cause is a
-# single missing .dig. Fold each missing instance's cascade into ONE follow-up
-# note placed right after its missing_subcircuit error. The root cause stays
-# an ERROR; the cascade group is a WARNING so it never moves the L1 gate by
-# itself. Invoked from check_all_l1 (dlc/analyzer/__init__.py) so it sees
-# every checker's issues, not just this module's.
-
 _CASCADE_LINKED_KINDS = (
     "dangling_input", "unused_top_output", "dangling_subcircuit_input",
 )
@@ -677,9 +624,6 @@ def _net_for_issue(issue: Issue, netlist: NetList):
         if 0 <= issue.net_id < len(netlist.nets):
             return netlist.nets[issue.net_id]
         return None
-    # unused_top_output / dangling_subcircuit_input carry no net_id; the
-    # undriven flavors set `location` to the pin coordinate. Only accept a
-    # location-recovered net the issue's component actually sits on.
     members = set(issue.component_indices)
     if issue.location is not None:
         nid = netlist.by_coord.get(tuple(issue.location))
@@ -700,21 +644,12 @@ def _net_for_issue(issue: Issue, netlist: NetList):
 def _cascade_attribution(
     net, circuit: Circuit, unresolved: dict[int, str], endpoint_degree: dict
 ) -> int | None:
-    """Which missing instance (component index) explains this undriven net,
-    or None if it looks like an independent mistake."""
     if net.drivers():
-        return None      # driven nets are never a missing-child cascade
-    # Direct evidence: the netlist claimed one of the net's wire ends as an
-    # implicit pin of a missing instance (direction stays "unknown", so the
-    # net has no driver even though the student wired it correctly).
+        return None
     for p in net.pins:
         if p.component_index in unresolved:
             return p.component_index
 
-    # Indirect evidence — coordinates of this net the missing part would
-    # explain. Tunnel pins don't count as claims: a tunnel never drives, and
-    # a bidir tunnel pin can even snap onto the wire end the missing child
-    # was supposed to drive (seen on lab5 cpu.dig).
     hard_pin_coords = {
         (p.x, p.y) for p in net.pins if p.element_name != "Tunnel"
     }
@@ -722,10 +657,6 @@ def _cascade_attribution(
         c for c in net.coords
         if endpoint_degree.get(c, 0) == 1 and c not in hard_pin_coords
     ]
-    # Tunnels placed directly ON a missing instance's pin have wire-degree 0,
-    # so the loop above can't see them; treat a net tunnel anchor near a
-    # missing instance as evidence too (radius = the netlist's own
-    # implicit-pin envelope).
     near_tunnel_anchors: list[tuple[int, int]] = []
     for comp in circuit.components:
         if comp.element_name != "Tunnel":
@@ -817,7 +748,6 @@ def _link_cascades_to_missing(
     if not grouped:
         return issues
 
-    # Re-emit with each cascade group directly after its root-cause error.
     out = IssueCollection()
     emitted: set[int] = set()
     for iss in kept:
@@ -847,7 +777,6 @@ def check_wire_completeness(
     graph=None,
     facts: CircuitFacts | None = None,
 ) -> IssueCollection:
-    """Run all wire-completeness checks against `circuit`."""
     if netlist is None:
         netlist = build_netlist(circuit)
     if graph is None:

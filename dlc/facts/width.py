@@ -37,11 +37,6 @@ def _splitter_group_width(comp: Component, pin_name: str) -> int | None:
 
 
 def pin_width(component: Component, pin_name: str) -> int | None:
-    """
-    Return the bit width of `pin_name` on `component`, or None when the
-    width depends on external context (Tunnels, subcircuit instances,
-    unknown elements, or an unrecognized pin name).
-    """
     e = component.element_name
 
 

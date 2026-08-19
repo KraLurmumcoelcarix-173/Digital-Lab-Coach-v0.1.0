@@ -1,26 +1,3 @@
-"""L3 oracle, part 1: temp-circuit ROW injection + per-row rerun.
-
-Mode B's accept-flow ("inject the coach's new rows into a temp copy and
-auto-rerun") and the Phase-4 coverage metric both need one primitive:
-
-    given a .dig file, a testcase, and some new data rows,
-    produce a TEMP circuit whose testcase carries the extra rows,
-    run Digital per-row on it, and say which rows (old and new) pass.
-
-Guarantees:
-  * The student's original file is NEVER modified. The temp copy is
-    byte-identical outside the targeted <dataString> block, so parsing,
-    netlists, and every other testcase are untouched.
-  * The temp file is written NEXT TO the original (same directory), so
-    relative subcircuit references resolve exactly as they do for the
-    original. Its name matches the ``dlc_row_*.dig`` pattern already
-    covered by .gitignore, so a crashed run can't dirty the repo.
-  * Injected rows are validated against the testcase header BEFORE
-    anything is written: cell count must match, every cell must tokenize
-    to a known kind, and loop expressions are rejected (injected rows
-    must be concrete).
-"""
-
 from __future__ import annotations
 
 import os
@@ -36,19 +13,11 @@ from dlc.testing.runner import find_digital_jar, per_row_run_auto
 
 
 _DATASTRING_RE = re.compile(r"<dataString>(.*?)</dataString>", flags=re.DOTALL)
-_TEMP_PREFIX = "dlc_row_l3_"   # matches the dlc_row_*.dig gitignore glob
+_TEMP_PREFIX = "dlc_row_l3_"
 
 
 @dataclass(frozen=True)
 class InjectedRow:
-    """One concrete data row to append to a testcase.
-
-    ``raw`` is the whitespace-separated cell line exactly as it should
-    appear in the dataString (an optional trailing ``# comment`` is
-    allowed and ignored by Digital and by our parser alike). ``origin``
-    is a provenance label carried through to the result rows so the UI
-    can tell coach-proposed rows from student-typed ones.
-    """
 
     raw: str
     origin: str = "coach"
@@ -60,30 +29,22 @@ class InjectionOutcome:
 
     ok: bool
     warning: str | None = None
-    temp_path: str | None = None          # populated only when keep_temp=True
+    temp_path: str | None = None
     spec_name: str | None = None
     headers: list[str] = field(default_factory=list)
-    # One entry per executed row of the TEMP spec, original rows first:
-    # {index, raw, status, mismatches, error_message, added, origin}
     rows: list[dict] = field(default_factory=list)
-    all_passed: bool | None = None        # every row (old + new)
-    added_all_passed: bool | None = None  # just the injected rows (Mode B's lock signal)
-    spec_index: int | None = None         # index of the run spec in the TEMP file
-    base_spec: dict | None = None         # {name, total, passed, all_passed} regression guard
-    rom_program: str | None = None        # FULL extended program (comma hex) for copy-out
+    all_passed: bool | None = None
+    added_all_passed: bool | None = None
+    spec_index: int | None = None
+    base_spec: dict | None = None
+    rom_program: str | None = None
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
         return asdict(self)
 
 
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
-
 def validate_rows(spec: TestSpec, rows: list[InjectedRow]) -> None:
-    """Raise ValueError unless every row is a concrete, well-formed data line
-    for `spec`'s header. Run BEFORE any file is written."""
     if not spec.headers:
         raise ValueError(
             f"Testcase {spec.name!r} has no header line; cannot inject rows."
@@ -117,16 +78,7 @@ def validate_rows(spec: TestSpec, rows: list[InjectedRow]) -> None:
                 )
 
 
-# ---------------------------------------------------------------------------
-# Text-level injection (byte-preserving outside the target block)
-# ---------------------------------------------------------------------------
-
 def _datastring_ordinal(circuit, target_spec: TestSpec) -> int:
-    """Which <dataString> block (in file order) belongs to `target_spec`.
-
-    Testcase elements appear in `circuit.components` in document order, and
-    exactly the ones carrying a Testdata attribute own a dataString block.
-    """
     ordinal = 0
     for idx, comp in enumerate(circuit.components):
         if comp.element_name != "Testcase" or "Testdata" not in comp.attributes:
@@ -141,11 +93,6 @@ def _datastring_ordinal(circuit, target_spec: TestSpec) -> int:
 
 
 def inject_rows_text(source_text: str, ordinal: int, rows: list[InjectedRow]) -> str:
-    """Append `rows` to the `ordinal`-th <dataString> block of `source_text`.
-
-    Every byte outside that block is preserved verbatim. Appended lines are
-    XML-escaped (test tokens never need it, but a trailing comment might).
-    """
     matches = list(_DATASTRING_RE.finditer(source_text))
     if ordinal < 0 or ordinal >= len(matches):
         raise ValueError(
@@ -173,12 +120,6 @@ def write_temp_with_rows(
     spec_name: str,
     rows: list[InjectedRow],
 ) -> tuple[str, TestSpec]:
-    """Write the temp .dig (original + injected rows) next to the original.
-
-    Returns (temp_path, original_spec). The caller owns the temp file's
-    lifetime. Raises ValueError on validation/targeting problems; the
-    original file is never touched.
-    """
     src_path = Path(dig_path)
     circuit = parse_dig_file(str(src_path))
     spec = _find_spec(circuit, spec_name)
@@ -195,31 +136,6 @@ def write_temp_with_rows(
         f.write(new_text)
     return temp_path, spec
 
-
-# ---------------------------------------------------------------------------
-# Program-ROM injection
-#
-# For clocked, ROM-driven circuits new rows alone cannot exercise new
-# instruction categories — rows only carry the clock; the instructions come
-# from the program ROM. So the program WORDS are appended to the ROM (a data
-# attribute — no wires, no components) alongside the assertion rows.
-#
-# 2.11 (R3): the DEFAULT path is rerun_with_program — the rows are appended
-# to the END of the official testcase on the temp copy, executing right
-# after the existing program with all register state carried over. No
-# warm-up rows, no duplicate testcase, and the replay gate models exactly
-# this execution. The official rows re-run ahead of the new ones in the
-# same per-row pass; their subset is reported as the regression guard.
-#
-# rerun_with_second stays as the ISOLATED-context path: a second testcase
-# "<spec>_second" is only genuinely needed when new rows must NOT run under
-# the state the official rows leave behind. A fresh testcase replays from
-# power-on, so it is prefixed with machine-generated WARM-UP rows (clock
-# column driven, every other cell X = assert nothing) — one per existing
-# program word — then one assertion row per appended word, in order. This
-# also keeps the official testcase byte-identical inside the temp.
-# ---------------------------------------------------------------------------
-
 _PROGMEM_TRUE_RE = re.compile(
     r"<string>isProgramMemory</string>\s*<boolean>true</boolean>")
 _VISELEM_RE = re.compile(r"<visualElement>.*?</visualElement>", flags=re.DOTALL)
@@ -231,9 +147,6 @@ _POS_RE = re.compile(r'<pos x="(-?\d+)" y="(-?\d+)"/>')
 def find_program_rom(
     source_text: str,
 ) -> tuple[list[int], int, tuple[int, int]] | None:
-    """Locate the single program-memory element. Returns (words, addr_bits,
-    (data_start, data_end) span within source) or None when the file has no
-    program ROM. Raises ValueError on several program ROMs (ambiguous)."""
     hits = []
     for m in _VISELEM_RE.finditer(source_text):
         block = m.group(0)
@@ -253,15 +166,13 @@ def find_program_rom(
              if w.strip()]
     ab = re.search(r"<string>AddrBits</string>\s*<int>(\d+)</int>",
                    elem_m.group(0))
-    addr_bits = int(ab.group(1)) if ab else 10   # Digital's ROM default
-    # re-anchor the data match against the WHOLE source for replacement
+    addr_bits = int(ab.group(1)) if ab else 10
     start = elem_m.start() + dm.start(2)
     end = elem_m.start() + dm.end(2)
     return words, addr_bits, (start, end)
 
 
 def parse_program_words(rom_words: list[str]) -> list[int]:
-    """Hex word strings ('628e33' / '0x628e33') → ints; ValueError on junk."""
     out: list[int] = []
     for w in rom_words:
         s = str(w).strip().lower().removeprefix("0x")
@@ -275,8 +186,6 @@ def parse_program_words(rom_words: list[str]) -> list[int]:
 
 
 def extend_program_rom_text(source_text: str, words: list[int]) -> str:
-    """Append `words` to the single program ROM's Data attribute. Every
-    byte outside that attribute is preserved verbatim."""
     found = find_program_rom(source_text)
     if found is None:
         raise ValueError("This circuit has no program memory (ROM with "
@@ -291,8 +200,6 @@ def extend_program_rom_text(source_text: str, words: list[int]) -> str:
 
 
 def add_testcase_text(source_text: str, label: str, data_string: str) -> str:
-    """Insert a new Testcase visualElement (Label + dataString) before
-    </visualElements>, positioned below every existing element."""
     anchor = source_text.rfind("</visualElements>")
     if anchor < 0:
         raise ValueError("No <visualElements> section to add a testcase to.")
@@ -337,10 +244,6 @@ def rerun_with_second(
     timeout: float = 60.0,
     keep_temp: bool = False,
 ) -> InjectionOutcome:
-    """Build a temp copy carrying a SECOND testcase '<spec_name><suffix>'
-    with `rows` (and, when `rom_words` is given, the program ROM extended
-    by those words + warm-up replay rows prefixed). Runs the second spec
-    per-row AND re-runs the untouched base spec as a regression guard."""
     jar = jar_path or find_digital_jar()
     if jar is None:
         return InjectionOutcome(
@@ -424,7 +327,6 @@ def rerun_with_second(
                 "origin": origin,
             })
 
-        # Regression guard: the untouched official testcase must stay green.
         base_temp = _find_spec(temp_circuit, spec_name)
         base_results = per_row_run_auto(base_temp, temp_path, jar_path=jar,
                                         timeout=timeout)
@@ -464,12 +366,6 @@ def rerun_with_program(
     timeout: float = 60.0,
     keep_temp: bool = False,
 ) -> InjectionOutcome:
-    """append-mode program injection: on a temp copy, extend the
-    program ROM by `rom_words` and append `rows` to the END of `spec_name`.
-    State carries over from the official rows, so the appended rows execute
-    the new words directly — no warm-up, no second testcase. The official
-    rows run first in the same per-row pass and their subset is reported in
-    `base_spec` as the regression guard."""
     jar = jar_path or find_digital_jar()
     if jar is None:
         return InjectionOutcome(
@@ -561,10 +457,6 @@ def rerun_with_program(
                 pass
 
 
-# ---------------------------------------------------------------------------
-# Inject + rerun (the oracle call Mode B's accept-flow makes)
-# ---------------------------------------------------------------------------
-
 def rerun_with_rows(
     dig_path: str,
     spec_name: str,
@@ -574,13 +466,6 @@ def rerun_with_rows(
     timeout: float = 60.0,
     keep_temp: bool = False,
 ) -> InjectionOutcome:
-    """Inject `rows` into `spec_name` of a temp copy and run Digital per-row.
-
-    Result rows mirror the /api/tests per-row payload, each tagged with
-    ``added`` (was this an injected row?) and ``origin`` (its provenance).
-    ``added_all_passed`` is Mode B's "you're all set!" signal. This utility
-    does NOT apply the L1 gate — Mode B guarantees L1-clean upstream.
-    """
     jar = jar_path or find_digital_jar()
     if jar is None:
         return InjectionOutcome(

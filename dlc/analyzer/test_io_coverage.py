@@ -1,17 +1,6 @@
-"""Advisory card: top-level I/O pins the tests never touch.
-
-Live conviction: extra In pins rode along that no
-test column ever drove — the tool said nothing about them until the
-per-row run surfaced confusing residue. Either such a pin is redundant
-and should go, or the testcase is incomplete and misses the behavior it
-carries. Both deserve a nudge; neither is a structural ERROR, so this
-check emits a WARNING (rendered as the purple card) and never blocks
-tests, Mode A, or Mode B — the gates count errors only.
-
-Runs at upload time from the server (not inside check_all_l1): it needs
-the EFFECTIVE testcase — the file's own rows, or the official rows the
-grader would inject for this filename — which the pure structural pass
-does not know about."""
+"""
+Advisory card: top-level I/O pins coverage rate checking 
+"""
 
 from dlc.analyzer.wire_completeness import Issue, IssueSeverity
 from dlc.testing.spec import match_variables_to_io
@@ -20,11 +9,6 @@ KIND = "test_io_coverage"
 
 
 def check_test_io_coverage(circuit, specs) -> list[Issue]:
-    """One purple card naming every top-level In/Out no spec column
-    binds. Silent when there are no usable specs, when every pin is
-    covered, or when NO header matched at all (a fully-unbound testcase
-    is a naming mismatch — the rename guidance owns that story, and
-    listing every pin here would just shout over it)."""
     specs = [s for s in (specs or []) if getattr(s, "headers", None)]
     if not specs:
         return []

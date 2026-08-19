@@ -12,7 +12,7 @@ from dlc.facts.width import pin_width
 @dataclass(frozen=True)
 class WidthConflict:
     net_id: int
-    driver_a_name: str         
+    driver_a_name: str
     driver_a_width: int
     driver_b_name: str
     driver_b_width: int
@@ -22,7 +22,7 @@ class WidthConflict:
 class NetWidthInfo:
 
     width: int | None
-    source: str  # "driver" | "sink" | "unknown"
+    source: str
 
 
 def _pin_width_with_subcircuit(circuit: Circuit, pin: Pin) -> int | None:

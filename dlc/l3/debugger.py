@@ -1,36 +1,4 @@
-"""L3 Mode A coordinator + verifier — the failed-test analysis pipeline.
-
-One explicit trigger runs the whole ladder (docs/l3_debug_contract.md):
-
-  deterministic   per-row verdict (Digital.jar when configured, the
-                  Python evaluator otherwise) → evidence.assemble_evidence
-                  decides clear / lazy / analysis and packs one frozen
-                  payload per failing-row cluster.
-  sub-agents      ONE single-shot model call per cluster (cap 4), no
-                  tools, no iteration; one format re-prompt allowed when
-                  the reply isn't the strict JSON object; one refutation
-                  retry allowed when the verifier refutes the fix.
-  verify          apply_patch → per-row rerun of the patched temp —
-                  CONFIRMED iff every cluster row now passes AND no
-                  previously-passing row regressed AND the L1 guard held.
-                  Rows a Mode B accept ADDED are judged by strict
-                  improvement instead (see verify_ops) — their expected
-                  cells are model guesses, not ground truth.
-                  With no jar the SAME Python evaluator that judged the
-                  original failure re-judges the fix (verified.runner
-                  says which ran). Nothing unconfirmed is ever shown AS A
-                  VERIFIED FIX: unconfirmed hypotheses become dropped
-                  ideas, except that a run with ZERO confirmed cards
-                  ships its best-ranked survivor clearly labeled
-                  unverified (best_unverified), with a free re-run.
-  cards           dedupe by normalized ops, rank by (confirmed, rows
-                  covered, confidence), top-K = 3. Student-visible text
-                  passes the F13 leak guard; animation scripts are
-                  validated act-by-act with retest forced last.
-
-The `call=` hook injects a fake model in tests — the pipeline never
-touches the network there, exactly like Mode B's proposer.
-"""
+"""L3 Mode A coordinator + verifier — the failed-test analysis pipeline."""
 
 from __future__ import annotations
 
@@ -54,38 +22,13 @@ from dlc.testing.spec import extract_test_specs, match_variables_to_io
 CONTRACT = "l3.debug.v1.1"
 K_CARDS = 3
 _MAX_OPS = 6
-# Stop condition: once this many ideas have been REFUTED by the
-# verifier in one run, stop spending model calls (skip further refute
-# retries, the escalation wave, and any untouched clusters) and return
-# the best surviving idea instead. 4 = two clusters' worth of
-# initial-idea + one-retry each — the typical cpu-tree shape — so a run
-# that can't land a verified fix ends after ~4 model calls instead of 8+.
-# The benchmark's "best solution" hard trigger reads the
-# `stopped_early` flag this produces.
 _MAX_REFUTED_IDEAS = 4
 _MAX_TOKENS = 3000
-# premium-tier models (Opus) reason longer before the JSON: too little
-# headroom truncates the reply mid-object and it validates as
-# invalid_response, wasting the cluster's only shot. 6000 still
-# truncated a live full-decode-table derivation (r38, s008 control
-# unit) — 8000 gives the single-cluster frozen-trunk shape room.
 _MAX_TOKENS_PREMIUM = 8000
-# claude-opus-5 thinks by default; at the default effort it spends the
-# ENTIRE max_tokens budget on thinking blocks and the reply carries no
-# text at all — measured live: 5 straight calls, stop_reason
-# max_tokens, output = 100% thinking, 0 bytes of reply ("not a json
-# response"). The real fix is _effort_for below (caps thinking depth
-# server-side); the extra headroom + truncation retry are backstops.
 _MAX_TOKENS_REASONING = 16000
 
 
 def _effort_for(model: str) -> str | None:
-    """Server-side reasoning depth for models that think by default.
-
-    Mode A is a single-shot JSON task over machine-traced evidence —
-    low effort keeps opus-5's thinking bounded so the reply actually
-    reaches the JSON (and cuts latency toward the 180s call timeout).
-    Other models keep provider defaults."""
     if str(model or "").startswith("claude-opus-5"):
         return "low"
     return None
@@ -106,18 +49,12 @@ _MAX_ANIM_ACTS = 12
 _PROMPT_DIR = Path(__file__).parent.parent.parent / "prompts"
 _PROMPT_NAME = "l3_modeA_hypothesis_v1.txt"
 
-# Hypothesis generation needs real multi-step reasoning over evidence —
-# same tier as Mode B's proposer. Override per install with l3_debug_model
-# in ~/.dlc/config.json or the DLC_L3_DEBUG_MODEL env var (this is the
-# zero-code switch the OpenAI-vs-Claude benchmark flips).
 _DEBUG_MODEL_FALLBACK = "claude-sonnet-4-6"
 
 _ANIM_ACTS = frozenset({
     "diagnose_line", "focus", "drill", "drill_back", "mark_fix", "retest",
 })
 
-# Light per-op field check so obvious junk earns the format re-prompt
-# instead of dying inside the applier. apply_patch stays the authority.
 _OP_REQUIRED = {
     "change_attribute": ("component_index", "name", "value"),
     "replace_element": ("component_index", "new_element"),
@@ -151,14 +88,7 @@ def _load_prompt() -> str:
 def _clean(s) -> str:
     return sanitize_output(str(s or "")).strip()
 
-
-# ---------------------------------------------------------------------------
-# Untrusted-output handling
-# ---------------------------------------------------------------------------
-
 def parse_agent_json(text: str) -> dict | None:
-    """First {...} blob of the reply as a dict; tolerates prose/fences
-    around ONE JSON object, exactly like Mode B's parser."""
     if not text:
         return None
     m = re.search(r"\{.*\}", text, re.S)
@@ -172,8 +102,6 @@ def parse_agent_json(text: str) -> dict | None:
 
 
 def validate_hypothesis(obj: dict | None) -> tuple[dict | None, str | None]:
-    """(clean hypothesis, None) or (None, reason). The reason is written
-    for the ONE format re-prompt, so it names the exact defect."""
     if not isinstance(obj, dict):
         return None, "the reply was not a JSON object"
     if obj.get("contract") != CONTRACT:
@@ -218,9 +146,6 @@ def validate_hypothesis(obj: dict | None) -> tuple[dict | None, str | None]:
 
 
 def validate_animation(script: list, n_components: int) -> list[dict]:
-    """Executor-side validation: unknown acts dropped, out-of-range
-    targets dropped, exactly one retest forced last. Playback never
-    mutates a circuit, so validation only guards the pointer."""
     def _idx_ok(v):
         return isinstance(v, int) and 0 <= v < n_components
 
@@ -241,8 +166,6 @@ def validate_animation(script: list, n_components: int) -> list[dict]:
         elif act == "focus":
             path = raw.get("path") if _path_ok(raw.get("path")) else []
             idx = raw.get("component_index")
-            # with a non-empty path the index points inside a subcircuit,
-            # so only its type can be checked here
             if _idx_ok(idx) if not path else isinstance(idx, int):
                 out.append({"act": act, "component_index": idx,
                             "path": path})
@@ -265,15 +188,7 @@ def validate_animation(script: list, n_components: int) -> list[dict]:
     out.append({"act": "retest"})
     return out
 
-
-# ---------------------------------------------------------------------------
-# Verify (the self-check oracle — only CONFIRMED fixes rank as cards;
-# a zero-card run ships its best survivor clearly labeled unverified)
-# ---------------------------------------------------------------------------
-
 def _offline_failing(temp_path: str, spec_name: str) -> tuple[list[int], dict]:
-    """Failing row indices (+ mismatch cells) of `spec_name` on the patched
-    temp, judged by the Python evaluator — the no-jar verify path."""
     circuit = parse_dig_file(temp_path)
     netlist = build_netlist(circuit)
     graph = build_signal_graph(circuit, netlist)
@@ -297,18 +212,6 @@ def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
                cluster_rows: list[int], original_failing: list[int], *,
                jar_path: str | None = None,
                coach_targets: dict[int, set] | None = None) -> dict:
-    """CONFIRMED iff the patch applies (L1 guard included), every cluster
-    row now passes, and no previously-passing row fails. Runs Digital when
-    a jar is configured; otherwise the same evaluator that produced the
-    original verdict re-judges the fix.
-
-    ``coach_targets`` maps a coach-ADDED row (Mode B hand-off) to the set
-    of output columns it originally failed on. Such a row is judged by
-    STRICT IMPROVEMENT instead of perfection: the fix must repair at least
-    one of those columns and break no new one. Any residual columns land
-    in ``coach_residuals`` (not ``still_failing``) — the coach's own
-    expectation for those cells is a model guess, not ground truth, so an
-    imperfect side-cell guess must not refute a correct fix."""
     jar = jar_path or find_digital_jar()
     verdict = {
         "confirmed": False, "apply_ok": False,
@@ -361,8 +264,6 @@ def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
         orig_cols = coach.get(idx)
         cells = verdict["details"].get(idx) or []
         res_cols = {m.get("column") for m in cells if m.get("column")}
-        # len(res_cols) == len(cells) rejects rows whose details carry an
-        # unnamed {"error": ...} entry — an errored row is never "improved".
         if (orig_cols and len(res_cols) == len(cells)
                 and res_cols < set(orig_cols)):
             verdict["coach_residuals"][idx] = sorted(res_cols)
@@ -370,20 +271,11 @@ def verify_ops(dig_path: str, spec_name: str, ops: list[dict],
             still.append(idx)
     verdict["still_failing"] = still
     verdict["regressions"] = sorted(after - set(original_failing))
-    # every row still failing on the PATCHED circuit, cluster or not —
-    # empty means the fix is a FULL solution (r41: the coordinator stops
-    # the run on it: a verified complete answer ends Layer 3)
     verdict["remaining_failing"] = sorted(after)
     verdict["confirmed"] = (not verdict["still_failing"]
                             and not verdict["regressions"])
     return verdict
 
-
-# ---------------------------------------------------------------------------
-# Lazy branch (deterministic detective suggestions — 0 model calls)
-# ---------------------------------------------------------------------------
-
-# `terms` are L2 library vocabulary, marked for the blue hover-cards.
 _SUGGESTION_TABLE = {
     "scattered_failures": {
         "question": ("Pick ONE failing row: why is it wrong in four or "
@@ -471,14 +363,7 @@ def lazy_suggestions(gross_flags: list[dict]) -> list[dict]:
                         **entry})
     return out
 
-
-# ---------------------------------------------------------------------------
-# Coordinator
-# ---------------------------------------------------------------------------
-
 def _comp_tag(circuit, idx) -> str:
-    """The tool-wide component naming standard: [index] ElementName plus
-    the label when one exists — '[16] Const', \"[3] Register 'RegA1'\"."""
     try:
         comp = circuit.components[int(idx)]
     except (TypeError, ValueError, IndexError):
@@ -488,8 +373,6 @@ def _comp_tag(circuit, idx) -> str:
 
 
 def describe_ops(circuit, ops: list[dict]) -> list[str]:
-    """Student-facing one-liners for fix ops. Wiring arrows point the way
-    the SIGNAL flows: a rewired pin RECEIVES from its new source (←)."""
     out: list[str] = []
     for op in ops:
         kind = op.get("op")
@@ -525,18 +408,6 @@ def describe_ops(circuit, ops: list[dict]) -> list[str]:
 
 
 def _failing_children(circuit) -> list[tuple[str, int, str]]:
-    """(reference, failing-row count, test source) for every resolved
-    subcircuit that fails under the evaluator. Parent-level analysis is
-    noise until the children hold — the coach says so instead of drowning
-    in a giant multi-cause evidence payload.
-
-    Test source per child mirrors the Gradescope flow: a child whose
-    testcase is missing or modified gets the OFFICIAL rows injected
-    (tool-owned sibling temp, removed before returning) and reports
-    source "official"; otherwise its own embedded rows run ("own").
-    This is what routes a cpu tree whose real bug lives in
-    control-unit.dig to that file instead of burning model calls on
-    parent wiring that can never fix it."""
     from dlc.testing.inject import prepare_injected_run, cleanup_injected
 
     out: list[tuple[str, int, str]] = []
@@ -569,9 +440,6 @@ def _failing_children(circuit) -> list[tuple[str, int, str]]:
 
 
 def _slim_payload(payload: dict) -> dict:
-    """Drop representative net values outside the suspect wiring — the
-    oversized-tree safety valve, so a messy upload degrades to slimmer
-    evidence instead of a blown context window."""
     keep = {str(p.get("net_id"))
             for w in payload.get("suspect_wiring", [])
             for p in w.get("pins", [])}
@@ -606,15 +474,6 @@ _DATA_ELEMENTS = ("ROM", "RAM", "EEPROM", "RAMDualPort", "LookUpTable")
 
 
 def _retarget_data_ops(circuit, ops: list[dict]):
-    """(ops, note) with any change_attribute/Data op that targets a
-    component which cannot store data redirected to the circuit's single
-    data-bearing element — when exactly one exists. r41, from a live
-    run: Opus derived the correct decode table but wrote it at an And
-    gate's index (the localizer had produced no suspects, so no index
-    was visible); the verifier then rightly refuted a no-op patch and
-    the student lost a correct answer. A Data write on a gate is never
-    meaningful, so the redirect is safe; circuits with several storage
-    elements are left untouched (ambiguous)."""
     roms = [i for i, c in enumerate(circuit.components)
             if c.element_name in _DATA_ELEMENTS]
     if len(roms) != 1:
@@ -641,11 +500,6 @@ def _retarget_data_ops(circuit, ops: list[dict]):
 
 def _touches_stored_data(ops_lists: list[list[dict]],
                          circuit=None) -> bool:
-    """A refuted Data rewrite justifies the r27 address-path steer ONLY
-    when the target ROM actually stores words today — the steer's
-    premise is "the stored words satisfy every passing row". A rewrite
-    of an EMPTY ROM refuted for having the WRONG words must keep the
-    Data path open (r37, s008's unprogrammed decode ROM)."""
     for ops in ops_lists:
         for op in (ops or []):
             if not (isinstance(op, dict) and op.get("name") == "Data"):
@@ -661,13 +515,6 @@ def _touches_stored_data(ops_lists: list[list[dict]],
                 return True
     return False
 
-
-# Machine fact appended once a ROM/LookUpTable Data rewrite has been
-# REFUTED: the stored words provably satisfy every currently-passing row
-# that reads the same table, so a second Data guess is the one move that
-# cannot be right — steer the retry to the ADDRESS/SELECT path instead
-# (the live failure mode on the control unit: the model kept rewriting
-# words when the bug was a detect gate feeding the priority encoder).
 _ROM_INJECTED_NOTE = (
     "\n\n[ROM NOTE]\n"
     "The empty ROM(s) in this circuit were loaded from the official "
@@ -707,9 +554,6 @@ def _refutation_block(ops: list[dict], verdict: dict,
             "warning": verdict["warning"],
         },
     }
-    # partial progress is a fact worth keeping — the cu 3-gate
-    # exam circuit needs TWO gate replacements, and a model told only
-    # "refuted" restarts from scratch instead of extending the op list.
     fixed = []
     if verdict.get("apply_ok") and not verdict.get("regressions"):
         still = set(verdict.get("still_failing") or [])
@@ -740,10 +584,6 @@ def _rank_key(h: dict):
 
 
 def dedupe_hypotheses(hyps: list[dict]) -> list[dict]:
-    """Merge hypotheses whose normalized op lists match. The best-ranked
-    survivor absorbs a duplicate's cluster rows only when BOTH were
-    confirmed — a confirmed card must never claim rows its own verify
-    didn't clear."""
     by_ops: dict[str, dict] = {}
     for h in sorted(hyps, key=_rank_key):
         key = json.dumps(h["ops"], sort_keys=True, default=str)
@@ -757,15 +597,6 @@ def dedupe_hypotheses(hyps: list[dict]) -> list[dict]:
 
 
 def _protected_program_memory(circuit, source_name: str | None) -> set[int]:
-    """Indices of program-memory ROMs whose content the coach must never
-    write. On labs where the course registers a runtime payload, the program 
-    IS the student's own deliverable: the grader loads the official program 
-    only when the student leaves the ROM empty. Benchmark conviction: 
-    given a cpu with wrong program words, the premium model derived 
-    a complete working course program from the test expectations, 
-    three rounds out of three — a verified card that does the homework. 
-    Data ops on these ROMs are stripped deterministically; the student 
-    gets a hint and the clear-the-ROM tip instead."""
     if circuit is None or not source_name:
         return set()
     base = Path(str(source_name)).name
@@ -829,28 +660,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                   rom_injected: bool = False,
                   source_filename: str | None = None,
                   k_cards: int = K_CARDS) -> dict:
-    """Run Mode A end to end for one circuit + testcase. Returns the
-    contract §6 response dict; never raises for content-level problems.
-
-    ``failing_indices`` (+ ``jar_mismatches``) overrides the per-row
-    verdict entirely — the eval-harness / test seam; without it the jar
-    decides when configured, the evaluator sweep otherwise.
-
-    ``coach_rows`` names the spec rows that a Mode B accept ADDED (the
-    web layer reads them off the registered temp) — the verifier judges
-    those by strict improvement, not perfection (see verify_ops).
-
-    ``lazy_exempt`` skips the gross-check lazy gate (see
-    ``_lazy_exempt_name``); None derives it from the file name — the
-    web layer passes the REAL filename explicitly because coach temps
-    carry generated names.
-
-    ``rom_injected`` says the analyzed copy's empty ROM(s) were filled
-    from the official course program for this run (the web layer reads
-    it off the injection notes) — every cluster prompt then carries a
-    [ROM NOTE] telling the model those stored words are correct by
-    definition, so it never proposes Data changes against
-    grader-injected content (r38)."""
     model = model or _debug_model()
     if lazy_exempt is None:
         lazy_exempt = _lazy_exempt_name(dig_path)
@@ -889,8 +698,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         manifest = ev.find_manifest(
             names, element_names=tree_element_names(circuit))
 
-    # Children first: a subcircuit failing its OWN tests gates the whole
-    # analysis into the (free) suggestion branch — fix it, re-upload.
     broken = _failing_children(circuit)
     if broken:
         flags = [{
@@ -910,8 +717,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             "gross_flags": flags, "suggestions": lazy_suggestions(flags),
         }
 
-    # Per-row verdict: caller override first, then Digital when
-    # configured, then the evaluator sweep.
     jar = jar_path or find_digital_jar()
     runner = "caller" if failing_indices is not None else "evaluator"
     notes: list[str] = []
@@ -919,15 +724,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         try:
             results = per_row_run_auto(spec, str(dig_path), jar_path=jar)
             if results and all(r.status == "error" for r in results):
-                # Every row erroring means Digital REFUSED the run, not
-                # that rows failed. Analysis on an unrunnable circuit
-                # only guesses — and its verifier would refute every
-                # idea through the same refusal, the r37 runaway. Stop
-                # here, free, with the blocker named. Two families:
-                # testcase columns that bind to no port (renamed labels
-                # — s008's op/f3/f7 control unit) get the rename
-                # guidance; anything else (unconnected tunnel, dangling
-                # pin) mirrors the red Layer 1 errors.
                 msg = results[0].error_message or "build error"
                 bindings = match_variables_to_io(spec.headers, circuit)
                 unbound = [h for h in spec.headers
@@ -976,8 +772,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         circuit, netlist, graph, spec, manifest=manifest,
         failing_indices=failing_indices, jar_mismatches=jar_mismatches,
         lazy_exempt=lazy_exempt,
-        # official words injected for this run never ride the payload —
-        # a reply echoing them would leak the course program (r38)
         hide_rom_words=rom_injected,
     )
     notes.extend(evres.notes)
@@ -1002,7 +796,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         return {**base, "mode": "lazy", "gross_flags": evres.gross_flags,
                 "suggestions": lazy_suggestions(evres.gross_flags)}
 
-    # --- analysis: one single-shot sub-agent per cluster ------------------
     prompt_template = _load_prompt()
     usage = base["usage"]
     calls = 0
@@ -1027,10 +820,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
 
     original_failing = sorted(
         {r.row_index for c in evres.clusters for r in c.rows})
-    # A coach-added row's expected cells are model guesses: hold fixes to
-    # "repaired what the row originally flagged, broke nothing" instead of
-    # full-row perfection, or one imperfect side-cell guess would refute
-    # every correct fix (the bug6 case-3 failure).
     coach_targets: dict[int, set] | None = None
     if coach_rows:
         want = set(coach_rows)
@@ -1058,9 +847,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                                         source_filename or dig_path)
 
     def norm(clean: dict | None) -> dict | None:
-        """Deterministic op repair before any verify — see
-        _retarget_data_ops. Returns None when every op was a stripped
-        program-memory Data write (nothing left to verify)."""
         if clean is None:
             return None
         ops2, note = _retarget_data_ops(circuit, clean["ops"])
@@ -1070,14 +856,9 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             def _smuggles_program(op) -> bool:
                 if not isinstance(op, dict):
                     return False
-                # direct write into a protected program ROM
                 if (op.get("name") == "Data"
                         and op.get("component_index") in progmem):
                     return True
-                # smuggle route: ADD a new storage element preloaded
-                # with words and rewire buses to it — the 6-op ceiling
-                # already makes real programs unbuildable this way, but
-                # the guard must not lean on that arithmetic
                 if (op.get("op") == "add_component"
                         and isinstance(op.get("attributes"), dict)
                         and "Data" in op["attributes"]):
@@ -1106,7 +887,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         payload_json = json.dumps(payload, indent=2, default=str)
         if len(payload_json) > 250_000:
             payload = _slim_payload(payload)
-            evres.payloads[ci] = payload      # escalation reuses the slim one
+            evres.payloads[ci] = payload
             payload_json = json.dumps(payload, indent=2, default=str)
             notes.append("evidence payload was slimmed (net values limited "
                          "to suspect nets) to fit the model context.")
@@ -1125,9 +906,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         clean, err = validate_hypothesis(parse_agent_json(reply.get("text")))
         if err is not None:
             if reply.get("stop_reason") == "max_tokens":
-                # measured live on claude-opus-5: the reply was
-                # TRUNCATED at the token cap mid-JSON — the model likely
-                # had the answer and drowned it in visible reasoning.
                 retry_note = (
                     "\n\n# FORMAT RETRY\nYour previous reply was CUT "
                     "OFF at the output token limit before the JSON "
@@ -1176,21 +954,12 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                            "animation": clean["animation"],
                            "verdict": verdict})
         if verdict["confirmed"] and not verdict.get("remaining_failing"):
-            # a VERIFIED fix that leaves zero
-            # failing rows is a complete answer — stop Layer 3 and
-            # return it instead of spending calls on remaining clusters.
             if ci + 1 < len(evres.clusters):
                 notes.append(
                     "a verified fix repairs every failing row — "
                     "remaining cluster(s) skipped.")
             break
 
-    # Escalation — one extra shot per cluster, ONLY when the whole run
-    # would otherwise deliver nothing: all refuted ops are disclosed and
-    # the prompt forces the gate-kind sanity check over the wiring values
-    # table ("the culprit is a DIFFERENT component"). Clusters whose
-    # replies never validated get no escalation — there is nothing to
-    # refute, and two format failures already spent their budget.
     if hypotheses and not any(h["verdict"]["confirmed"] for h in hypotheses):
         if refuted_total >= _MAX_REFUTED_IDEAS:
             if not stopped_early:
@@ -1245,7 +1014,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
                                    "verdict": verdict})
                 if (verdict["confirmed"]
                         and not verdict.get("remaining_failing")):
-                    break        # complete verified answer — stop
+                    break
 
     ranked = dedupe_hypotheses(hypotheses)
     cards: list[dict] = []
@@ -1282,9 +1051,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             reason = "refuted"
         else:
             reason = "patch_failed"
-        # dropped ideas name the idea and the reason kind only — the
-        # "applied cleanly, but row(s) … still fail" recap read as noise
-        # to students (user ruling, r27); machine warnings still ride
         det = h["verdict"]["warning"]
         dropped.append({
             "cluster_rows": h["cluster_rows"],
@@ -1293,12 +1059,6 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
             "detail": det,
             "ops_pretty": describe_ops(circuit, h["ops"]),
         })
-
-    # Never leave the student empty-handed: when NOTHING passed the
-    # verifier, the best-ranked surviving idea ships anyway — clearly
-    # labeled unverified, with exactly which rows it failed to fix. The
-    # run stays free, and the Analyze button stays live for a re-run
-    # (which only counts when it delivers verified cards).
     best_unverified = None
     if not cards and ranked:
         b = ranked[0]

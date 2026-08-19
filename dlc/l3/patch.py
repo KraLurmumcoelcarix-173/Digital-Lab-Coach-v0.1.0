@@ -1,72 +1,5 @@
-"""L3 circuit-patch vocabulary + applier (fix representation).
-
-A Mode-A "fix" must be MACHINE-APPLICABLE, or the self-verify oracle has
-nothing to run. This module freezes a small op vocabulary (JSON dicts —
-exactly what the debug agent emits) and applies it to a TEMP copy of the
-circuit; the student's original file is never modified.
-
-The vocabulary, mapped to the L3 bug classes:
-
-  {"op": "change_attribute", "component_index": i,
-   "name": "Value", "value": 0}
-      Set/replace one elementAttributes entry. Covers wrong constants
-      (op-encodings), wrong Bits / Selector Bits / AddrBits, wrong
-      splitter ranges, wrong shifter direction/mode, wrong Tunnel
-      NetName, ROM Data, rotation.
-
-  {"op": "replace_element", "component_index": i, "new_element": "Or"}
-      Swap a component's kind, keeping position + attributes (And→Or,
-      XOr→XNOr, ...).
-
-  {"op": "swap_pins", "component_index": i, "pin_a": "in0", "pin_b": "in1"}
-      Exchange the wires feeding two pins of one component — the classic
-      wrong-input-position bug.
-
-  {"op": "rewire_pin", "component_index": i, "pin": "in3",
-   "to": {"component_index": j, "pin": "Result"}}
-      Detach `pin`'s wire and run a new wire from that pin to `to`'s net
-      — the semantic miswire. (The new segment may be diagonal; nets are
-      endpoint unions, and the temp file exists to be RERUN, not shown.)
-
-  {"op": "add_wire", "p1": [x, y], "p2": [x, y]}
-  {"op": "delete_wire", "p1": [x, y], "p2": [x, y]}
-      Raw escape hatches when the pin-level ops don't fit (e.g. pins
-      meeting at shared junctions, which swap/rewire refuse to touch).
-
-  {"op": "add_component", "element_name": "Not", "position": [x, y],
-   "attributes": {"Bits": 4}}
-      Place a NEW component (missing inverter, missing extender, ...).
-      It is appended at the END of the element list, so existing
-      component indices never shift. Wire it with add_wire at its pin
-      offsets — pin-level ops cannot target a component added in the
-      same patch (coordinates are indexed from the ORIGINAL circuit).
-
-  {"op": "delete_component", "component_index": i}
-      Remove a stray/duplicated component, along with wire segments that
-      dead-end at its pins (segments passing through shared junctions
-      are kept — they route other signals).
-
-Op ordering rule: every component_index refers to the ORIGINAL circuit.
-delete_component ops are therefore applied LAST (multiple deletes in
-descending index order), so deletions never shift the indices other ops
-in the same patch rely on.
-
-
-Safety:
-  * swap_pins / rewire_pin refuse pins sitting on a junction
-    (>1 wire endpoint at that coordinate) — silently splitting a shared
-    net would corrupt semantics; the agent must use add/delete_wire
-    explicitly there.
-  * rewire_pin CONNECTS at an existing junction of the target net when
-    one exists, never at a claimed pin coordinate — raising a claimed
-    endpoint's degree above 1 breaks the netlist's pin heuristics
-    (worst on subcircuit implicit pins, which require degree-1 endpoints).
-  * After applying, the temp circuit is REPARSED and deep-L1-checked;
-    a patch that introduces NEW structural errors (multi-driver, width
-    conflict, ...) is rejected — a "fix" must keep the circuit clean.
-  * Attribute writes preserve the existing XML value tag (Digital types
-    its attributes: Value is <long>, Bits is <int>, ...); new entries
-    use a known-type table.
+"""
+L3 circuit-patch vocabulary + applier (fix representation).
 """
 
 from __future__ import annotations
@@ -85,15 +18,13 @@ from dlc.parser.netlist import build_netlist
 from dlc.testing.runner import find_digital_jar, per_row_run_auto
 from dlc.testing.spec import extract_test_specs
 
-_TEMP_PREFIX = "dlc_row_l3fix_"   # rides the dlc_row_*.dig gitignore glob
+_TEMP_PREFIX = "dlc_row_l3fix_"
 
 KNOWN_OPS = frozenset({
     "change_attribute", "replace_element", "swap_pins", "rewire_pin",
     "add_wire", "delete_wire", "add_component", "delete_component",
 })
 
-# XML value tag for NEW attribute entries (existing entries keep their tag).
-# Digital types its keys — writing the wrong tag breaks its deserializer.
 _NEW_ENTRY_TAG = {
     "Value": "long",
     "Bits": "int", "Inputs": "int", "Selector Bits": "int",
@@ -113,7 +44,7 @@ _NEW_ENTRY_TAG = {
 class PatchReport:
     ok: bool
     warning: str | None = None
-    applied: list[str] = field(default_factory=list)   # one summary per op
+    applied: list[str] = field(default_factory=list)
     l1_errors_before: int | None = None
     l1_errors_after: int | None = None
     new_l1_error_kinds: list[str] = field(default_factory=list)
@@ -125,24 +56,17 @@ class PatchReport:
 
 @dataclass
 class PatchOutcome:
-    """apply + rerun result — the self-verify oracle's answer for one fix."""
     ok: bool
     warning: str | None = None
     report: PatchReport | None = None
-    temp_path: str | None = None          # populated only when keep_temp=True
+    temp_path: str | None = None
     specs: list[dict] = field(default_factory=list)
-    # [{name, headers, rows:[{index, raw, status, mismatches, error_message}],
-    #   all_passed}]
     all_passed: bool | None = None
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
         return asdict(self)
 
-
-# ---------------------------------------------------------------------------
-# XML helpers
-# ---------------------------------------------------------------------------
 
 def _visual_elements(root) -> list:
     block = root.find("visualElements")
@@ -160,11 +84,6 @@ def _ve_for_index(root, component_index: int):
 
 
 def _normalize_data_words(value) -> str:
-    """Digital's <data> format: comma-separated bare-hex words (with
-    multiplicity entries like '16*0' passed through untouched). Models
-    hand this back as JSON lists or 0x-prefixed words — normalize here
-    instead of letting a semantically CORRECT fix die on formatting
-    inside the ROM parser (a str(list) blob refutes as garbage)."""
     if isinstance(value, (list, tuple)):
         items = [str(v) for v in value]
     else:
@@ -181,7 +100,6 @@ def _normalize_data_words(value) -> str:
 
 
 def _format_value(tag: str, value) -> tuple[str, str | None, dict]:
-    """(tag, text, xml_attribs) for a new/replacement value element."""
     if tag == "boolean":
         return tag, ("true" if value else "false"), {}
     if tag == "rotation":
@@ -191,7 +109,6 @@ def _format_value(tag: str, value) -> tuple[str, str | None, dict]:
     return tag, str(value), {}
 
 def _append_entry(attrs_el, name: str, value) -> None:
-    """Append one typed <entry> to an elementAttributes block."""
     if name in _NEW_ENTRY_TAG:
         tag = _NEW_ENTRY_TAG[name]
     elif isinstance(value, bool):
@@ -232,7 +149,6 @@ def _apply_change_attribute(root, op) -> str:
             entry.replace(children[1], new_val)
             return f"change_attribute[{op['component_index']}].{name} -> {value!r}"
 
-    # No existing entry: create one with the known (or inferred) tag.
     _append_entry(attrs, name, value)
     return f"change_attribute[{op['component_index']}].{name} -> {value!r} (new entry)"
 
@@ -314,16 +230,6 @@ class _PinIndex:
             )
 
     def attach_coord(self, component_index: int, pin_name: str) -> tuple[int, int]:
-        """Best coordinate for CONNECTING INTO the net of (component, pin).
-
-        Never the pin's own claim point when avoidable: raising a claimed
-        endpoint's wire-degree above 1 breaks the netlist's pin heuristics
-        (worst on subcircuit implicit pins, which require degree-1
-        endpoints). An existing junction (degree >= 2) on the same net is
-        immune — junction coords are never pin claims — so prefer the
-        closest-sorted one; fall back to the pin coordinate only when the
-        net has no junction yet.
-        """
         target_net = None
         pin_coord = None
         for net in self.netlist.nets:
@@ -388,7 +294,6 @@ def _apply_rewire_pin(root, op, pins: _PinIndex) -> str:
             f"(detached {removed} segment(s))")
 
 def _apply_add_component(root, op) -> str:
-    """Append a new visualElement (existing indices never shift)."""
     block = root.find("visualElements")
     if block is None:
         raise ValueError("Circuit has no <visualElements> block.")
@@ -405,12 +310,6 @@ def _apply_add_component(root, op) -> str:
 
 
 def _apply_delete_component(root, op, pins: _PinIndex) -> str:
-    """Remove a component plus wire segments that dead-end at its pins.
-
-    Segments whose endpoint at the pin coordinate is a shared junction
-    (degree > 1) are kept — they route other signals; the L1 guard
-    catches anything a deletion structurally breaks.
-    """
     idx = op["component_index"]
     ve = _ve_for_index(root, idx)
     pin_coords = {
@@ -434,18 +333,9 @@ def _apply_delete_component(root, op, pins: _PinIndex) -> str:
             f"(removed {removed_wires} dead-end wire segment(s))")
 
 
-
-# ---------------------------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
 
 def apply_patch(dig_path: str, ops: list[dict]) -> tuple[str | None, PatchReport]:
-    """Apply `ops` to a temp copy of `dig_path` (same directory).
-
-    Returns (temp_path, report). On any failure — bad op, junction refusal,
-    reparse failure, or NEW L1 errors introduced — the temp file is removed,
-    temp_path is None, and report.ok is False. The original is never touched.
-    """
     report = PatchReport(ok=False)
     if not ops:
         report.warning = "No patch ops given."
@@ -471,9 +361,6 @@ def apply_patch(dig_path: str, ops: list[dict]) -> tuple[str | None, PatchReport
     root = tree.getroot()
     pins = _PinIndex(str(src_path))
 
-    # component_index always refers to the ORIGINAL circuit: deletions are
-    # applied last (descending index) so they never shift what other ops
-    # in the same patch point at.
     deletes = [op for op in ops if op["op"] == "delete_component"]
     deletes.sort(key=lambda op: -op.get("component_index", 0))
     ordered = [op for op in ops if op["op"] != "delete_component"] + deletes
@@ -508,8 +395,6 @@ def apply_patch(dig_path: str, ops: list[dict]) -> tuple[str | None, PatchReport
     os.close(fd)
     tree.write(temp_path, xml_declaration=True, encoding="utf-8")
 
-    # Validation: the patched circuit must reparse AND stay structurally
-    # at-least-as-clean as the original.
     try:
         patched = parse_dig_file(temp_path)
         issues = check_all_l1_deep(patched)
@@ -547,12 +432,6 @@ def rerun_with_patch(
     timeout: float = 60.0,
     keep_temp: bool = False,
 ) -> PatchOutcome:
-    """Apply a fix and run Digital per-row on the patched temp circuit.
-
-    Runs every testcase in the file (or just `spec_name`); Mode A's verify
-    step confirms a hypothesis only if its cluster's rows now pass AND no
-    previously-passing row regressed — both readable from the result.
-    """
     jar = jar_path or find_digital_jar()
     if jar is None:
         return PatchOutcome(ok=False, warning=(

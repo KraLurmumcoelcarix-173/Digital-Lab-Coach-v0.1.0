@@ -1,44 +1,3 @@
-"""Mode B deterministic engines: wrong-test scan + coverage report.
-
-TREE-WIDE by ratified scope: the selected file AND every resolved subcircuit
-file are each scanned as their own top-level circuit against their own
-embedded testcases. Everything here is pure evaluator work — Digital.jar is
-never invoked, no LLM is involved.
-
-wrong-test scan
-    Replays every testcase row through the dlc/sim value evaluator and flags
-    output cells whose ASSERTED value disagrees with what the circuit-as-built
-    COMPUTES. A flag means "the test and the circuit disagree here" — either
-    the row's expectation is a typo or the circuit is buggy at that point; the
-    UI wording presents it as exactly that question.
-    HONESTY GUARD (ratified decision c): a cell is accused ONLY when the
-    evaluator fully resolved that output for that row; unresolved cells are
-    counted in `unresolved_cells` and never flagged.
-
-coverage report
-    Deterministic metrics per circuit, merged across its specs:
-      - per-input value coverage (distinct values; missing values for ports
-        up to 4 bits; inputs no testcase column ever drives),
-      - distinct input vectors vs the full input space (exact when the space
-        is small enough to state),
-      - per-output assertion coverage (outputs never checked; outputs only
-        ever expected to be one constant),
-      - Multiplexer branch-arm coverage, observed from the evaluator's
-        resolved select values row by row,
-      - clock-edge row count.
-    The per-circuit `notes` list is the human-readable "good report"; the
-    same structure grounds the row-proposal prompt.
-
-select-coverage gate (Case 3.B)
-    When an INPUT-driven Multiplexer's exercised select values fall below
-    a 31/32 share (in a circuit no manifest grades by category), the
-    report carries a `select_gate` entry and Mode B refuses to propose:
-    an op the tests never define has no anchor for INTENDED semantics,
-    so a proposed row would be a guess that can enshrine the very bug it
-    should catch. The student writes one row per select value first —
-    the refusal is deterministic, zero model calls, and free.
-"""
-
 from __future__ import annotations
 
 import os
@@ -55,26 +14,18 @@ from dlc.sim import simulate, inputs_for_row
 from dlc.sim.simulator import _row_has_clock_edge
 from dlc.testing.spec import extract_test_specs, match_variables_to_io, _tokenize
 
-
-# ---------------------------------------------------------------------------
-# Result records
-# ---------------------------------------------------------------------------
-
 @dataclass
 class WrongTestFlag:
-    """One output cell where the asserted value and the circuit disagree."""
     file: str
     spec_name: str
     spec_index: int
-    row_index: int              # TestRow.line_index — same ids the UI rows use
-    column: str                 # output header accused
-    asserted_raw: str           # the token as written in the testcase
+    row_index: isinstance
+    column: str
+    asserted_raw: str
     asserted: int
     computed: int
     asserted_fmt: str
     computed_fmt: str
-    # 2.9: "official" when this file's testcase matches the lab manifest's
-    # instructor fingerprint — the row is right, the circuit is wrong.
     classification: str | None = None
 
     def describe(self) -> str:
@@ -87,34 +38,33 @@ class WrongTestFlag:
 
 @dataclass
 class SpecScan:
-    """2.1 accounting for one testcase."""
     name: str
     spec_index: int
     row_count: int
     malformed_rows: int
-    checked_cells: int          # honesty guard passed, value compared
-    unresolved_cells: int       # guard failed — counted, never accused
+    checked_cells: int
+    unresolved_cells: int
     mismatched_cells: int
-    error: str | None = None    # evaluator blew up -> spec skipped, never accused
+    error: str | None = None
 
 
 @dataclass
 class InputCoverage:
     label: str
     bits: int
-    in_testcases: bool          # some spec has a column driving this input
+    in_testcases: bool
     distinct_values: int
-    missing_values: list[int] = field(default_factory=list)  # ports <= 4 bits
-    constant_value: int | None = None   # same value in every row (rows > 1)
+    missing_values: list[int] = field(default_factory=list)
+    constant_value: int | None = None
 
 
 @dataclass
 class OutputCoverage:
     label: str
     bits: int
-    asserted_cells: int         # rows that check this output with a value
+    asserted_cells: int
     distinct_values: int
-    constant_value: int | None = None   # only ever expected to be this
+    constant_value: int | None = None
 
 
 @dataclass
@@ -124,21 +74,14 @@ class MuxBranchCoverage:
     arms_total: int
     arms_taken: list[int] = field(default_factory=list)
     arms_missing: list[int] = field(default_factory=list)
-    # what each arm actually SELECTS — deterministic wiring truth read
-    # from the netlist ("BarrelShifter 'RSA'"), so neither the student nor
-    # the proposer has to guess arm semantics from the select number.
     arm_drivers: dict[int, str] = field(default_factory=dict)
-    # label of the top-level In that drives 'sel' (directly or through a
-    # Splitter), None when the select comes from internal logic. Only
-    # input-driven selects can gate Mode B — an internal select may have
-    # arms that are unreachable by design.
     select_from_input: str | None = None
 
 
 @dataclass
 class CircuitCoverage:
     """Everything Mode B knows about one circuit in the tree."""
-    file: str                   # display name (basename)
+    file: str
     path: str | None
     has_testcases: bool = False
     specs: list[SpecScan] = field(default_factory=list)
@@ -146,23 +89,18 @@ class CircuitCoverage:
     row_count: int = 0
     distinct_vectors: int = 0
     input_bits_total: int = 0
-    input_space: int | None = None       # 2**bits when small enough to state
+    input_space: int | None = None
     input_space_pct: float | None = None
     inputs: list[InputCoverage] = field(default_factory=list)
     outputs: list[OutputCoverage] = field(default_factory=list)
     mux_branches: list[MuxBranchCoverage] = field(default_factory=list)
     clock_edge_rows: int = 0
     notes: list[str] = field(default_factory=list)
-    # true-but-noisy notes ("…not part of this lab's instruction set")
-    # move here — still in the report JSON (the model reads them), never
-    # rendered to students.
     hidden_notes: list[str] = field(default_factory=list)
-    # category-graded coverage (populated only when a lab manifest
-    # binds categories to this file; GREEN iff categories_missing is empty)
     categories_total: int = 0
     categories_touched: list[str] = field(default_factory=list)
     categories_missing: list[str] = field(default_factory=list)
-    official_test: str | None = None    # "official" | "modified" | None
+    official_test: str | None = None
 
 
 @dataclass
@@ -171,28 +109,14 @@ class TreeCoverageReport:
     circuits: list[CircuitCoverage] = field(default_factory=list)
     total_flags: int = 0
     notes: list[str] = field(default_factory=list)
-    # every component kind in the tree — the structural identity that
-    # lets a manifest apply by ELEMENT (e.g. Seven-Seg) when no filename
-    # matches, so a display lab is graded whatever the student named it
     element_names: list[str] = field(default_factory=list)
-    # Case 3.B gate: entries for every INPUT-driven Multiplexer select
-    # value no test row ever exercises (in circuits no manifest grades by
-    # category). Non-empty => Mode B refuses to propose — for an op the
-    # tests never define, nothing anchors INTENDED semantics, so a model
-    # proposal would be a guess that can enshrine the very bug it should
-    # catch. The student writes one row per select value first.
     select_gate: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_SPACE_STATE_LIMIT = 20     # state the exact input space only up to 2^20
-_ENUM_BITS_LIMIT = 4        # enumerate missing values only for <=4-bit ports
+_SPACE_STATE_LIMIT = 20
+_ENUM_BITS_LIMIT = 4
 
 
 def _mask(bits: int | None) -> int:
@@ -200,8 +124,6 @@ def _mask(bits: int | None) -> int:
 
 
 def _bitpattern_eq(found: int, expected: int, width: int | None) -> bool:
-    """Digital's masked compare: a signed expected like -60 matches the
-    evaluator's unsigned two's-complement value at the port's width."""
     if width:
         m = _mask(width)
         return (found & m) == (expected & m)
@@ -209,8 +131,6 @@ def _bitpattern_eq(found: int, expected: int, width: int | None) -> bool:
 
 
 def _fmt_value(v: int | None, width: int | None, signed_hint: bool) -> str:
-    """Render like the Layer-1 UI: signed decimal when the testcase wrote a
-    negative value, hex for buses, plain decimal for 1-bit."""
     if v is None:
         return ""
     if not width or width <= 1:
@@ -220,25 +140,13 @@ def _fmt_value(v: int | None, width: int | None, signed_hint: bool) -> str:
         return str(u - (1 << width))
     return f"0x{u:X}"
 
-
-# attributes worth naming when describing what drives a mux arm
 _ARM_ATTR_HINTS = ("direction", "signed", "barrelSigned", "mode")
 
 
-_PASSTHROUGH_ELEMS = {"Splitter"}    # walked through when naming a source
+_PASSTHROUGH_ELEMS = {"Splitter"}
 
 
 def _mux_arm_drivers(circuit: Circuit, netlist) -> dict[int, dict[int, str]]:
-    """{mux_component_index: {arm: description}} — the component whose
-    output drives each data arm (tunnels are already resolved into nets),
-    PLUS that driver's own input sources by pin name, e.g.
-
-        "BarrelShifter 'RSA' (direction=right) [in←In 'B', sh←In 'A' via Splitter]"
-
-    The pin-role part is what makes arm semantics decidable: for the lab5
-    shifter it states deterministically that the VALUE is B and the shift
-    AMOUNT is A — the exact operand-role fact expected-value predictions
-    die without. Arms whose driver can't be identified are simply absent."""
     pin_net: dict[tuple[int, str], int] = {}
     in_pins: dict[int, list[str]] = {}
     driver_of_net: dict[int, int] = {}
@@ -312,8 +220,6 @@ def _mux_arm_drivers(circuit: Circuit, netlist) -> dict[int, dict[int, str]]:
 
 
 def _mux_sel_nets(circuit: Circuit, netlist) -> list[tuple[int, int, int]]:
-    """(component_index, selector_bits, sel_net_id) for every Multiplexer
-    whose 'sel' pin landed on a net."""
     pin_net: dict[tuple[int, str], int] = {}
     for net in netlist.nets:
         for p in net.pins:
@@ -333,11 +239,6 @@ def _mux_sel_nets(circuit: Circuit, netlist) -> list[tuple[int, int, int]]:
 
 
 def _sel_input_labels(circuit: Circuit, netlist) -> dict[int, str]:
-    """{mux_component_index: In label} for every Multiplexer whose 'sel'
-    is driven by a top-level In — directly or through up to 2 Splitters
-    (tunnels are already resolved into nets). Internal-logic selects are
-    absent on purpose: only a select the STUDENT steers from a testcase
-    column is theirs to cover row by row."""
     pin_net: dict[tuple[int, str], int] = {}
     driver_of_net: dict[int, int] = {}
     in_pins: dict[int, list[str]] = {}
@@ -449,11 +350,8 @@ def scan_circuit_coverage(
                     new_state = dict(reg_state)
                     new_state.update(res.reg_next)
                     reg_state = new_state
-                    # re-settle so post-edge values are what the row asserts
                     res = simulate(circuit, netlist, graph, inp,
                                    state_store=dict(reg_state))
-
-                # ---- 2.2 collectors --------------------------------------
                 vectors.add(tuple(sorted(inp.items())))
                 for lbl, val in inp.items():
                     if lbl in in_values:
@@ -462,8 +360,6 @@ def scan_circuit_coverage(
                     v = res.net_values.get(nid)
                     if v is not None:
                         arms_taken[idx].add(v & _mask(sel_bits))
-
-                # ---- 2.1 asserted-vs-computed ----------------------------
                 for col, header in enumerate(spec.headers):
                     b = bindings.get(header)
                     if b is None or b.role != "output":
@@ -472,7 +368,7 @@ def scan_circuit_coverage(
                         continue
                     tok = row.values[col]
                     if tok.kind != "int" or tok.value is None:
-                        continue        # don't-care / high-Z: nothing asserted
+                        continue
                     if header in out_asserted:
                         out_asserted[header].append(
                             tok.value & _mask(b.bit_width)
@@ -480,7 +376,7 @@ def scan_circuit_coverage(
                         )
                     found = res.output_values.get(header)
                     if found is None:
-                        scan.unresolved_cells += 1   # HONESTY GUARD: no accusation
+                        scan.unresolved_cells += 1
                         continue
                     scan.checked_cells += 1
                     if not _bitpattern_eq(found, tok.value, b.bit_width):
@@ -498,14 +394,12 @@ def scan_circuit_coverage(
                             asserted_fmt=_fmt_value(tok.value, b.bit_width, signed),
                             computed_fmt=_fmt_value(found, b.bit_width, signed),
                         ))
-        except Exception as exc:                      # never crash the scan
+        except Exception as exc:
             scan.error = f"{type(exc).__name__}: {exc}"
             cov.notes.append(
                 f"testcase '{spec.name}': evaluator error "
                 f"({scan.error}) — this spec was skipped, nothing accused."
             )
-
-    # ---- 2.2 rollups ------------------------------------------------------
     cov.distinct_vectors = len(vectors)
     if 0 < cov.input_bits_total <= _SPACE_STATE_LIMIT:
         cov.input_space = 1 << cov.input_bits_total
@@ -557,7 +451,6 @@ def scan_circuit_coverage(
 
 
 def _build_notes(cov: CircuitCoverage) -> None:
-    """Human-readable gap sentences — the per-circuit 'good report'."""
     if not cov.has_testcases:
         return
     for ic in cov.inputs:
@@ -608,14 +501,7 @@ def _build_notes(cov: CircuitCoverage) -> None:
             f"vectors tested."
         )
 
-
-# ---------------------------------------------------------------------------
-# Tree walk (root + every resolved subcircuit file, deduped, BFS order)
-# ---------------------------------------------------------------------------
-
 def _collect_tree(circuit: Circuit, root_path: str) -> list[tuple[str, str, Circuit]]:
-    """[(display, path, circuit)] for the root and every resolved child,
-    first-seen (breadth-first) order, deduplicated by resolved path."""
     seen: set[str] = set()
     out: list[tuple[str, str, Circuit]] = []
     queue: list[tuple[str, str, Circuit]] = [
@@ -638,29 +524,12 @@ def _collect_tree(circuit: Circuit, root_path: str) -> list[tuple[str, str, Circ
             ))
     return out
 
-
-# ---------------------------------------------------------------------------
-# D2 replay pre-gate helper: what would THIS circuit compute for rows
-# appended after the full official sequence? Used by the proposer to kill
-# clocked rows whose expected values ignore the machine state (the exact
-# failure Charles caught twice on real lab5: a proposed register-file row
-# assuming registers were still 0, and a cpu row copying old expectations).
-# ---------------------------------------------------------------------------
-
 def replay_appended_rows(
     path: str,
     spec_name: str,
     appended: list[str],
     rom_words: list[str] | None = None,
 ) -> list[dict]:
-    """Replay `spec_name`'s official rows (threading register state), then
-    evaluate each `appended` row in sequence. Verdict per appended row
-    against its asserted output cells: 'agrees' | 'disagrees' (with which
-    columns) | 'unresolved' (evaluator couldn't settle — no accusation).
-
-    With `rom_words`, the circuit's program ROM is extended first (on a
-    throwaway temp copy)
-    """
     tmp = None
     try:
         if rom_words:
@@ -696,7 +565,7 @@ def replay_appended_rows(
                                state_store=dict(reg_state))
             return res
 
-        for row in spec.rows:                       # official replay
+        for row in spec.rows:
             if row.is_malformed:
                 continue
             if any(t.kind == "loop_expr" for t in row.values):
@@ -720,7 +589,7 @@ def replay_appended_rows(
                     continue
                 tok = _tokenize(by_col[col])
                 if tok.kind != "int" or tok.value is None:
-                    continue                        # don't-care: nothing asserted
+                    continue
                 found = res.output_values.get(col)
                 if found is None:
                     unresolved = True
@@ -748,7 +617,6 @@ def replay_appended_rows(
 
 
 def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
-    """Mode B's deterministic pass over the whole tree rooted at `dig_path`."""
     report = TreeCoverageReport(root=os.path.basename(dig_path))
     try:
         circuit = parse_dig_file(str(dig_path))
@@ -779,22 +647,6 @@ def scan_tree_coverage(dig_path: str) -> TreeCoverageReport:
 
 
 def _apply_select_gate(report: TreeCoverageReport) -> None:
-    """Case 3.B: collect every input-driven Multiplexer select value that
-    no test row exercises. Guards, in order of why each exists:
-      * select_from_input — internal selects may have arms unreachable by
-        design; only a select the student steers from a testcase column
-        is theirs to cover.
-      * arms_taken non-empty — the evaluator RESOLVED the select on some
-        row (honesty guard: never accuse through an unresolved net).
-      * categories_total == 0 — manifest-graded labs (e.g. the cpu) are
-        anchored by the instructor reference; the category machinery
-        already decides what must be covered there.
-      * coverage ratio — the gate fires only when the exercised share of
-        arms falls BELOW 31/32. Small op muxes must cover every value
-        (1 missing of 4 gates), but a register-file's 32-way read mux
-        with one address never read is 31/32 covered — coached, not
-        blocked (its note still names the missing arm).
-    """
     for cov in report.circuits:
         if not cov.has_testcases or cov.categories_total:
             continue
@@ -812,19 +664,12 @@ def _apply_select_gate(report: TreeCoverageReport) -> None:
                                     for a in mb.arms_missing
                                     if a in mb.arm_drivers},
                 })
-                # the gate card now carries this mux's story — the raw
-                # arm note next to it would just repeat it
                 cov.notes = [n for n in cov.notes
                              if not n.startswith(
                                  f"Multiplexer[{mb.component_index}]:")]
 
 
 def _apply_manifest(report: TreeCoverageReport) -> None:
-    """when a lab manifest covers this tree, add category-graded
-    coverage and classify official-test disagreements. The user-configured
-    official-test store (Settings ⚙ → Official tests) is checked for EVERY
-    tree, manifest or not — it is the instructor-controlled truth and wins
-    over the shipped manifest fingerprints."""
     from dlc.l3 import manifest as mf
     m = mf.find_manifest({c.file for c in report.circuits},
                          element_names=set(report.element_names))
@@ -917,13 +762,6 @@ _CONST_OUTPUT_RE = re.compile(r"output '([^']+)' is only ever expected")
 def _manifest_note_filter(
     notes: list[str], cats: list[dict], *, categories_complete: bool,
 ) -> tuple[list[str], list[str]]:
-    """Category-aware note rewrite: a raw "input 'X' never tested with
-    values ..." note is an INVITATION to test those values — but when every
-    listed value lies outside the lab's defined categories, those values are
-    undefined operations and testing them is noise (or worse: the model
-    proposes them and the reference kills the rows). Rewrite such notes to
-    say so; likewise soften constant-output notes once every category is
-    exercised."""
     defined: dict[str, set[int]] = {}
     for cat in cats:
         for col, v in (cat.get("when") or {}).items():
@@ -943,8 +781,6 @@ def _manifest_note_filter(
             except ValueError:
                 listed = []
             if listed and all(v not in defined[m2.group(1)] for v in listed):
-                # true but noise for students ("what CAN I still
-                # test?" is the question) — keep it for the model only
                 hidden.append(
                     f"input '{m2.group(1)}': every lab-defined value is "
                     f"tested; the untested values "

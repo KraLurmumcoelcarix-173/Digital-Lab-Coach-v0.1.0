@@ -41,8 +41,6 @@ _CLOCKED_ELEMENTS = frozenset({
 })
 
 
-# Data records
-
 @dataclass
 class IOFact:
     """A top-level circuit port (one In or Out component)."""
@@ -50,7 +48,7 @@ class IOFact:
     label: str | None
     bit_width: int
     position: tuple[int, int]
-    direction: str  # "in" for In components, "out" for Out components
+    direction: str
 
 
 @dataclass
@@ -65,7 +63,7 @@ class ComponentFact:
     bit_width: int | None
     predecessors: list[int]
     successors: list[int]
-    inverted_inputs: list[str] = field(default_factory=list)  # gate pins with an inverter bubble
+    inverted_inputs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -76,7 +74,7 @@ class SubcircuitFact:
     resolved_path: str | None
     resolution_error: str | None
     child_source_path: str | None
-    child_inputs: list[dict]   # [{"label": str|None, "bit_width": int}, ...]
+    child_inputs: list[dict]
     child_outputs: list[dict]
 
 
@@ -145,13 +143,6 @@ def _component_display_name(comp: Component, index: int) -> str:
     return f"{e}[{index}]"
 
 def _component_bit_width(comp: Component) -> int | None:
-    """The raw `Bits` attribute, or None when absent.
-
-    Component.bit_width() defaults to 1 when Bits is missing, which is
-    misleading for elements where Bits doesn't apply (Splitter, Tunnel,
-    Testcase, subcircuit instances). Returning None lets the LLM skip
-    those instead of seeing a wrong "1-bit".
-    """
     if "Bits" in comp.attributes:
         try:
             return int(comp.attributes["Bits"])
@@ -330,8 +321,10 @@ def _child_has_clocked(child: Circuit) -> bool:
 
 
 def _is_or_contains_clocked(circuit: Circuit, comp_idx: int) -> bool:
-    """True if component is a clocked element OR a subcircuit instance whose
-    resolved child contains one recursively."""
+    """
+    True if component is a clocked element OR a subcircuit instance whose
+    resolved child contains one recursively.
+    """
     comp = circuit.components[comp_idx]
     if comp.element_name in _CLOCKED_ELEMENTS:
         return True
@@ -505,7 +498,8 @@ def _collect_bugs(
 # Public API
 
 def _rom_facts(circuit: Circuit) -> list[dict]:
-    """Per-ROM contents: the words stored at consecutive addresses 0,1,2...
+    """
+    Per-ROM contents: the words stored at consecutive addresses 0,1,2...
 
     Digital stores ROM Data as a comma/newline-separated string inside a
     <data> tag; intFormat says how to read the digits (usually hex).
@@ -519,7 +513,7 @@ def _rom_facts(circuit: Circuit) -> list[dict]:
             raw = "" if raw is None else str(raw)
         tokens = []
         for t in raw.replace(",", " ").split():
-            if "*" in t:                    # Digital run-length: "7*1f"
+            if "*" in t:
                 cnt_s, _, val_s = t.partition("*")
                 try:
                     cnt = max(int(cnt_s, 10), 1)
@@ -571,8 +565,6 @@ def extract_facts(
     netlist: NetList | None = None,
     graph: nx.MultiDiGraph | None = None,
 ) -> CircuitFacts:
-    """Assemble the full CircuitFacts bundle for a parsed circuit.
-    """
     if netlist is None:
         netlist = build_netlist(circuit)
     if graph is None:

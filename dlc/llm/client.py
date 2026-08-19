@@ -47,10 +47,6 @@ MODEL_CATALOG: dict[str, dict] = {
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 2000
-# Hard per-request wall clock. A reasoning-heavy model that thinks for
-# minutes must FAIL the call (llm_error -> dropped idea / retry) instead
-# of hanging a student's Analyze click indefinitely (r42, measured:
-# claude-opus-5 calls passing 100-400s each). Override: DLC_LLM_TIMEOUT.
 def _request_timeout() -> float:
     try:
         return float(os.environ.get("DLC_LLM_TIMEOUT", "") or 180.0)
@@ -121,10 +117,6 @@ def model_provider(model: str) -> str | None:
 
 
 def _proxy_config() -> tuple[str | None, str | None]:
-    """Course proxy (url, token) — env first, then ~/.dlc/config.json.
-    When a proxy is configured, LLM calls relay through it: the course
-    key stays on the instructor's server and limits are enforced there
-    per machine (re-downloading the tool cannot reset them)."""
     url = os.environ.get("DLC_PROXY_URL")
     token = os.environ.get("DLC_PROXY_TOKEN")
     if not url:
@@ -178,8 +170,7 @@ def _friendly_error(exc, provider: str) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 def _is_anthropic_reasoning_model(model: str) -> bool:
-    # Claude 5-family models think by default; without bounded effort a
-    # reply can be 100% thinking blocks (measured on claude-opus-5).
+
     return str(model or "").startswith(("claude-opus-5", "claude-sonnet-5"))
 
 
@@ -189,13 +180,6 @@ def _call_anthropic(prompt, model, key, max_tokens, system, effort=None) -> dict
                 "error": "anthropic SDK not installed (uv add anthropic)",
                 "usage": None, "model": model}
     client = Anthropic(api_key=key, timeout=_request_timeout())
-    # Reasoning-tier Claude models think by default and, at the default
-    # effort, can spend the ENTIRE max_tokens budget on (invisible)
-    # thinking blocks - the reply then contains zero text (r42, measured
-    # on claude-opus-5: 16000/16000 tokens of thinking, empty reply).
-    # Same safety net as the OpenAI reasoning branch below: bound the
-    # thinking depth server-side (thinking itself stays on) and make
-    # sure thinking + text fit under the cap.
     if _is_anthropic_reasoning_model(model):
         effort = effort or "low"
         max_tokens = max(max_tokens, 8000)
@@ -217,9 +201,6 @@ def _call_anthropic(prompt, model, key, max_tokens, system, effort=None) -> dict
             return {"ok": True, "text": text, "error": None,
                     "usage": {"input_tokens": resp.usage.input_tokens,
                               "output_tokens": resp.usage.output_tokens},
-                    # "max_tokens" here = the reply was TRUNCATED at the
-                    # cap — callers use it to retry with a JSON-only
-                    # demand instead of guessing why parsing failed (r42)
                     "stop_reason": getattr(resp, "stop_reason", None),
                     "model": model}
         except Exception as exc:
@@ -297,9 +278,6 @@ def call_llm(prompt, *, api_key=None, model=DEFAULT_MODEL,
                 "error": f"Unknown model: {model!r}",
                 "usage": None, "model": model}
     provider = info["provider"]
-    # Course-proxy mode: the key lives on the instructor's server and
-    # limits are enforced there per machine. Fall back to a direct call
-    # only when the proxy is unreachable AND a local key exists.
     proxy_url, proxy_token = _proxy_config()
     if proxy_url:
         r = _call_proxy(prompt, model, max_tokens, system, effort,

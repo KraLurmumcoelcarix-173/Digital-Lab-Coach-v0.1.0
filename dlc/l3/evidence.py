@@ -1,30 +1,3 @@
-"""L3 Mode A evidence core — the deterministic scan before any LLM.
-
-Implements the zero-model steps of the frozen coordinator pipeline
-(docs/l3_debug_contract.md §2, steps 2-4) for ONE testcase:
-
-  mode decision   "clear" (nothing fails) / "lazy" (a gross-check trips —
-                  the suggestion-only branch, no daily use burned) /
-                  "analysis" (clustered evidence, ready for sub-agents).
-  clustering      failing rows grouped by SIGNATURE: the tuple of
-                  (mismatched output columns, exercised select values
-                  read from the row's inputs — plus the decoded program
-                  category when the lab is program-driven, overlap of
-                  the top localizer suspects). Cap 4 clusters; overflow
-                  FOLDS into the nearest cluster, never dropped.
-  evidence        per cluster, the frozen §3 sub-agent INPUT payload,
-                  built only from verified facts: the Python evaluator's
-                  per-net values for ≤ 2 representative rows, compact
-                  expected-vs-found for every row, localize() per row
-                  merged via merge_reports().
-
-Nothing here calls a model, so all of it works offline. The jar's
-per-row verdict stays authoritative whenever the caller
-has one — pass ``failing_indices`` (+ ``jar_mismatches``); without it
-the evaluator's own expected-vs-found sweep decides, so the
-deterministic half of Mode A needs no Digital.jar at all.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -43,30 +16,17 @@ from dlc.testing.spec import TestSpec, extract_test_specs, match_variables_to_io
 
 CONTRACT = "l3.debug.v1.1"
 
-# More failing rows than this is a structural problem, not a localizable
-# bug — Mode A answers with the suggestion branch instead of burning a
-# hypothesis hunt (and a daily use) on a doomed circuit.
 GROSS_MAX_FAILING = 20
 
-# The tiered pass-rate bars only judge BIG circuits. A small circuit that
-# is otherwise Layer-3-ready is exactly the "close to the answer"
-# audience, whatever its pass rate — every row can fail on a 20-part
-# adder and one wrong constant still explains all of it.
 RATE_GATE_MIN_COMPONENTS = 30
-# Focus requisite: failing rows wrong in >=4 output columns AT ONCE must
-# stay UNDER this share of ALL well-formed testcase rows, or the run
-# is lazy regardless of pass rate.
+
 SCATTERED_ROW_MAX_SHARE = 0.25
 
-_MAX_CLUSTERS = 4          # one sub-agent per cluster, never one per row
-_MAX_REPRESENTATIVES = 2   # full per-net evidence for at most 2 rows/cluster
-_TOP_SUSPECTS = 5          # signature part 3 compares this many top suspects
-_MIN_OVERLAP = 0.5         # Jaccard threshold for "same suspects"
+_MAX_CLUSTERS = 4
+_MAX_REPRESENTATIVES = 2
+_TOP_SUSPECTS = 5
+_MIN_OVERLAP = 0.5
 
-# Input columns whose NAME alone marks them as operation selectors, for
-# circuits where the select path runs through splitters or subcircuits
-# the net probe cannot follow. The net probe (a direct net into a `sel`
-# pin) stays primary.
 _SELECT_NAME_HINTS = frozenset({
     "op", "opcode", "sel", "select", "mode", "ctrl", "control",
     "aluop", "func", "funct", "operation",
@@ -79,13 +39,13 @@ class RowEvidence:
 
     row_index: int
     raw: str
-    mismatches: list[dict] = field(default_factory=list)   # [{column, expected, found}]
-    outputs: list[dict] = field(default_factory=list)      # /api/simulate `outputs` shape
+    mismatches: list[dict] = field(default_factory=list)
+    outputs: list[dict] = field(default_factory=list)
     net_values: dict[str, dict] = field(default_factory=dict)
     unresolved_nets: list[int] = field(default_factory=list)
-    selects: list[list[str]] = field(default_factory=list)  # [[column, raw token], ...]
-    category: str | None = None            # manifest-decoded program category
-    program_word: str | None = None        # hex word behind `category`
+    selects: list[list[str]] = field(default_factory=list)
+    category: str | None = None
+    program_word: str | None = None
     suspect_report: SuspectReport = field(default_factory=SuspectReport)
 
 
@@ -99,13 +59,13 @@ class Cluster:
 
 @dataclass
 class EvidenceResult:
-    mode: str = "clear"                    # "clear" | "lazy" | "analysis"
+    mode: str = "clear"
     gross_flags: list[dict] = field(default_factory=list)
     failing_count: int = 0
     spec_name: str | None = None
     headers: list[str] = field(default_factory=list)
     clusters: list[Cluster] = field(default_factory=list)
-    payloads: list[dict] = field(default_factory=list)     # §3 INPUT per cluster
+    payloads: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -127,19 +87,11 @@ class EvidenceResult:
             "notes": self.notes,
         }
 
-
-# ---------------------------------------------------------------------------
-# Row evaluation (evaluator-grounded expected-vs-found)
-# ---------------------------------------------------------------------------
-
 def _mask(bits: int | None) -> int:
     return (1 << bits) - 1 if bits and bits > 0 else 0
 
 
 def _output_ok(found, exp_val, width) -> bool | None:
-    """Bit-pattern comparison at the port's width, exactly like
-    /api/simulate: a signed expected (-60) matches the evaluator's
-    unsigned two's-complement value."""
     if found is None:
         return None
     if width:
@@ -148,9 +100,6 @@ def _output_ok(found, exp_val, width) -> bool | None:
 
 
 def _fmt_value(v, width, signed_hint) -> str | None:
-    """Render a value the way /api/simulate does: signed decimal when the
-    testcase wrote a negative expected value, hex for buses, plain for
-    single bits."""
     if v is None:
         return None
     if not width or width <= 1:
@@ -162,7 +111,6 @@ def _fmt_value(v, width, signed_hint) -> str | None:
 
 
 def _outputs_report(spec: TestSpec, bindings, row, sim: SimResult):
-    """(/api/simulate-shaped outputs list, mismatch cells) for one row."""
     col = {h: i for i, h in enumerate(spec.headers)}
     outputs: list[dict] = []
     mismatches: list[dict] = []
@@ -191,15 +139,7 @@ def _outputs_report(spec: TestSpec, bindings, row, sim: SimResult):
             })
     return outputs, mismatches
 
-
-# ---------------------------------------------------------------------------
-# Signature ingredients
-# ---------------------------------------------------------------------------
-
 def select_columns(circuit, netlist, spec: TestSpec, bindings=None) -> list[str]:
-    """Input columns that carry the row's "exercised operation": their In
-    component's net feeds a `sel` pin somewhere, or their name alone says
-    selector. Deterministic, header order."""
     if bindings is None:
         bindings = match_variables_to_io(spec.headers, circuit)
     sel_fed: set[int] = set()
@@ -219,7 +159,6 @@ def select_columns(circuit, netlist, spec: TestSpec, bindings=None) -> list[str]
 
 
 def _program_rom_out_net(circuit, netlist) -> int | None:
-    """Net id carrying the single program ROM's output, else None."""
     roms = [
         i for i, c in enumerate(circuit.components)
         if c.element_name == "ROM"
@@ -236,10 +175,6 @@ def _program_rom_out_net(circuit, netlist) -> int | None:
 
 
 def row_category(circuit, netlist, sim: SimResult, manifest) -> dict | None:
-    """The program word on the ROM's output net this row, decoded through
-    the manifest — the "exercised category" for program-driven labs.
-    None whenever any link is missing (no manifest decode, no single
-    program ROM, unresolved net)"""
     if not manifest:
         return None
     nid = _program_rom_out_net(circuit, netlist)
@@ -254,15 +189,7 @@ def row_category(circuit, netlist, sim: SimResult, manifest) -> dict | None:
     return {"word": f"{word:x}", "category": d.get("category"),
             "fields": d.get("fields")}
 
-
-# ---------------------------------------------------------------------------
-# Gross-checks (the "this is not one bug" gate)
-# ---------------------------------------------------------------------------
-
 def _holds_state(circuit) -> bool:
-    """Does the tree contain any STATE-HOLDING element (register, flip-
-    flop, RAM, counter)? A Clock source alone does not count — that is
-    exactly the missing-pipeline shape."""
     for comp in circuit.components:
         if comp.element_name in _STATE_ELEMENTS:
             return True
@@ -273,7 +200,6 @@ def _holds_state(circuit) -> bool:
 
 
 def _cell_int(raw) -> int | None:
-    """Parse a testcase/jar cell value ('1', '0b101', '0x1f', 12) or None."""
     if isinstance(raw, bool):
         return int(raw)
     if isinstance(raw, int):
@@ -287,8 +213,6 @@ def _cell_int(raw) -> int | None:
 
 def _frozen_trunk(spec: TestSpec, bindings,
                   row_mismatch_cells: dict[int, list[dict]] | None) -> bool:
-    """True when the failing rows are fully explained by every output
-    being frozen at one constant value (see gross_check docstring)."""
     if not row_mismatch_cells or len(row_mismatch_cells) < 2:
         return False
     hdr_idx = {h: i for i, h in enumerate(spec.headers)}
@@ -304,7 +228,7 @@ def _frozen_trunk(spec: TestSpec, bindings,
             if not col or col not in output_cols or found is None:
                 return False
             if frozen.setdefault(col, found) != found:
-                return False              # the column provably moves
+                return False
             mismatched_rows.setdefault(col, set()).add(idx)
     if not frozen:
         return False
@@ -317,23 +241,15 @@ def _frozen_trunk(spec: TestSpec, bindings,
             return None
         tok = row.values[i]
         return tok.value if tok.kind == "int" else None
-    # Every row the circuit PASSES — and every passing cell of a failing
-    # row — must also be consistent with the frozen constants: a frozen
-    # column passes a cell only when its expected equals the frozen
-    # value, and a never-mismatching output must carry ONE constant
-    # expected everywhere it is checked. Any row that passed with a
-    # different expected proves that output moves — not a dead trunk.
-    # (This is what lets an all-zero-expectation row pass under a
-    # stuck-at-0 trunk without breaking the story.)
     all_rows = [r.line_index for r in spec.rows if not r.is_malformed]
     seen_const: dict[str, set[int]] = {}
     for idx in all_rows:
         for col in output_cols:
             if col in frozen and idx in mismatched_rows.get(col, ()):
-                continue                       # the mismatch cell itself
+                continue
             exp = _expected(idx, col)
             if exp is None:
-                continue                       # dontcare / unparseable
+                continue
             if col in frozen:
                 if exp != frozen[col]:
                     return False
@@ -350,47 +266,6 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
                 row_mismatch_columns: list[set] | None = None,
                 row_mismatch_cells: dict[int, list[dict]] | None = None,
                 ) -> list[dict]:
-    """Deterministic checks that mean the circuit needs fundamentals, not
-    a per-bug hypothesis hunt. Any flag → mode "lazy" (suggestion-only
-    branch). Returns [{kind, detail}] in a fixed order: focus requisite,
-    structural checks, pass-rate bars last.
-
-    v0.1.0 ratified gate (>30-component trees; smaller circuits skip the
-    focus and rate checks entirely — a close-to-answer student gets help,
-    not rejection):
-      1. FOCUS REQUISITE — "≤3 mismatch columns is a REQUISITE, not an
-         amnesty": a failing row wrong in 4+ output columns at once is a
-         fundamentals symptom. When such rows reach
-         SCATTERED_ROW_MAX_SHARE of ALL well-formed testcase rows, the
-         run is lazy REGARDLESS of pass rate. A rare scattered row in a
-         long suite passes (it usually shares the focused rows' root
-         cause); rows with no column info can never count as scattered.
-      2. STRUCTURAL — unbound columns; clock driven with no state element.
-      3. PASS-RATE BARS, checked LAST (no focus amnesty anymore):
-           > 10 rows:  lazy when failing > max_failing AND pass rate < 20%
-           6-10 rows:  lazy when pass rate < 60%
-           1-5  rows:  lazy when pass rate < 30%
-    ``row_mismatch_columns`` carries one set of mismatched output columns
-    per failing row (empty set = no column info for that row).
-
-    FROZEN-TRUNK EXCEPTION: when the failing rows are fully
-    explained by "every output is stuck at one constant value" — each
-    mismatched column shows the SAME found value on every failing row,
-    and every output column that never mismatches has a CONSTANT
-    expected value across the failing rows (so nothing provably moves)
-    — the cause sits upstream of all outputs at once (a dead output
-    stage, an unprogrammed decode ROM reading 0s). That is one
-    mechanism, not scatter, so the scattered flag and the pass-rate
-    bars stand aside and Mode A analyzes it. Convicted on s008's
-    control unit: the empty decode ROM freezes all outputs at 0 and
-    fails all 8 official rows, and the fix is ONE attribute; the bars
-    used to reject it into the suggestion branch. An output that
-    demonstrably CHANGES across failing rows (a working segment next
-    to a wrong SOP output) breaks the frozen story and keeps the
-    ratified rules: the focus requisite and the pass-rate bars still
-    get the last word. Structural flags (unbound columns, clock
-    without state) always apply. Requires ``row_mismatch_cells``.
-    """
     flags: list[dict] = []
     bars_on = len(circuit.components) > rate_gate_min_components
     bindings = match_variables_to_io(spec.headers, circuit)
@@ -439,7 +314,7 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
             ),
         })
     if not bars_on or frozen_trunk:
-        n_rows = 0    # bars off: small circuit or one frozen trunk
+        n_rows = 0
     else:
         n_rows = spec.well_formed_row_count()
     passing = max(0, n_rows - failing_count)
@@ -478,11 +353,6 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
             })
     return flags
 
-
-# ---------------------------------------------------------------------------
-# Per-row evidence
-# ---------------------------------------------------------------------------
-
 def _row_evidence(circuit, netlist, graph, spec, bindings, row, *,
                   sel_cols, manifest, sim=None, jar_cells=None,
                   notes=None) -> RowEvidence:
@@ -491,8 +361,6 @@ def _row_evidence(circuit, netlist, graph, spec, bindings, row, *,
                                   row.line_index)
     outputs, mismatches = _outputs_report(spec, bindings, row, sim)
     if jar_cells and not mismatches:
-        # Digital's verdict is authoritative; when the evaluator cannot
-        # reproduce the failure, keep the jar's expected-vs-found cells.
         mismatches = [dict(c) for c in jar_cells]
         if notes is not None:
             notes.append(
@@ -524,11 +392,6 @@ def _row_evidence(circuit, netlist, graph, spec, bindings, row, *,
         suspect_report=report,
     )
 
-
-# ---------------------------------------------------------------------------
-# Clustering
-# ---------------------------------------------------------------------------
-
 def _bucket_key(r: RowEvidence):
     return (
         frozenset(m.get("column", "?") for m in r.mismatches),
@@ -544,7 +407,7 @@ def _top_set(r: RowEvidence) -> set[int]:
 
 def _overlap(a: set[int], b: set[int]) -> float:
     if not a or not b:
-        return 1.0          # an empty suspect set cannot contradict anything
+        return 1.0
     union = a | b
     return len(a & b) / len(union)
 
@@ -559,16 +422,9 @@ def _signature_dict(r: RowEvidence) -> dict:
 
 def cluster_rows(rows: list[RowEvidence], *, cap: int = _MAX_CLUSTERS,
                  min_overlap: float = _MIN_OVERLAP):
-    """Group failing rows by signature; returns (clusters, notes).
-
-    Rows sharing (mismatch columns, selects, category) join the same
-    cluster when their top-suspect sets overlap enough — disjoint
-    suspects split them, since one sub-agent cannot chase two unrelated
-    causes. Past `cap` clusters, the smallest folds into its
-    best-overlapping neighbor so every failing row stays represented."""
     notes: list[str] = []
     clusters: list[Cluster] = []
-    meta: list[dict] = []                      # parallel: {"key", "tops"}
+    meta: list[dict] = []
     for r in sorted(rows, key=lambda x: x.row_index):
         key = _bucket_key(r)
         tops = _top_set(r)
@@ -603,21 +459,11 @@ def cluster_rows(rows: list[RowEvidence], *, cap: int = _MAX_CLUSTERS,
         c.merged = merge_reports([r.suspect_report for r in c.rows])
     return clusters, notes
 
-
-# ---------------------------------------------------------------------------
-# Payload (frozen §3 sub-agent INPUT)
-# ---------------------------------------------------------------------------
-
 def compact_circuit_facts(circuit, netlist=None, graph=None) -> dict:
     """The §3 `circuit` field: the same compact CircuitFacts view the L2
     explainer sends (inventory, io, subcircuits, selectors, ...)."""
     return _compact_facts(extract_facts(circuit, netlist, graph).to_dict())
 
-
-# Semantic (non-visual) attributes worth showing the sub-agent per
-# suspect. Data words are deliberately summarized, never listed: a ROM's
-# stored program may be tool-injected official content that must not
-# leave the backend.
 _SUSPECT_ATTR_KEYS = (
     "AddrBits", "Bits", "Inputs", "Selector Bits",
     "Input Splitting", "Output Splitting", "Value", "intFormat",
@@ -625,22 +471,11 @@ _SUSPECT_ATTR_KEYS = (
     "splitterSpreading", "isProgramCounter",
 )
 
-
 _DATA_ELEMENTS = ("ROM", "RAM", "EEPROM", "RAMDualPort", "LookUpTable")
 
 
 def _suspect_attrs(comp, *, hide_rom_words: bool = False,
                    comp_index: int | None = None) -> dict:
-    """The semantics-bearing attributes of one suspect component. This is
-    what let the sub-agent derive a decode table: without the splitter's
-    bit ranges and the ROM's shape, the r37 live run guessed the word
-    layout wrong on every try.
-
-    ``hide_rom_words`` (a rom-injected run): stored words came from the
-    official course program and must never transit where a reply could
-    echo them back to the student — only the shape ships. A student's
-    OWN small table stays visible (r38) so a partially-wrong word can be
-    convicted and corrected instead of guessed."""
     out: dict = {}
     for k in _SUSPECT_ATTR_KEYS:
         v = comp.attributes.get(k)
@@ -668,14 +503,6 @@ def _suspect_attrs(comp, *, hide_rom_words: bool = False,
 
 
 def _data_output_bit_map(circuit, netlist, data_idx: int) -> dict:
-    """{Out label: [stored-word bit positions]} for one storage element —
-    each data-output bit traced through splitters (tunnels merge inside
-    the netlist) to the named top-level Outs it reaches. r41: the live
-    s009 control unit names its ALUOp bus tunnel 'opcode', colliding
-    with the 'opcode' INPUT column; the model kept packing instruction
-    opcodes into the decode words. The bit map is pure structure the
-    tool can compute exactly, so the word layout stops being an
-    inference."""
     from dlc.facts.splitter import parse_splitting
 
     def net_of(comp_idx, pin_name):
@@ -690,7 +517,6 @@ def _data_output_bit_map(circuit, netlist, data_idx: int) -> dict:
         return {}
     bits = int(circuit.components[data_idx].attributes.get("Bits", 1) or 1)
     out: dict[str, list[int]] = {}
-    # (net, {position on this net -> stored-word bit})
     queue = [(start, {i: i for i in range(bits)})]
     seen: set[int] = set()
     while queue:
@@ -725,17 +551,6 @@ def _data_output_bit_map(circuit, netlist, data_idx: int) -> dict:
 
 def _address_input_drivers(circuit, netlist, addr_net_id,
                            storage_idx: int, rows) -> dict | None:
-    """r42: when a storage element's address is computed by a selector-
-    style component (priority encoder, multiplexer...), map each of THAT
-    component's input pins to the exact gate driving it plus the pin's
-    value on the failing rows.
-
-    Live conviction (cu 3-gate exam circuit): the model twice named the
-    right story — "the gate wired to encoder input 5 asserts on the
-    wrong rows" — and twice guessed the wrong component_index (59, then
-    a nonexistent 115) before finding the real one, burning the whole
-    refuted-ideas budget. Which gate feeds selector input k is pure
-    netlist fact; trace it instead of making the model guess."""
     net = next((n for n in netlist.nets if n.net_id == addr_net_id), None)
     if net is None:
         return None
@@ -776,17 +591,6 @@ def _address_input_drivers(circuit, netlist, addr_net_id,
 def suspect_wiring(circuit, netlist, indices: list[int],
                    rep_rows: list["RowEvidence"] | None = None,
                    hide_rom_words: bool = False) -> list[dict]:
-    """Pin-level connection truth for the suspect components — for every
-    suspect, each pin and the far ends of its net (the netlist already
-    merges across tunnels). This is what lets the sub-agent tell WHICH of
-    four identical Consts feeds the adder's c_i instead of guessing.
-
-    When representative rows are given, every pin also carries its ACTUAL
-    value on those rows (``values: {row_index: value}``) — the join
-    between wiring and net_values done FOR the model, so same-scored
-    suspects separate by behavior: the gate whose output contradicts what
-    its element kind computes from its inputs is the prime candidate
-    (the LED-lab lesson, same shape as the 4-Const lesson)."""
     out: list[dict] = []
     for idx in indices:
         if not (0 <= idx < len(circuit.components)):
@@ -858,25 +662,12 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
     }
     if circuit is not None and netlist is not None:
         indices = list(cluster.merged.suspect_indices())
-        # Data-bearing elements ALWAYS ride the wiring facts in a rom
-        # circuit: the r41 live miss (an empty localizer report on a
-        # conformed control unit) left the model with no component index
-        # at all, so it wrote the correct decode table at an And gate's
-        # index. With the ROM present its attrs carry the exact op shape
-        # and its own index.
         for i, comp in enumerate(circuit.components):
             if comp.element_name in _DATA_ELEMENTS and i not in indices:
                 indices.append(i)
         payload["suspect_wiring"] = suspect_wiring(
             circuit, netlist, indices,
             rep_rows=reps, hide_rom_words=hide_rom_words)
-        # r41: per-row ADDRESS readback for every storage element — the
-        # address its A pin resolved to on EACH failing row (all rows,
-        # not just representatives; every RowEvidence carries its own
-        # net values). This turns "which word does row N read" from a
-        # guess into data: the live s009 run derived addresses 6-7
-        # wrong because those rows' values were beyond the 2-rep cap —
-        # while shipping ALL rows' full net values drowned the model.
         for rec in payload["suspect_wiring"]:
             comp = circuit.components[rec["component_index"]]
             if comp.element_name not in _DATA_ELEMENTS:
@@ -893,10 +684,6 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
                     by_row[str(r.row_index)] = nv.get("value")
             if by_row:
                 rec["address_by_row"] = by_row
-            # r42: and WHO computes that address — the selector element
-            # plus, for each of its input pins, the exact gate driving
-            # it and the pin's value on the failing rows. The culprit
-            # index becomes a lookup, not a guess.
             aid = _address_input_drivers(
                 circuit, netlist, a_nets[0],
                 rec["component_index"], cluster.rows)
@@ -909,11 +696,6 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
                     label: (f"bit {bits[0]}" if len(bits) == 1
                             else f"bits {bits[0]}-{bits[-1]}")
                     for label, bits in bit_map.items()}
-            # r41: expected output values per failing row, machine-
-            # parsed from the testcase — the live s009 runs read the
-            # whitespace-aligned raw rows by eye and kept packing bits
-            # one column off. With this + address_by_row + the bit map,
-            # deriving a stored word is a pure table join.
             bindings = match_variables_to_io(spec.headers, circuit)
             hdr_idx = {h: i for i, h in enumerate(spec.headers)}
             spec_rows = {r.line_index: r for r in spec.rows
@@ -939,10 +721,6 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
     return payload
 
 
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
-
 def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                       manifest: dict | None = None,
                       failing_indices: list[int] | None = None,
@@ -953,19 +731,6 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                       max_failing: int = GROSS_MAX_FAILING,
                       lazy_exempt: bool = False,
                       hide_rom_words: bool = False) -> EvidenceResult:
-    """Steps 2-4 of the coordinator pipeline for one testcase.
-
-    ``failing_indices`` (row line_index values) is the jar's per-row
-    verdict and takes authority when given; ``jar_mismatches`` maps a
-    failing index to Digital's expected-vs-found cells for it. Without
-    ``failing_indices`` the evaluator sweeps every well-formed row
-    itself, so the whole pipeline runs with no Digital.jar.
-
-    ``lazy_exempt`` skips the gross-check lazy gate entirely (failing
-    rows go straight to analysis). Instructor ruling (r37.1, marked
-    temporary): control-unit files always analyze — the decode table is
-    the one lab where Mode A must engage no matter how gross the
-    failure shape looks."""
     res = EvidenceResult(spec_name=spec.name, headers=list(spec.headers))
     bindings = match_variables_to_io(spec.headers, circuit)
     rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
@@ -1056,20 +821,10 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
             ))
 
     if _frozen_trunk(spec, bindings, row_mismatch_cells) and evidence:
-        # One mechanism (the frozen-trunk premise) → ONE cluster: the
-        # sub-agent must repair EVERY failing row at once, so a partial
-        # decode table gets refuted-with-evidence instead of shipping as
-        # a per-row "verified" card (r37 live-run lesson: two confirmed
-        # cards each fixed one row of s008's ROM, none fixed the file).
         first = evidence[0]
         clusters = [Cluster(
             signature=_signature_dict(first),
             rows=list(evidence),
-            # r41: the merged localizer report must ride here exactly
-            # like cluster_rows() does — leaving the default empty
-            # SuspectReport stripped suspect_wiring from every
-            # frozen-trunk payload, and the model wrote a correct
-            # decode table at a GATE's index for lack of any index.
             merged=merge_reports([r.suspect_report for r in evidence]),
         )]
         res.notes.append(
@@ -1096,11 +851,9 @@ def assemble_evidence_for_file(dig_path, *, spec_name: str | None = None,
                                manifest: dict | None = None,
                                use_manifest: bool = True,
                                **kwargs) -> EvidenceResult:
-    """Parse + build + assemble for one file. ``spec_index`` counts every
-    Testcase element in document order, exactly like /api/simulate; a
-    ``spec_name`` match wins over the index. The manifest is looked up by
-    the file's own name and its subcircuit references unless one is
-    passed (or ``use_manifest=False``)."""
+    """
+    Parse + build + assemble for one file. 
+    """
     circuit = parse_dig_file(str(dig_path))
     netlist = build_netlist(circuit)
     graph = build_signal_graph(circuit, netlist)
