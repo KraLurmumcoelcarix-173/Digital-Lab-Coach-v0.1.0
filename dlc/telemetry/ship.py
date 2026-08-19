@@ -1,15 +1,3 @@
-"""Ship locally-spooled telemetry to the course proxy server.
-
-The local SQLite sink (sink.py) is the spool: events always land there
-first, so the tool works fully offline. When a proxy is configured
-(`proxy_url` in ~/.dlc/config.json, or DLC_PROXY_URL), ship_pending()
-sends everything past the high-water mark in batches; the mark advances
-only on a 2xx, so delivery is at-least-once and the proxy dedupes on
-(install_id, client_row_id). Shipping runs fire-and-forget from the app
-(startup + piggybacked on telemetry stores) and must never raise into
-the caller.
-"""
-
 from __future__ import annotations
 
 import json
@@ -44,9 +32,6 @@ def _conn() -> sqlite3.Connection:
 
 
 def ship_pending(timeout: float = 6.0) -> dict:
-    """Send unshipped local events to the proxy. Returns a small status
-    dict; never raises. No proxy configured -> {"shipped": 0,
-    "reason": "no_proxy"} and the spool simply keeps growing locally."""
     url, token = proxy_config()
     if not url:
         return {"shipped": 0, "reason": "no_proxy"}

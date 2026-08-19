@@ -61,16 +61,11 @@ _BARREL_SHIFTER_PINS = [
 
 
 _ROM_PINS = [
-    # Verified against Digital's SVG export: the ROM box is 60 wide,
-    # A at (0,0), sel at (0,40), D on the right edge at (60,20).
     PinSpec("A",   0,  0,  "in"),
     PinSpec("sel", 0,  40, "in"),
     PinSpec("D",   60, 20, "out"),
 ]
 
-# Digital's built-in Register File (memory category): dual async read
-# ports + one clocked write port. Fixed 6-in/2-out layout, width 80 —
-# measured against a real student CPU wiring every pin (r28).
 _REGISTER_FILE_PINS = [
     PinSpec("Din", offset_x=0,  offset_y=0,   direction="in"),
     PinSpec("we",  offset_x=0,  offset_y=20,  direction="in"),
@@ -83,10 +78,6 @@ _REGISTER_FILE_PINS = [
 ]
 
 _SEVEN_SEG_PINS = [
-    # SVG-verified on a real Lab-2 file (r34): the default Seven-Seg's
-    # pins sit ON the anchor row (a-d) and 140 below it (e,f,g,dp — one
-    # shared row, dp NOT lower). The old -40/180/240 offsets only ever
-    # worked because students park tunnels exactly one wire-length away.
     PinSpec("a",  offset_x=0,  offset_y=0, direction="in"),
     PinSpec("b",  offset_x=20, offset_y=0, direction="in"),
     PinSpec("c",  offset_x=40, offset_y=0, direction="in"),
@@ -117,12 +108,6 @@ STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
 _NARY_GATE_ELEMENTS = frozenset({"And", "Or", "XOr", "NAnd", "NOr", "XNOr"})
 
 def inverted_input_names(comp: Component) -> list[str]:
-    """Gate input pin names (in0, in1, …) that carry an inverter bubble.
-
-    Digital stores them 1-indexed in `inverterConfig` as In_1, In_2, …; we
-    return the 0-indexed pin names the rest of the pipeline uses. Empty for
-    non-gates or gates without the attribute.
-    """
     if comp.element_name not in _NARY_GATE_ELEMENTS:
         return []
     names: list[str] = []

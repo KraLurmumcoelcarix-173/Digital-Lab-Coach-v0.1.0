@@ -1,27 +1,5 @@
-"""Stable, anonymous machine identity for telemetry and limits.
-
-Requirements (instructor ruling, r46): interactions must separate
-machine-by-machine in the database; deleting the tool and re-downloading
-on the SAME machine must CONTINUE the same record (same limits, same
-history); every machine carries a clear first-issued date.
-
-Therefore the id is DERIVED from the operating system's stable machine
-identifier — not stored as a random token the student could delete:
-
-    Windows : HKLM\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid
-    macOS   : IOPlatformUUID (ioreg)
-    Linux   : /etc/machine-id
-
-The raw identifier never leaves the machine: what is reported is
-sha256("dlc-v1:" + raw)[:16] — anonymous, non-reversible, but identical
-on every reinstall. ~/.dlc/machine.json only CACHES the value plus the
-locally-issued date; deleting it changes nothing (the id recomputes to
-the same value; `issued` re-stamps, while the proxy keeps the
-authoritative first_seen).
-
-Fallback chain when no OS identifier is readable: a stable hash of
-(platform, node name, user name) — still reinstall-proof on the same
-account — and only as a last resort a random id persisted to the cache.
+"""
+Stable, anonymous machine identity for telemetry and limits.
 """
 
 from __future__ import annotations
@@ -104,12 +82,14 @@ def _digest(raw: str) -> str:
 
 
 def machine_identity() -> dict:
-    """-> {"install_id": <16 hex>, "issued": "YYYY-MM-DD",
+    """
+    -> {"install_id": <16 hex>, "issued": "YYYY-MM-DD",
            "source": "os"|"stable_fallback"|"random"}.
 
     The cache only shortcuts recomputation and remembers the locally
     issued date; a deleted cache regenerates the SAME install_id from
-    the OS identifier."""
+    the OS identifier.
+    """
     cache = _cache_path()
     cached: dict = {}
     try:

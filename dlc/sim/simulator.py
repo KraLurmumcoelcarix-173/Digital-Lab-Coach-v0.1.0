@@ -1,20 +1,5 @@
-"""Combinational value evaluator.
-
-Public entry point: `simulate(circuit, netlist, graph, inputs)` where `inputs`
-maps a top-level In label -> integer value. Returns a `SimResult` whose
-`net_values` maps net_id -> integer for every net the evaluator could resolve.
-
-Design notes
-------------
-* We work off the *netlist* pin objects (already named in0/sel/out/Y/… by the
-  pin-geometry pass), so a pin's semantic name is authoritative.
-* Evaluation is a worklist fixpoint, not a topo sort, so combinational loops
-  and register feedback terminate gracefully (they simply stay unresolved)
-  instead of raising.
-* A component is evaluated only when *all* of its wired input pins already have
-  a value. Pins that are not wired at all default inside each component's rule
-  (e.g. an adder's carry-in). Anything we cannot resolve is reported in
-  `unresolved_nets` so the UI can leave those wires blank instead of guessing.
+"""
+Combinational value evaluator.
 """
 
 from __future__ import annotations
@@ -28,14 +13,10 @@ from dlc.facts.net_width import infer_net_widths
 from dlc.facts.splitter import parse_splitting
 from dlc.parser.pin_geometry import inverted_input_names
 
-
-# Components whose exact behaviour we do not model yet. Their outputs stay
-# unresolved so the UI shows no value rather than a wrong one.
 _UNMODELED = frozenset({
     "Register", "Counter", "Memory",
     "RAMDualPort", "RAMSinglePort", "D_FF", "T_FF", "JK_FF", "FlipflopD",
 })
-
 
 @dataclass
 class SimResult:
@@ -44,11 +25,6 @@ class SimResult:
     unresolved_nets: set[int] = field(default_factory=set)
     output_values: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
-    # register *path* -> next Q (value latched on the coming clock edge), for the
-    # sequential replay in simulate_sequential(). A path is the tuple of
-    # component indices from the top circuit down to the register, so registers
-    # nested inside subcircuits (e.g. a register file) get distinct keys and
-    # their state survives across rows.
     reg_next: dict[tuple[int, ...], int] = field(default_factory=dict)
 
 
@@ -63,16 +39,7 @@ def _as_int(v, default: int = 0) -> int:
         return default
 
 
-# ---------------------------------------------------------------------------
-# Row -> input assignment
-# ---------------------------------------------------------------------------
-
 def inputs_for_row(circuit: Circuit, headers: list[str], row) -> dict[str, int]:
-    """Map a parsed TestRow to {In label -> value} using the header columns.
-
-    Only integer-valued input (and clock) columns are used; clock/don't-care
-    tokens are skipped. Values are masked to the port's bit width.
-    """
     from dlc.testing.spec import match_variables_to_io
 
     bindings = match_variables_to_io(headers, circuit)
@@ -93,26 +60,21 @@ def inputs_for_row(circuit: Circuit, headers: list[str], row) -> dict[str, int]:
     return assignment
 
 
-# ---------------------------------------------------------------------------
-# Per-component combinational rules
-# ---------------------------------------------------------------------------
-
 def _gate_bits(comp) -> int:
     return max(1, _as_int(comp.attributes.get("Bits", 1), 1))
 
 
 def _eval_gate(comp, in_vals: dict[str, int]) -> dict[str, int] | None:
-    """And/Or/XOr/NAnd/NOr/XNOr with N inputs, multi-bit, inverter bubbles."""
     bits = _gate_bits(comp)
     mask = _mask(bits)
     n = _as_int(comp.attributes.get("Inputs", 2), 2)
-    inverted = set(inverted_input_names(comp))  # {"in0", ...}
+    inverted = set(inverted_input_names(comp))
 
     operands: list[int] = []
     for i in range(n):
         name = f"in{i}"
         if name not in in_vals:
-            return None  # a wired input is still unresolved
+            return None
         v = in_vals[name] & mask
         if name in inverted:
             v = (~v) & mask
@@ -146,8 +108,6 @@ def _eval_not(comp, in_vals):
 
 
 def _eval_const(comp, _in_vals):
-    # Digital's Const defaults to 1 when the Value attribute is omitted
-    # (matches dlc.facts.extractor); an explicit 0 is stored as Value=0.
     bits = _gate_bits(comp)
     return {"out": _as_int(comp.attributes.get("Value", 1), 1) & _mask(bits)}
 
@@ -181,8 +141,6 @@ def _eval_decoder(comp, in_vals):
 
 
 def _eval_demux(comp, in_vals):
-    # routes `in` to the selected output; Digital drives every
-    # non-selected output to 0 (not Z)
     sel_bits = _as_int(comp.attributes.get("Selector Bits", 1), 1)
     n_out = 2 ** sel_bits
     if "sel" not in in_vals or "in" not in in_vals:
@@ -200,11 +158,6 @@ def _eval_priority_encoder(comp, in_vals):
         name = f"in_{i}"
         if name in in_vals and in_vals[name]:
             highest = i
-    # `num` is defined only when at least one input is set; Digital pairs
-    # it with the 1-bit `f` ("any input set") flag. Omitting `f` starved
-    # every ROM whose chip-select hangs off it — the r37 s008 control
-    # unit — leaving the whole output stage undefined while the jar ran
-    # it fine.
     return {"num": highest if highest is not None else 0,
             "f": 0 if highest is None else 1}
 
@@ -217,7 +170,6 @@ def _eval_splitter(comp, in_vals):
         out_groups = parse_splitting(out_split)
     except ValueError:
         return None
-    # Merge every wired input group into a single bus by absolute bit position.
     bus = 0
     for i, grp in enumerate(in_groups):
         name = f"in{i}"
@@ -225,7 +177,6 @@ def _eval_splitter(comp, in_vals):
             return None
         v = in_vals[name] & _mask(grp.width)
         bus |= v << grp.bit_lo
-    # Slice the bus into the output groups.
     out: dict[str, int] = {}
     for i, grp in enumerate(out_groups):
         out[f"out{i}"] = (bus >> grp.bit_lo) & _mask(grp.width)
@@ -238,8 +189,6 @@ def _eval_add(comp, in_vals):
     a = in_vals.get("a", 0) & mask
     b = in_vals.get("b", 0) & mask
     c_i = in_vals.get("c_i", 0) & 1
-    # Both operands must be present if they are wired; the driver loop only
-    # calls us once every *wired* input is known, so absent means unconnected.
     total = a + b + c_i
     return {"s": total & mask, "c_o": (total >> bits) & 1}
 
@@ -255,10 +204,8 @@ def _eval_comparator(comp, in_vals):
     }
 
 def _rom_words(comp) -> list[int]:
-    """Parse a ROM's Data field into the word stored at each address.
-
-    Digital keeps Data as a comma/space/newline-separated token string;
-    `intFormat` (default hex) selects the base. Matches dlc.facts.extractor.
+    """
+    Parse a ROM's Data field into the word stored at each address.
     """
     raw = comp.attributes.get("Data", "")
     if not isinstance(raw, str):
@@ -272,15 +219,12 @@ def _rom_words(comp) -> list[int]:
             return int(t, base)
         except ValueError:
             try:
-                return int(t, 16)          # last-ditch: treat as hex
+                return int(t, 16)
             except ValueError:
                 return 0
 
     words: list[int] = []
     for t in tokens:
-        # Digital's run-length syntax: "7*1f" stores 1f at 7 consecutive
-        # addresses — mis-reading it as one token shifts every later word
-        # (seen live in a real student ROM, r28).
         if "*" in t:
             cnt_s, _, val_s = t.partition("*")
             try:
@@ -294,11 +238,9 @@ def _rom_words(comp) -> list[int]:
 
 
 def _eval_rom(comp, in_vals):
-    """ROM read: D = Data[A]. `sel` (chip-select), when wired low, disables the
-    output (0). Out-of-range addresses read 0."""
     if "A" not in in_vals:
         return None
-    if in_vals.get("sel", 1) == 0:      # present-and-low -> output disabled
+    if in_vals.get("sel", 1) == 0:
         return {"D": 0}
     words = _rom_words(comp)
     addr = in_vals["A"]
@@ -306,8 +248,6 @@ def _eval_rom(comp, in_vals):
     return {"D": val & _mask(_gate_bits(comp))}
 
 def _eval_barrel_shifter(comp, in_vals):
-    """Shift `in` by `sh`. `direction` = left (default) / right;
-    `barrelShifterMode` = logical (default) / arithmetic / rotate."""
     if "in" not in in_vals or "sh" not in in_vals:
         return None
     bits = _gate_bits(comp)
@@ -324,7 +264,7 @@ def _eval_barrel_shifter(comp, in_vals):
             out = ((x << s) | (x >> (bits - s))) & mask
     elif direction == "right":
         if mode == "arithmetic":
-            sx = x - (1 << bits) if (x >> (bits - 1)) & 1 else x   # to signed
+            sx = x - (1 << bits) if (x >> (bits - 1)) & 1 else x
             out = (sx >> min(sh, bits)) & mask
         else:
             out = (x >> sh) & mask if sh < bits else 0
@@ -334,14 +274,12 @@ def _eval_barrel_shifter(comp, in_vals):
 
 
 def _eval_bitextender(comp, in_vals):
-    """Sign-extend `in` (inputBits) to `out` (outputBits) — Digital replicates
-    the input's MSB across the added width."""
     if "in" not in in_vals:
         return None
     in_bits = max(1, _as_int(comp.attributes.get("inputBits", 1), 1))
     out_bits = max(in_bits, _as_int(comp.attributes.get("outputBits", in_bits), in_bits))
     x = in_vals["in"] & _mask(in_bits)
-    if (x >> (in_bits - 1)) & 1:                # sign bit set -> extend ones
+    if (x >> (in_bits - 1)) & 1:  # sign bit set -> extend ones
         x |= (~_mask(in_bits)) & _mask(out_bits)
     return {"out": x & _mask(out_bits)}
 
@@ -364,10 +302,6 @@ _RULES = {
     "BitExtender": _eval_bitextender,
 }
 
-
-# ---------------------------------------------------------------------------
-# Core fixpoint
-# ---------------------------------------------------------------------------
 
 def _build_child_by_index(circuit: Circuit) -> dict[int, Circuit]:
     out: dict[int, Circuit] = {}
@@ -395,22 +329,6 @@ def simulate(
     _depth: int = 0,
     _max_depth: int = 16,
 ) -> SimResult:
-    """Evaluate `circuit` combinationally for one input assignment.
-
-    `state_store` maps a register *path* (top-to-register component indices) to
-    its current Q, seeding sequential elements at every nesting level so a single
-    combinational pass sees stored values even for registers buried inside
-    subcircuits (a register file). `path` is this circuit's own prefix within
-    that store. The caller (`simulate_sequential`) advances the store across
-    clock edges. `state` is the legacy top-level-only form ({comp_index -> Q});
-    it is folded into `state_store` for backward compatibility.
-
-    `capture_path` (a full path of component indices from the top circuit down
-    to a subcircuit instance) requests the internal `SimResult` of that nested
-    subcircuit as evaluated for this same row; when reached it is stored in
-    `capture_box["result"]`. This powers the drill-in view, which colors a
-    subcircuit's own wires for the master circuit's selected row.
-    """
     result = SimResult()
     if state_store is None:
         state_store = {}
@@ -423,18 +341,14 @@ def simulate(
         return state_store.get(path + (idx,), 0)
 
     def regfile_state(idx: int) -> dict:
-        # a RegisterFile's state is a whole {address: word} mapping under
-        # one path key (never mutated in place — reg_next carries a copy)
         v = state_store.get(path + (idx,))
         return v if isinstance(v, dict) else {}
 
-    # Bit width per net — single source of truth, matches the edge widths.
     per_net, _conflicts = infer_net_widths(circuit, netlist)
     for nid, info in per_net.items():
         if info.width is not None:
             result.net_bits[nid] = info.width
 
-    # (component_index, pin_name) -> net_id, and per-component wired pins.
     comp_pins: dict[int, list[tuple[str, str, int]]] = defaultdict(list)
     for net in netlist.nets:
         for p in net.pins:
@@ -457,7 +371,6 @@ def simulate(
                 return nid
         return None
 
-    # Seed sources: top-level inputs + constants + register Q (from state).
     for idx, comp in enumerate(circuit.components):
         pins = comp_pins.get(idx, [])
         if comp.is_input():
@@ -477,10 +390,8 @@ def simulate(
             if q_net is not None:
                 set_net(q_net, reg_state(idx))
 
-    # Worklist fixpoint. A hard iteration cap (component count + slack) bounds
-    # runtime and guarantees termination on cyclic / stateful topologies.
     max_iters = len(circuit.components) + 4
-    sub_cache: dict[int, tuple] = {}   # subcircuit idx -> (input-sig, outs)
+    sub_cache: dict[int, tuple] = {}
     for _ in range(max_iters):
         changed = False
         for idx, comp in enumerate(circuit.components):
@@ -488,15 +399,9 @@ def simulate(
             if not pins:
                 continue
             out_nets = [nid for name, d, nid in pins if d == "out"]
-            # Plain components are done once their outputs are set. Subcircuits
-            # keep re-evaluating even then: a register file's ReadData resolves
-            # early (from read address), but its internal registers' next-state
-            # depends on write-side inputs that arrive later, and that reg_next
-            # must reach the final value before the clock edge latches it. The
-            # sub_cache keeps this cheap when the resolved inputs are unchanged.
             if (out_nets and all(nid in net_values for nid in out_nets)
                     and not comp.element_name.endswith(".dig")):
-                continue  # already fully resolved
+                continue
 
             in_vals: dict[str, int] = {}
             unresolved_input = False
@@ -506,15 +411,8 @@ def simulate(
                         in_vals[name] = net_values[nid]
                     else:
                         unresolved_input = True
-            # A subcircuit may resolve some outputs from a subset of its inputs
-            # (e.g. a register file's ReadData doesn't depend on WriteData), so
-            # evaluate it with whatever inputs are ready — the outer fixpoint
-            # re-runs it as more resolve. Plain gates still need every input.
             is_subcircuit = comp.element_name.endswith(".dig")
             is_regfile = comp.element_name == "RegisterFile"
-            # A RegisterFile resolves each read port from its own address
-            # alone (Da needs only Ra), like a subcircuit — evaluate with
-            # whatever inputs are ready and let the fixpoint refine.
             if unresolved_input and not is_subcircuit and not is_regfile:
                 continue
 
@@ -534,13 +432,8 @@ def simulate(
                 continue
 
             if is_subcircuit:
-                # Skip the (expensive) recursion when this subcircuit's resolved
-                # inputs haven't changed since we last evaluated it.
                 sig = frozenset(in_vals.items())
                 cached = sub_cache.get(idx)
-                # When this subcircuit (or one it contains) is the drill-in
-                # target, always re-evaluate so the captured internal result
-                # reflects the fully-resolved inputs; otherwise use the cache.
                 child_path = path + (idx,)
                 on_capture_route = (
                     capture_path is not None
@@ -553,8 +446,6 @@ def simulate(
                         comp, idx, in_vals, child_by_index, _depth, _max_depth,
                         state_store, path, capture_path, capture_box)
                     sub_cache[idx] = (sig, outs, child_rn)
-                # Bubble the subcircuit's (path-keyed) register next-states up so
-                # simulate_sequential can latch them on the shared clock edge.
                 if child_rn:
                     result.reg_next.update(child_rn)
             else:
@@ -570,12 +461,9 @@ def simulate(
                         changed = True
         if not changed:
             break
-    # Compute each register's next-Q (its resolved D input, gated by `en`).
     has_register = False
     for idx, comp in enumerate(circuit.components):
         if comp.element_name == "RegisterFile":
-            # next state = current words + one write when `we` holds
-            # (unresolved `we` follows the Register precedent: enabled)
             has_register = True
             cur = regfile_state(idx)
             din_net = pin_net(idx, "Din")
@@ -608,7 +496,6 @@ def simulate(
             result.reg_next[path + (idx,)] = (
                 net_values[d_net] if enabled else reg_state(idx))
 
-    # Collect top-level output values + record unresolved signal-carrying nets.
     for idx, comp in enumerate(circuit.components):
         if comp.is_output():
             for name, direction, nid in comp_pins.get(idx, []):
@@ -639,19 +526,6 @@ def simulate_sequential(
     capture_path: tuple[int, ...] | None = None,
     capture_box: dict | None = None,
 ) -> SimResult:
-    """Evaluate a clocked circuit *as of* one test row.
-
-    Replays the testcase from a zeroed register state up to and including
-    `row_index`, latching all registers on every row that carries a clock
-    pulse (a `C` token in a clock column — the common single-clock-domain lab
-    case). The returned SimResult is the settled, post-edge view for that row,
-    so its net values match what Digital displays when you step there.
-
-    
-    `capture_path`/`capture_box` request a nested subcircuit's internal
-    SimResult for `row_index` (see `simulate`), captured on that row's final
-    settled pass so it reflects the same state the top-level view shows.
-    """
     rows = [r for r in spec.rows if not r.is_malformed]
     target = None
     for r in rows:
@@ -661,16 +535,12 @@ def simulate_sequential(
     if target is None:
         return SimResult()
 
-    # Path-keyed register state (see SimResult.reg_next); covers registers
-    # nested inside subcircuits so a register file's contents persist row to row.
     reg_state: dict[tuple[int, ...], int] = {}
 
     def apply_row(row, cap_path=None, cap_box=None) -> SimResult:
         nonlocal reg_state
         inp = inputs_for_row(circuit, spec.headers, row)
         clocked = _row_has_clock_edge(circuit, spec.headers, row)
-        # Capture only on the final (settled) pass so the drill-in view matches
-        # the post-edge state the top-level graph shows for this row.
         res = simulate(circuit, netlist, graph, inp, state_store=dict(reg_state),
                        capture_path=None if clocked else cap_path,
                        capture_box=None if clocked else cap_box)
@@ -678,7 +548,6 @@ def simulate_sequential(
             new_state = dict(reg_state)
             new_state.update(res.reg_next)
             reg_state = new_state
-            # Re-settle so downstream-of-register nets show the post-edge value.
             res = simulate(circuit, netlist, graph, inp,
                            state_store=dict(reg_state),
                            capture_path=cap_path, capture_box=cap_box)
@@ -710,11 +579,6 @@ def _row_has_clock_edge(circuit, headers, row) -> bool:
     return False
 
 def _eval_node(comp, idx, in_vals, child_by_index, depth, max_depth):
-    """Return output-pin values for a plain (non-subcircuit) component, or None.
-
-    Subcircuits are handled inline by `simulate()` so their nested register
-    next-states can bubble up; this only dispatches the per-component rules.
-    """
     rule = _RULES.get(comp.element_name)
     if rule is not None:
         return rule(comp, in_vals)
@@ -723,30 +587,13 @@ def _eval_node(comp, idx, in_vals, child_by_index, depth, max_depth):
 
 def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
                      state_store, path, capture_path=None, capture_box=None):
-    """Recurse into a resolved subcircuit.
-
-    Parent input pins are named for the child's In labels (see
-    netlist._subcircuit_pin_specs), so we can feed them straight in and read
-    the child's Out labels back out onto the parent's output pins.
-
-    
-    Returns ``(output_values | None, reg_next)`` where ``reg_next`` is the
-    child's path-keyed register next-states (already prefixed with this
-    subcircuit's path) so the caller can latch them on the shared clock edge.
-    When `capture_path` points at (or through) this instance, the child's full
-    `SimResult` for the matching path is stored in `capture_box["result"]`.
-    """
     child = child_by_index.get(idx)
     if child is None or depth >= max_depth:
         return None, {}
     child_path = path + (idx,)
-    # Only carry the capture request down the branch that leads to the target.
     want = (capture_path is not None
             and capture_path[:len(child_path)] == child_path)
     try:
-        # Memoize the child's netlist/graph on the circuit object: it never
-        # changes, and rebuilding a 200+ component subcircuit on every fixpoint
-        # iteration is what makes a full CPU intractable.
         child_nl = getattr(child, "_sim_nl", None)
         if child_nl is None:
             from dlc.parser.graph import build_signal_graph
@@ -764,6 +611,6 @@ def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
     except Exception:
         return None, {}
     if want and capture_box is not None and child_path == capture_path:
-        capture_box["result"] = sub          # settled internal view for drill-in
+        capture_box["result"] = sub
     outs = dict(sub.output_values) if sub.output_values else None
     return outs, dict(sub.reg_next)
