@@ -1,11 +1,3 @@
-"""
-F4 : TestSpec extractor.
-
-Given a parsed Circuit, walk its Testcase elements, parse the
-`<dataString>` text into a structured `TestSpec` per testcase, and
-match each header column to a top-level circuit port.
-"""
-
 from dataclasses import dataclass, field
 
 from dlc.parser.models import Circuit
@@ -42,8 +34,8 @@ class TestSpec:
     """One Testcase from a circuit, parsed into rows."""
     __test__ = False
 
-    name: str                       
-    component_index: int          
+    name: str
+    component_index: int
     headers: list[str]
     rows: list[TestRow]
     raw_data_string: str
@@ -70,7 +62,7 @@ def _tokenize(raw: str) -> Token:
     if s in ("x", "X"):
         return Token(raw=s, kind="dontcare", value=None)
 
-    # Parenthesized: 
+    # Parenthesized:
     if s.startswith("(") and s.endswith(")") and len(s) >= 3:
         inner = s[1:-1].strip()
         try:
@@ -92,7 +84,7 @@ def _tokenize(raw: str) -> Token:
         except ValueError:
             return Token(raw=s, kind="unknown", value=None)
 
-    # Plain decimal 
+    # Plain decimal
     try:
         return Token(raw=s, kind="int", value=int(s))
     except ValueError:

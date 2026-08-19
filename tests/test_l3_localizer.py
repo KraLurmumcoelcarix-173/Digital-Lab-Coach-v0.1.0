@@ -1,12 +1,3 @@
-"""L3 fault localizer (dlc/l3/localizer.py).
-
-Ground truth comes from the seeded 30-bug benchmark:
-  * bug3_wrong_cin      — Add.c_i tied to a Const whose omitted Value
-                          defaults to 1 (carry-in stuck high).
-  * bug1_meaningless_mux_in3 — the result mux's in3 tied to Ground
-                          instead of the boolean unit's output.
-"""
-
 import pytest
 
 from dlc.parser.dig_parser import parse_dig_file
@@ -63,11 +54,6 @@ def _row_evidence(path, *, want_fail=True, col_equals=None):
         return c, nl, g, sim, report, row
     raise AssertionError(f"no matching row in {path}")
 
-
-# ---------------------------------------------------------------------------
-# bug3: wrong carry-in (pipelined adder)
-# ---------------------------------------------------------------------------
-
 def test_bug3_suspects_include_adder_and_carry_const():
     c, nl, g, sim, outputs, _row = _row_evidence(_BUG3)
     rep = localize(c, nl, g, sim, outputs)
@@ -92,16 +78,11 @@ def test_bug3_suspects_are_ranked_and_reasoned():
     assert all(s.reasons for s in rep.suspects)
 
 
-# ---------------------------------------------------------------------------
-# bug1: meaningless mux input (dynamic slicing showcase)
-# ---------------------------------------------------------------------------
-
 def test_bug1_active_cone_pins_the_mux_and_its_ground():
-    # Op=3 selects the mux's in3, which the seeded bug ties to Ground.
     c, nl, g, sim, outputs, _row = _row_evidence(_BUG1, col_equals=("Op", 3))
     rep = localize(c, nl, g, sim, outputs)
     idxs = rep.suspect_indices()
-    assert 14 in idxs and 23 in idxs           # Multiplexer + Ground
+    assert 14 in idxs and 23 in idxs
     top3 = idxs[:3]
     assert 14 in top3 and 23 in top3, (
         f"dynamic slicing should rank the mux and its ground input on top; "
@@ -110,12 +91,10 @@ def test_bug1_active_cone_pins_the_mux_and_its_ground():
 
 
 def test_bug1_inactive_branch_is_downranked_not_active():
-    # bool_unit feeds in2 — NOT selected when Op=3 — so it may appear as a
-    # static (upstream) suspect but must not be on any ACTIVE cone.
     c, nl, g, sim, outputs, _row = _row_evidence(_BUG1, col_equals=("Op", 3))
     rep = localize(c, nl, g, sim, outputs, max_suspects=50)
     by_idx = {s.component_index: s for s in rep.suspects}
-    if 9 in by_idx:                             # the bool_unit instance
+    if 9 in by_idx:
         assert by_idx[9].in_active_cones == []
         assert by_idx[9].score < by_idx[14].score
 
@@ -167,7 +146,6 @@ def test_merge_reports_rewards_cluster_wide_suspects():
 def test_clean_row_produces_no_suspects():
     c, nl, g, sim, outputs, _row = _row_evidence(_BUG1, want_fail=False,
                                                  col_equals=("Op", 0))
-    # force the all-pass shape regardless of which row matched
     outputs = [{**o, "ok": True} for o in outputs]
     rep = localize(c, nl, g, sim, outputs)
     assert rep.suspects == []

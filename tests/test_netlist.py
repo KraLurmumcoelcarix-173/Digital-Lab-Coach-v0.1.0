@@ -108,9 +108,6 @@ def test_tunnel_unifies_nets_across_gap():
     net1_nets = [n for n in nl.nets if "net1" in n.tunnel_names]
     assert len(net1_nets) == 1
 
-
-# Tier-1 bug: each bug surfaces a distinct signature
-
 def test_bug_dangling_input_flags_one_undriven_singleton():
     """
     dangling_input.dig: AND.in1 has no wire. Expect exactly one net
@@ -162,9 +159,6 @@ def test_bug_width_mismatch_netlist_is_structurally_clean():
     assert n_undriven == 0
     assert n_multi == 0
 
-
-# Tier-2: subcircuit instance pin direction resolution 
-
 def test_subcircuit_pins_get_child_io_labels():
     """
     uses_subcircuit instance pins should be named after the child's
@@ -208,19 +202,10 @@ def test_subcircuit_one_implicit_pin_per_net():
     assert len(nets_with_sub) == len(sub_pins)
 
 
-# Subcircuit implicit-pin cap 
-
 TIER3_DIR = Path(__file__).parent.parent / "data" / "sample_circuits" / "tier3_realistic"
 
 
 def test_subcircuit_implicit_pin_count_capped_to_child_ports():
-    """
-    With IMPLICIT_PIN_RADIUS=500, a wide search can pull in unrelated
-    wire endpoints far from the instance anchor (observed in
-    tier3_calculator: bool_unit grabbed 6 pins for a 4-port child).
-    The cap drops the farthest extras so the count matches the child's
-    port count exactly.
-    """
     c = parse_dig_file(str(TIER3_DIR / "tier3_calculator.dig"))
     nl = build_netlist(c)
     bu_idx = next(i for i, comp in enumerate(c.components)
@@ -261,18 +246,7 @@ def test_tier3_bool_unit_fully_clean():
     assert sum(1 for n in nl.nets if len(n.drivers()) > 1) == 0
 
 
-# Shared-endpoint behavior (multi-pin same coord)
-
 def test_two_pins_at_same_coord_share_net():
-    """
-    If two predicted pins land at the exact same coord (Decoder.sel
-    and Multiplexer.in0 in register-file.dig do this), both must end
-    up in the same net rather than one stealing the endpoint.
-
-    Synthetic: an In at (0, 0) and a Register at (0, 0) both predict a
-    pin at (0, 0). A short wire from (0, 0) to (60, 20) puts a real
-    endpoint at (0, 0) so the snap algorithm sees it.
-    """
     from dlc.parser.models import Circuit, Component, Position, Wire
     c = Circuit(
         format_version=2,
@@ -293,8 +267,6 @@ def test_two_pins_at_same_coord_share_net():
     pin_names = {(p.element_name, p.pin_name) for p in net_at_origin.pins}
     assert ("In", "out") in pin_names
     assert ("Register", "D") in pin_names
-
-# Output pin co-located with a Tunnel (no wire between them).
 
 def test_output_pin_at_tunnel_coord_joins_tunnel_net():
     from dlc.parser.models import Circuit, Component, Position, Wire
@@ -328,8 +300,6 @@ def test_output_pin_at_tunnel_coord_joins_tunnel_net():
         "(Clock) after the fix"
     )
 
-
-    # OUT pin tolerance fallback to nearby tunnel coords.
 
 def test_out_pin_attaches_to_offgrid_tunnel_within_tolerance():
     from dlc.parser.models import Circuit, Component, Position, Wire

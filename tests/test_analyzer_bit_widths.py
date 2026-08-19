@@ -50,9 +50,9 @@ def test_barrel_shifter_sh_oversize_source_is_not_flagged():
         attributes={"Bits": 2}, label=None,
     )
     wires = [
-        Wire(p1=Position(0, 0), p2=Position(100, 0)),       
-        Wire(p1=Position(0, 0), p2=Position(0, 40)),        
-        Wire(p1=Position(0, 40), p2=Position(100, 40)),      
+        Wire(p1=Position(0, 0), p2=Position(100, 0)),
+        Wire(p1=Position(0, 0), p2=Position(0, 40)),
+        Wire(p1=Position(0, 40), p2=Position(100, 40)),
     ]
     c = Circuit(components=[in_c, bs], wires=wires)
     issues = check_bit_widths(c)

@@ -63,25 +63,20 @@ STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Digital Lab Coach", version="0.3.1")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Layer-3 endpoints live in their own router module (dlc/web/l3_routes.py) so
-# L3 work never has to edit this file again. The import sits here, after
-# `app` exists; the router reaches session helpers through this module at
-# request time, so the circular import is harmless.
-from dlc.web import l3_routes                                    
+from dlc.web import l3_routes
 app.include_router(l3_routes.router)
 
 _SESSIONS: dict[str, dict] = {}
 
-# Idle sessions (and their uploaded temp dirs) are garbage-collected on the
-# next upload; finished/stale jobs likewise. Long TTLs on purpose — a student
-# leaving the tab open through a lab session must never lose their circuit.
 SESSION_TTL_SECONDS = float(os.environ.get("DLC_SESSION_TTL", 12 * 3600))
 JOB_TTL_SECONDS = float(os.environ.get("DLC_JOB_TTL", 24 * 3600))
 
 
 def _gc_sessions(now: float | None = None) -> int:
-    """Drop sessions idle for longer than SESSION_TTL_SECONDS and remove
-    their upload temp dirs. Returns how many sessions were collected."""
+    """
+    Drop sessions idle for longer than SESSION_TTL_SECONDS and remove
+    their upload temp dirs. Returns how many sessions were collected.
+    """
     now = time.time() if now is None else now
     dead = [
         sid for sid, s in _SESSIONS.items()
@@ -116,7 +111,7 @@ class TestsRequest(BaseModel):
     session_id: str
     filename: str
     timeout: float = 30.0
-    mode: str = "per_row"   
+    mode: str = "per_row"
 
 class TestsAllRequest(BaseModel):
     session_id: str
@@ -133,8 +128,6 @@ class SubcircuitRequest(BaseModel):
     filename: str
     spec_index: int = 0
     row_index: int = 0
-    # component indices from the top circuit down to the subcircuit instance to
-    # drill into (e.g. [14] for a top-level register file, [11, 7] one deeper).
     path: list[int] = []
 
 
@@ -228,8 +221,6 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
             status_code=400, detail="Please upload at least one .dig file."
         )
     
-    # Housekeeping rides on uploads: cheap, and guarantees a fresh session
-    # never competes with long-dead ones for memory/disk.
     _gc_sessions()
     _gc_jobs()
 
@@ -247,17 +238,11 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
             nl = build_netlist(c)
             g = build_signal_graph(c, nl)
             try:
-                # Deep: nested subcircuit (and sub-subcircuit) L1 bugs
-                # must alarm too, with their breadcrumb scope.
                 issues_payload = check_all_l1_deep(c).to_dict()["issues"]
                 issues_error = None
             except Exception as exc:
                 issues_payload = []
                 issues_error = f"{type(exc).__name__}: {exc}"
-            # Purple advisory: pins the EFFECTIVE tests (own rows, or
-            # the official rows injection would run) never touch —
-            # redundant pin or incomplete test, student decides.
-            # Advisory only: any hiccup must never break an upload.
             try:
                 from dlc.analyzer.test_io_coverage import (
                     check_test_io_coverage)
@@ -276,10 +261,6 @@ async def circuit(files: list[UploadFile] = File(...)) -> dict:
                     for i in check_test_io_coverage(c, specs))
             except Exception:
                 pass
-            # on labs where the grader loads the course program
-            # into an EMPTY program ROM, the empty_rom warning must say
-            # so — students saw green tests + a generic warning and
-            # missed that their own file still ships no program.
             try:
                 from dlc.l3.official_store import get_runtime_payload
                 if get_runtime_payload(name, "rom"):
@@ -324,7 +305,7 @@ def _resolve_target(session_id: str, filename: str) -> dict:
     session = _SESSIONS.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    session["last_used"] = time.time()   # any activity defers the GC TTL
+    session["last_used"] = time.time()
     target = next(
         (f for f in session["files"] if f["name"] == filename), None
     )
@@ -335,26 +316,15 @@ def _resolve_target(session_id: str, filename: str) -> dict:
     return target
 
 
-_MUTE_THRESHOLD = 3  # matches the dashboard's "mute when tests pass" bar
+_MUTE_THRESHOLD = 3
 
 
 def _l1_error_block(circuit, target: dict | None = None) -> str | None:
-    """Tests are refused while Layer 1 structural ERRORS (at any
-    nesting depth) are unresolved — results from a structurally broken
-    circuit are unreliable. Warnings don't block: the
-    "mute when tests pass" flow depends on warnings staying testable.
-
-    Mute contract (r36): when a file's LAST run fully passed (either
-    mode — the session remembers it on the target dict) and its issue
-    count is within the mute threshold, the gate stands down entirely.
-    A run that proved "tests pass" must always be repeatable, per-row
-    or general; a muted note can never dead-end the Run button.
-    """
     try:
         issues = check_all_l1_deep(circuit)
         n_err = len(issues.errors())
     except Exception:
-        return None  # never let the gate itself break testing
+        return None
     if n_err == 0:
         return None
     if (target is not None
@@ -370,11 +340,13 @@ def _l1_error_block(circuit, target: dict | None = None) -> str | None:
 
 
 def _prepare_injection(target: dict):
-    """Gradescope-style injection for one run (see dlc/testing/inject.py):
+    """
+    Gradescope-style injection for one run (see dlc/testing/inject.py):
     returns (run_path, run_circuit_or_None, notes, temp_path). The caller
     runs the jar on run_path and MUST call cleanup_injected(temp_path)
     when done. run_circuit is the reparsed injected circuit (None when
-    nothing was injected — keep using the original)."""
+    nothing was injected — keep using the original).
+    """
     from dlc.testing.inject import prepare_injected_run, cleanup_injected
     name = target.get("name") or os.path.basename(target["path"])
     temp_path, notes = prepare_injected_run(target["path"], name)
@@ -404,8 +376,6 @@ def _run_general(target: dict, timeout: float) -> dict:
                 "ok": True, "warning": None, "mode": "general",
                 "specs": [], "all_passed": None, "injected": inj_notes,
             }
-        # Gate on the student's REAL file: the L1 board describes it, and
-        # injection never changes the structural story (data/tests only).
         blocked = _l1_error_block(circuit, target)
         if blocked:
             return {
@@ -543,10 +513,6 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
             "mismatches": row_result.mismatches,
         }
 
-    # Fast path first: ONE Digital call covers every testcase in the
-    # file (see dlc/testing/runner.py). Specs whose 1:1 row mapping
-    # can't be trusted come back in `fallback` and stream through the
-    # cumulative runner below.
     try:
         fast_results, fallback = per_file_run_fast(
             specs, run_path, jar_path=jar_path,
@@ -614,12 +580,6 @@ def _run_per_row_job(job_id: str, target: dict, timeout: float) -> None:
 
 @app.post("/api/tests/all")
 def tests_all(req: TestsAllRequest) -> dict:
-    """Quick pass/fail across EVERY uploaded file: one fast
-    `CLI test -verbose` call per file, no cumulative re-running.
-
-    Per-file payload doubles as a mode="general" tests result so the
-    frontend can fill each file's Tests panel from one click.
-    """
     session = _SESSIONS.get(req.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -894,9 +854,6 @@ def run_tests(req: TestsRequest) -> dict:
     }
 
 def _node_reactions(circuit, netlist, res) -> dict:
-    """Determined per-node reactions for a clicked row, as reacted glyph
-    data-URIs the front end swaps in: Seven-Seg segment lighting and
-    Multiplexer/Decoder selected-port rings. Purely visual."""
     from collections import defaultdict
     from dlc.web.shape_svg import react_svg
     from dlc.web.graph_export import _family
@@ -926,8 +883,6 @@ def _node_reactions(circuit, netlist, res) -> dict:
                 if svg:
                     out[str(idx)] = svg
         elif name == "Register":
-            # show the value the register holds at this row (reset assumed 0,
-            # advanced by the sequential replay / clock ticks).
             q = next(((nv[nid], res.net_bits.get(nid, 1))
                       for pn, d, nid in comp_pins.get(idx, [])
                       if pn == "Q" and nid in nv), None)
@@ -941,9 +896,6 @@ def _node_reactions(circuit, netlist, res) -> dict:
 
 
 def _output_ok(found, exp_val, width) -> bool | None:
-    """Compare an evaluated output against a testcase's expected value by BIT
-    PATTERN, so a signed expected (e.g. -60) matches the evaluator's unsigned
-    two's-complement value (0xFFFFFFC4 = 4294967236) at the port's width."""
     if found is None:
         return None
     if width:
@@ -953,8 +905,6 @@ def _output_ok(found, exp_val, width) -> bool | None:
 
 
 def _fmt_output(v, width, signed_hint) -> str:
-    """Render an output value: signed decimal when the expected value was
-    negative (so it reads like the testcase, e.g. -60), else hex for buses."""
     if v is None:
         return ""
     if not width or width <= 1:
@@ -969,14 +919,7 @@ def _fmt_output(v, width, signed_hint) -> str:
 
 @app.post("/api/simulate")
 def simulate_row(req: SimulateRequest) -> dict:
-    """Signal-flow values for one clicked test row.
-
-    Deterministically evaluates the circuit as of `row_index` (replaying the
-    testcase for clocked designs) and returns the value carried on every net
-    the evaluator could resolve, plus expected-vs-found for the top-level
-    outputs so a failed row can be shown in red. Purely additive: this never
-    runs Digital and never touches the Layer-1 checkers.
-    """
+    """Signal-flow values for one clicked test row."""
     target = _resolve_target(req.session_id, req.filename)
     try:
         circuit = parse_dig_file(target["path"])
@@ -1008,7 +951,6 @@ def simulate_row(req: SimulateRequest) -> dict:
         for nid, val in res.net_values.items()
     }
 
-    # Expected (from the row's output columns) vs found (evaluated).
     row = next(
         (r for r in spec.rows if r.line_index == req.row_index and not r.is_malformed),
         None,
@@ -1033,9 +975,6 @@ def simulate_row(req: SimulateRequest) -> dict:
         signed = exp_val < 0
         outputs.append({
             "label": label,
-            # format expected the same way as found (signed decimal for a
-            # negative value, hex for a bus), so Digital's "(-60)" reads as a
-            # clean "-60" and both sides of the chip are consistent.
             "expected": _fmt_output(exp_val, width, signed),
             "found": _fmt_output(found, width, signed) if found is not None else None,
             "ok": _output_ok(found, exp_val, width),
@@ -1050,13 +989,10 @@ def simulate_row(req: SimulateRequest) -> dict:
         "unresolved_nets": sorted(res.unresolved_nets),
         "outputs": outputs,
         "notes": res.notes,
-        # determined per-node reactions (7-seg lighting, mux/decoder rings)
         "node_svgs": _node_reactions(circuit, netlist, res),
     }
 
 def _child_at(circuit, comp_idx: int):
-    """The child Circuit wired under component `comp_idx`, or None if that
-    component isn't a resolvable subcircuit."""
     if comp_idx < 0 or comp_idx >= len(circuit.components):
         return None
     comp = circuit.components[comp_idx]
@@ -1068,14 +1004,6 @@ def _child_at(circuit, comp_idx: int):
 
 @app.post("/api/subcircuit")
 def subcircuit_row(req: SubcircuitRequest) -> dict:
-    """Signal flow *inside* a subcircuit instance for the clicked row.
-
-    Drill-in view: evaluates the whole master circuit as of `row_index`, then
-    returns the internal graph + per-net values of the subcircuit named by
-    `path` (component indices top -> down), so the front end can colour that
-    subcircuit's own wires with the master row's signals. Recursive: a deeper
-    `path` drills through nested subcircuits, all showing the same row.
-    """
     target = _resolve_target(req.session_id, req.filename)
     try:
         circuit = parse_dig_file(target["path"])
@@ -1087,7 +1015,6 @@ def subcircuit_row(req: SubcircuitRequest) -> dict:
     if not req.path:
         return {"ok": False, "warning": "No subcircuit path given."}
 
-    # Walk the path, collecting breadcrumb labels and validating each hop.
     node = circuit
     crumbs: list[str] = []
     for comp_idx in req.path:
@@ -1114,9 +1041,6 @@ def subcircuit_row(req: SubcircuitRequest) -> dict:
                 "warning": f"Evaluator error: {type(exc).__name__}: {exc}"}
 
     res = box.get("result")
-    # Use the SAME netlist/graph the simulator memoized so net ids line up with
-    # the captured values; fall back to a fresh build if the subcircuit wasn't
-    # reached (no live values this row).
     child_nl = getattr(child_circuit, "_sim_nl", None) or build_netlist(child_circuit)
     child_g = (getattr(child_circuit, "_sim_g", None)
                or build_signal_graph(child_circuit, child_nl))
@@ -1147,9 +1071,6 @@ _last_ship_attempt = 0.0
 
 
 def _ship_soon() -> None:
-    """Fire-and-forget: push the local spool to the course proxy when
-    one is configured. Throttled and threaded — telemetry must never
-    slow or break the app; offline just leaves events in the spool."""
     global _last_ship_attempt
     now = time.time()
     if now - _last_ship_attempt < 20:
@@ -1168,11 +1089,6 @@ def _ship_soon() -> None:
 
 @app.post("/api/telemetry")
 def telemetry(req: TelemetryRequest) -> dict:
-    """Batch-store frontend events (window.dlcEventLog) into the local
-    SQLite sink (~/.dlc/telemetry.db). Telemetry must never break the app:
-    malformed events are skipped, and storage failures return ok=False
-    instead of raising. When a course proxy is configured, the spool
-    ships onward in the background (machine-keyed, resumable)."""
     try:
         stored = log_events(req.session_id, req.events)
     except Exception as exc:
@@ -1184,9 +1100,6 @@ def telemetry(req: TelemetryRequest) -> dict:
 
 @app.get("/api/machine")
 def machine_info() -> dict:
-    """The anonymous machine identity telemetry and limits key on —
-    derived from the OS machine id, so a re-download on the same
-    machine continues the same record."""
     from dlc.llm.client import _proxy_config
     from dlc.telemetry.machine import machine_identity
     ident = machine_identity()
@@ -1227,8 +1140,6 @@ def get_proxy_config() -> dict:
 
 @app.post("/api/config/proxy")
 def set_proxy_config(req: ProxyConfigRequest) -> dict:
-    """Point this install at the course proxy (or clear it with an
-    empty url). Stored in ~/.dlc/config.json next to the api keys."""
     from dlc.llm.client import _load_config, _save_config
     cfg = _load_config()
     url = (req.url or "").strip()
@@ -1286,12 +1197,6 @@ def clear_api_key_endpoint(provider: str) -> dict:
         "configured": llm_client.has_api_key(provider),
     }
 
-
-# --- Official-test store (Settings ⚙): instructor-controlled truth ---
-# Mode B classifies a disagreement on a file as "official" (tests right,
-# circuit wrong) when the file's testcase matches an entry here — by
-# filename + normalized content hash. Works for ANY lab, no manifest needed.
-
 class OfficialTestRequest(BaseModel):
     filename: str
     content: str
@@ -1305,9 +1210,6 @@ def list_official_tests() -> dict:
 
 @app.post("/api/config/official_tests")
 def save_official_test(req: OfficialTestRequest) -> dict:
-    """open to everyone — the store itself enforces the rules
-    (Digital-test-format content, .dig filename, shipped defaults never
-    hand-editable; Adopt is the only way to move a default's standard)."""
     from dlc.l3 import official_store
     try:
         entry = official_store.save_test(req.filename, req.content)
@@ -1325,10 +1227,6 @@ def delete_official_test(filename: str) -> dict:
 
 @app.get("/api/docs/manifest_guide")
 def manifest_guide(raw: bool = False):
-    """The instructor guide. ``?raw=1`` returns the markdown text — the
-    Settings overlay fetches that and renders it in-app (the packaged
-    build never leaves the window). Without ``raw`` the direct URL still
-    works with a minimal readable wrapper."""
     from fastapi.responses import HTMLResponse, PlainTextResponse
     from xml.sax.saxutils import escape as _esc
     p = Path(__file__).parent.parent.parent / "docs" / "MANIFEST_GUIDE.md"
@@ -1371,8 +1269,6 @@ def get_library(session_id: str, filename: str) -> dict:
             status_code=400,
             detail=f"Could not load circuit: {type(exc).__name__}: {exc}",
         )
-    # Count each inverter bubble (a gate's inverterConfig input) as an inverter
-    # in the LIBRARY only, so the NOT card appears / its count includes bubbles.
     inv = dict(summary.get("inventory", {}))
     n_bubbles = sum(len(inverted_input_names(c)) for c in circuit.components)
     if n_bubbles:
@@ -1399,8 +1295,6 @@ def llm_explain(req: LlmExplainRequest) -> dict:
     except Exception:
         facts_dict = circuit_summary(circuit, netlist)
 
-    # Deep on purpose: a structural error inside a subcircuit makes the
-    # top-level summary unreliable, so it gates L2 like a top-level one.
     issues_payload = check_all_l1_deep(circuit).to_dict()["issues"]
     student_goal = (req.student_goal or "").strip()[:500]
     if len(student_goal) == 0:

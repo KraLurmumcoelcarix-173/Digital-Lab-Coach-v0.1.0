@@ -166,11 +166,8 @@ def test_every_sample_circuit_serializes_without_error():
 
 
 def test_dict_and_json_carry_same_information():
-    """to_dict() and to_json()->json.loads should give equivalent dicts
-    (after tuple->list normalization)."""
     f = _facts("tier1_minimal/full_adder.dig")
     via_dict = f.to_dict()
     via_json = json.loads(f.to_json())
-    # Normalize tuples to lists in via_dict so comparison is meaningful
     normalized = json.loads(json.dumps(via_dict))
     assert normalized == via_json

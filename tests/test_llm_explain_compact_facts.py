@@ -1,6 +1,3 @@
-"""Guards the L1->L2 facts bridge: `_compact_facts` must surface real
-I/O bit widths and the resolved subcircuit interface into the prompt."""
-
 from pathlib import Path
 
 from dlc.llm.explain import _compact_facts

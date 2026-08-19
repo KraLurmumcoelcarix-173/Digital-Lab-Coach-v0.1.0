@@ -1,4 +1,5 @@
-"""Daily use-limit stub (dlc/l3/limits.py) + its /api/l3/coverage wiring:
+"""
+Daily use-limit stub (dlc/l3/limits.py) + its /api/l3/coverage wiring:
 counters always tick, blocking only under DLC_ENFORCE_LIMITS, and the
 ratified rule that a disagreement scan is a free redirect.
 """
@@ -23,11 +24,6 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("DLC_TELEMETRY_DB", str(tmp_path / "telemetry.db"))
     monkeypatch.delenv("DLC_ENFORCE_LIMITS", raising=False)
 
-
-# ---------------------------------------------------------------------------
-# Module behavior
-# ---------------------------------------------------------------------------
-
 def test_counters_tick_even_when_unenforced():
     assert limits.state()["used"]["modeB"] == 0
     limits.consume("modeB")
@@ -35,16 +31,16 @@ def test_counters_tick_even_when_unenforced():
     assert st["used"]["modeB"] == 2
     assert st["remaining"]["modeB"] == 0
     assert st["enforced"] is False
-    assert limits.allowed("modeB") is True      # off => never blocks
+    assert limits.allowed("modeB") is True
 
 
 def test_enforced_blocks_at_cap(monkeypatch):
     monkeypatch.setenv("DLC_ENFORCE_LIMITS", "1")
     assert limits.allowed("modeA") is True
-    for _ in range(3):                          # cap is 3/day (R3: rerun-on-
-        limits.consume("modeA")                 # temp books the 3rd use)
+    for _ in range(3):
+        limits.consume("modeA")
     assert limits.allowed("modeA") is False
-    assert limits.allowed("modeB") is True      # independent counters
+    assert limits.allowed("modeB") is True
 
 
 def test_counters_reset_on_a_new_day(tmp_path, monkeypatch):
@@ -70,11 +66,6 @@ def test_unknown_mode_is_a_noop():
     before = limits.state()["used"]
     limits.consume("modeZ")
     assert limits.state()["used"] == before
-
-
-# ---------------------------------------------------------------------------
-# /api/l3/coverage wiring (evaluator-only: no jar needed)
-# ---------------------------------------------------------------------------
 
 def _upload(*paths):
     files, handles = [], []
@@ -112,7 +103,7 @@ def test_disagreement_scan_is_a_free_redirect():
     try:
         body = _scan(sid, "tier3_calculator.dig")
         assert body["ok"] is True and body["total_flags"] > 0
-        assert body["consumed_use"] is False          # ratified 07-11
+        assert body["consumed_use"] is False
         assert body["limits"]["used"]["modeB"] == 0
     finally:
         server._SESSIONS.pop(sid, None)
@@ -136,6 +127,6 @@ def test_refund_gives_a_use_back_with_floor_zero():
     assert limits.state()["used"]["modeB"] == 1
     st = limits.refund("modeB")
     assert st["used"]["modeB"] == 0
-    st = limits.refund("modeB")                 # floor at zero
+    st = limits.refund("modeB")
     assert st["used"]["modeB"] == 0
-    limits.refund("modeZ")                      # unknown mode: noop
+    limits.refund("modeZ")

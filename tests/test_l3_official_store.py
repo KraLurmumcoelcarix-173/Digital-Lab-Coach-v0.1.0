@@ -1,7 +1,3 @@
-"""official-test store (dlc/l3/official_store.py) + its settings
-endpoints + how Mode B consumes it: instructor-controlled truth that works
-for ANY lab, manifest or not."""
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -23,11 +19,9 @@ def test_store_crud_and_normalized_matching(monkeypatch, tmp_path):
     tests = ost.list_tests()
     assert [t["filename"] for t in tests] == ["cpu.dig"]
     assert tests[0]["source"] == "user"
-    # cosmetic edits still match; a changed row does not
     assert ost.status_for("cpu.dig", "A  B Y  # hi\n\n0 0 0\n1 1 1") == "official"
     assert ost.status_for("cpu.dig", "A B Y\n0 0 1\n1 1 1") == "modified"
     assert ost.status_for("other.dig", "A B Y\n0 0 0") is None
-    # update overwrites, delete removes
     ost.save_test("cpu.dig", "A B Y\n1 0 0")
     assert ost.status_for("cpu.dig", "A B Y\n1 0 0") == "official"
     assert ost.delete_test("cpu.dig") is True
@@ -45,27 +39,20 @@ def test_store_refuses_empty_and_survives_corruption(tmp_path, monkeypatch):
     p = tmp_path / "official_tests.json"
     monkeypatch.setenv("DLC_OFFICIAL_TESTS_PATH", str(p))
     p.write_text("{not json")
-    assert ost.list_tests() == []            # corrupt store never breaks scans
+    assert ost.list_tests() == []
 
 
 def test_official_status_prefers_store_over_manifest():
-    # a filename with no shipped default, so the layering under test is
-    # purely user-store vs manifest
     manifest = {"official_tests": {
         "widget.dig": mf.normalized_test_hash("A Y\n0 0")}}
-    # manifest alone: official
     assert mf.official_status(manifest, "widget.dig", "A Y\n0 0") == "official"
-    # the store disagrees => the store wins
     ost.save_test("widget.dig", "A Y\n1 1")
     assert mf.official_status(manifest, "widget.dig", "A Y\n0 0") == "modified"
     assert mf.official_status(manifest, "widget.dig", "A Y\n1 1") == "official"
-    # store works with NO manifest at all
     assert mf.official_status(None, "widget.dig", "A Y\n1 1") == "official"
 
 
 def test_scan_classifies_official_from_store_without_manifest(monkeypatch, tmp_path):
-    """A manifest-free tree still gets official classification when the
-    instructor registered the file's testcase in Settings."""
     from dlc.l3.coverage import scan_tree_coverage
     from dlc.parser.dig_parser import parse_dig_file
     from dlc.testing.spec import extract_test_specs
@@ -93,11 +80,6 @@ def test_official_tests_endpoints_roundtrip(monkeypatch, tmp_path):
     assert r.json()["removed"] is True
     assert client.get("/api/config/official_tests").json()["tests"] == []
 
-
-# ---------------------------------------------------------------------------
-# shipped defaults — always present, overridable, never deletable
-# ---------------------------------------------------------------------------
-
 def test_shipped_defaults_match_the_manifest_fingerprints():
     import json
     from pathlib import Path
@@ -114,32 +96,22 @@ def test_defaults_layer_override_and_revert():
     names = {t["filename"]: t["source"] for t in ost.list_tests()}
     assert names["cpu.dig"] == "default"
     assert names["register-file.dig"] == "default"
-    # default answers status_for with no user entry at all
     import json
     from pathlib import Path
     content = json.loads(Path("data/official_tests_defaults.json")
                          .read_text(encoding="utf-8"))["cpu.dig"]["content"]
     assert ost.status_for("cpu.dig", content) == "official"
     assert ost.status_for("cpu.dig", content + "\n9 9 9") == "modified"
-    # an Adopt-path save overrides the default...
     ost.save_test("cpu.dig", "clk R1 R2\nC 1 2", allow_default_override=True)
     assert ost.status_for("cpu.dig", "clk R1 R2\nC 1 2") == "official"
     assert {t["filename"]: t["source"] for t in ost.list_tests()}[
         "cpu.dig"] == "override"
-    # ...and deleting the override reverts to the shipped default
     assert ost.delete_test("cpu.dig") is True
     assert ost.status_for("cpu.dig", content) == "official"
     assert {t["filename"]: t["source"] for t in ost.list_tests()}[
         "cpu.dig"] == "default"
-    # the default itself can never be deleted
     assert ost.delete_test("cpu.dig") is False
     assert "cpu.dig" in {t["filename"] for t in ost.list_tests()}
-
-
-# ---------------------------------------------------------------------------
-# defaults never hand-edited, everyone else free — with a
-# Digital-format bouncer on the door
-# ---------------------------------------------------------------------------
 
 def test_defaults_cannot_be_hand_edited_but_adopt_can():
     with pytest.raises(ValueError, match="built-in default"):
@@ -148,7 +120,6 @@ def test_defaults_cannot_be_hand_edited_but_adopt_can():
         "filename": "cpu.dig", "content": "clk R1 R2\nC 1 2"})
     assert r.status_code == 400
     assert "built-in default" in r.json()["detail"]
-    # the Adopt path (machine-verified content) is the one override door
     saved = ost.save_test("cpu.dig", "clk R1 R2\nC 1 2",
                           allow_default_override=True)
     assert saved["sha1"]
@@ -157,23 +128,16 @@ def test_defaults_cannot_be_hand_edited_but_adopt_can():
 
 
 def test_content_must_be_digital_test_format():
-    # pasted prose: unrecognized cells
     with pytest.raises(ValueError, match="Digital test format"):
         ost.save_test("my.dig", "hello world\nthis is not a test")
-    # value row first: no header
     with pytest.raises(ValueError, match="first line must be the header"):
         ost.save_test("my.dig", "0 1 0\n1 1 1")
-    # header but no rows
     with pytest.raises(ValueError, match="no test rows"):
         ost.save_test("my.dig", "A B Y")
-    # column-count mismatch
     with pytest.raises(ValueError, match="columns"):
         ost.save_test("my.dig", "A B Y\n1 0")
-    # filename must be a .dig name
     with pytest.raises(ValueError, match=".dig"):
         ost.save_test("cpu.txt", "A B\n1 0")
-    # the good shapes all pass: plain rows, comments, X/Z/C cells,
-    # Digital's program-style lines
     ost.save_test("my.dig", "A B Y  # header\n0 0 0\nC X Z\n(-3) 0x1F 0b10")
     ost.save_test("my2.dig", "A B\nrepeat(3) 1 0\nloop(i,4) (i) (i*2)\n1 1")
     assert {t["filename"] for t in ost.list_tests()} >= {"my.dig", "my2.dig"}
@@ -212,9 +176,6 @@ def test_adopt_official_requires_a_verified_temp(monkeypatch, tmp_path):
 
 
 def test_adopt_official_merges_the_temp_spec(monkeypatch, tmp_path):
-    """The student write-path: server reads the VERIFIED temp circuit and
-    saves its spec as the merged official test — no client text involved.
-    Jar-free: the temp is registered by hand exactly as inject does."""
     import shutil
     from dlc.parser.dig_parser import parse_dig_file
     from dlc.testing.spec import extract_test_specs
@@ -234,11 +195,10 @@ def test_adopt_official_merges_the_temp_spec(monkeypatch, tmp_path):
         r = client.post("/api/l3/adopt_official", json={
             "session_id": sid, "filename": "single_and.dig"})
         body = r.json()
-        assert body["ok"] is True and body["rows"] == 5   # 4 official + 1
+        assert body["ok"] is True and body["rows"] == 5
         merged = extract_test_specs(parse_dig_file(temp_path))[0]
         assert ost.status_for("single_and.dig",
                               merged.raw_data_string) == "official"
-        # the pre-merge official content is now 'modified' — the bar rose
         orig = extract_test_specs(parse_dig_file(src))[0]
         assert ost.status_for("single_and.dig",
                               orig.raw_data_string) == "modified"
@@ -249,6 +209,5 @@ def test_adopt_official_merges_the_temp_spec(monkeypatch, tmp_path):
 def test_configured_labs_endpoint_unions_manifests_and_store():
     body = client.get("/api/l3/configured").json()
     files = set(body["files"])
-    # shipped defaults + manifest applies_to entries all present
     assert {"cpu.dig", "alu.dig", "register-file.dig",
             "bidirectional-shifter.dig", "tier3_latched_display.dig"} <= files

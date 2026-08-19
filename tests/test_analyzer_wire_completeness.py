@@ -1,5 +1,5 @@
 """
-F5 + missing subcircuit checker
+missing subcircuit checker
 """
 
 import json
@@ -12,7 +12,6 @@ from dlc.analyzer.wire_completeness import (
 
 SAMPLES = Path(__file__).parent.parent / "data" / "sample_circuits"
 
-# Wire completeness checkers
 
 def test_issue_to_dict_serializes_severity_as_string():
     issue = Issue(
@@ -63,7 +62,6 @@ def test_check_wire_completeness_returns_empty_collection_on_clean_circuit():
     c = parse_dig_file(str(SAMPLES / "tier1_minimal" / "single_and.dig"))
     issues = check_wire_completeness(c)
     assert isinstance(issues, IssueCollection)
-    # Stage 1: no checks wired yet -> empty.
     assert issues.issues == []
 
 
@@ -186,10 +184,6 @@ def test_missing_nested_subcircuit_real_fixture():
     assert "ghost2.dig" in missing[0].message
     assert "Nested" in missing[0].title
 
-#cascade linking — undriven errors caused by a missing subcircuit fold
-# into ONE follow-up note under the missing_subcircuit error. Linking runs in
-# check_all_l1 (it must see every checker's issues), so these tests call that.
-
 from dlc.analyzer import check_all_l1
 
 def _elem(name, x, y, label=None, wide=False):
@@ -226,11 +220,11 @@ def _write_cascade_parent(tmp_path):
         + _elem("And", 480, 500, wide=True)
         + _elem("Out", 620, 520, label="Z")
         + "</visualElements><wires>"
-        + _wire(400, 300, 480, 300)    # A -> And.in0
-        + _wire(360, 340, 480, 340)    # ghost out -> And.in1 (undriven!)
-        + _wire(560, 320, 620, 320)    # And.Y -> Out Y
-        + _wire(400, 500, 480, 500)    # B -> And2.in0 (And2.in1 left unwired)
-        + _wire(560, 520, 620, 520)    # And2.Y -> Out Z
+        + _wire(400, 300, 480, 300)
+        + _wire(360, 340, 480, 340)
+        + _wire(560, 320, 620, 320)
+        + _wire(400, 500, 480, 500)
+        + _wire(560, 520, 620, 520)
         + "</wires><measurementOrdering/></circuit>"
     )
     p = tmp_path / "parent_cascade.dig"
@@ -248,13 +242,10 @@ def test_cascade_dangling_input_folds_into_missing_subcircuit_note(tmp_path):
     assert grp.severity == IssueSeverity.WARNING
     assert "ghost.dig" in grp.title
     assert "And" in grp.message
-    # highlights the missing instance (idx 1) AND the victim And (idx 2)
     assert 1 in grp.component_indices and 2 in grp.component_indices
 
-    # the And.in2 dangling error was absorbed by the group...
     dangling = issues.by_kind("dangling_input")
     assert not any(2 in d.component_indices for d in dangling)
-    # ...but the INDEPENDENT Xor.in2 mistake stays a separate ERROR.
     assert len(dangling) == 1
     assert dangling[0].severity == IssueSeverity.ERROR
     assert 5 in dangling[0].component_indices
@@ -268,14 +259,12 @@ def test_cascade_note_sits_directly_after_its_root_cause(tmp_path):
 
 
 def test_cascade_absorbs_unused_top_output_on_real_fixture():
-    """missing_top_subcircuit.dig: ghost.dig would drive Out Y, so the
-    'Y is never driven' error is the cascade, not a separate mistake."""
     c = parse_dig_file(
         str(SAMPLES / "tier2_bug" / "missing_top_subcircuit.dig")
     )
     issues = check_all_l1(c)
-    assert len(issues.by_kind("missing_subcircuit")) == 1   # root unchanged
-    assert issues.by_kind("unused_top_output") == []        # absorbed
+    assert len(issues.by_kind("missing_subcircuit")) == 1
+    assert issues.by_kind("unused_top_output") == []
     cascades = issues.by_kind("missing_subcircuit_cascade")
     assert len(cascades) == 1
     assert "ghost.dig" in cascades[0].title
@@ -286,12 +275,9 @@ def test_no_cascade_linking_without_missing_subcircuit():
     c = parse_dig_file(str(SAMPLES / "tier1_bug" / "dangling_input.dig"))
     issues = check_all_l1(c)
     assert issues.by_kind("missing_subcircuit_cascade") == []
-    assert len(issues.by_kind("dangling_input")) == 1       # untouched
+    assert len(issues.by_kind("dangling_input")) == 1
 
 def test_cascade_via_tunnel_sitting_on_missing_instance_pin(tmp_path):
-    """cpu.dig pattern: a tunnel placed directly ON the missing child's
-    output pin (wire-degree 0) teleports the undriven net far away. The
-    tunnel-anchor-proximity rule must still attribute the cascade."""
     xml = (
         '<?xml version="1.0" encoding="utf-8"?><circuit><version>2</version>'
         "<attributes/><visualElements>"
@@ -310,9 +296,9 @@ def test_cascade_via_tunnel_sitting_on_missing_instance_pin(tmp_path):
         + _elem("And", 880, 280, wide=True)
         + _elem("Out", 1040, 300, label="Y")
         + "</visualElements><wires>"
-        + _wire(800, 280, 880, 280)     # tunnel S -> And.in0 (undriven!)
-        + _wire(700, 320, 880, 320)     # A -> And.in1
-        + _wire(960, 300, 1040, 300)    # And.Y -> Out Y
+        + _wire(800, 280, 880, 280)
+        + _wire(700, 320, 880, 320)
+        + _wire(960, 300, 1040, 300)
         + "</wires><measurementOrdering/></circuit>"
     )
     p = tmp_path / "tunnel_cascade.dig"
@@ -322,4 +308,4 @@ def test_cascade_via_tunnel_sitting_on_missing_instance_pin(tmp_path):
     cascades = issues.by_kind("missing_subcircuit_cascade")
     assert len(cascades) == 1
     assert "ghost.dig" in cascades[0].title
-    assert issues.by_kind("dangling_input") == []   # fully absorbed
+    assert issues.by_kind("dangling_input") == []

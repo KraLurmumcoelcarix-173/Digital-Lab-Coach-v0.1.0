@@ -1,18 +1,3 @@
-"""L1 false-positive regressions from real student lab files.
-
-Two field bugs, both re-created here on synthetic fixtures:
-
-  * A rotation-2 (upside-down) Decoder was flagged "undriven sel" because
-    the pin table put sel one grid row below its real spot — Digital's
-    Decoder sel sits at the LAST output's height, (20, (n-1)*20), not at
-    (20, n*20) like the Multiplexer. Invisible on upright decoders (a
-    wire stub usually crosses both candidates); a flipped decoder whose
-    sel is fed by a tunnel sitting exactly ON the pin exposed it.
-  * A Demultiplexer-based register-file write path produced 32 "undriven
-    input" flags (one per enable And gate): Demultiplexer had no pin
-    geometry at all, so its outputs drove nothing.
-"""
-
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.graph import build_signal_graph
 from dlc.parser.models import Component, Position
@@ -34,8 +19,6 @@ def _pin(specs, name):
     return next(p for p in specs if p.name == name)
 
 
-# ---- the two field circuits, re-created synthetically ----------------------
-
 def test_flipped_decoder_sel_is_not_flagged():
     c = parse_dig_file(f"{_DIR}/flipped_decoder_selfeed.dig")
     assert check_all_l1(c).issues == []
@@ -46,12 +29,10 @@ def test_demux_write_enable_fanout_is_not_flagged():
     assert check_all_l1(c).issues == []
 
 
-# ---- pin-table geometry ----------------------------------------------------
-
 def test_decoder_sel_sits_at_last_output_height():
     d = _c("Decoder", **{"Selector Bits": 5})
     sel = _pin(get_pin_specs(d), "sel")
-    assert (sel.offset_x, sel.offset_y) == (20, 620)     # (n-1)*20, NOT 640
+    assert (sel.offset_x, sel.offset_y) == (20, 620)
 
 
 def test_decoder_flip_sel_pos_moves_sel_to_top():
@@ -61,8 +42,6 @@ def test_decoder_flip_sel_pos_moves_sel_to_top():
 
 
 def test_demux_pin_layout_matches_measured_lab_geometry():
-    # Selector Bits=5 measured live: in on the left middle, sel at the
-    # bottom (mux rule), outputs on the right at x=40
     d = _c("Demultiplexer", **{"Selector Bits": 5})
     specs = get_pin_specs(d)
     assert (_pin(specs, "in").offset_x, _pin(specs, "in").offset_y) == (0, 320)
@@ -86,16 +65,13 @@ def test_mux_and_demux_flip_sel_pos_moves_sel_to_top():
         assert (sel.offset_x, sel.offset_y) == (20, -20), name
 
 
-# ---- demux value semantics -------------------------------------------------
-
 def test_demux_routes_input_and_zeroes_the_rest():
     d = _c("Demultiplexer", **{"Selector Bits": 2})
     out = sim._eval_demux(d, {"in": 1, "sel": 3})
     assert out == {"out_0": 0, "out_1": 0, "out_2": 0, "out_3": 1}
     out = sim._eval_demux(d, {"in": 0, "sel": 3})
     assert out == {"out_0": 0, "out_1": 0, "out_2": 0, "out_3": 0}
-    assert sim._eval_demux(d, {"sel": 1}) is None        # honest: in unknown
-
+    assert sim._eval_demux(d, {"sel": 1}) is None
 
 def test_demux_fixture_simulates_end_to_end():
     c = parse_dig_file(f"{_DIR}/demux_write_enable.dig")
@@ -110,11 +86,6 @@ def test_demux_fixture_simulates_end_to_end():
     res = simulate(c, nl, g, {"RegWrite": 0, "WriteReg": 31})
     assert res.output_values.get("En31") == 0
 
-
-# ---- real cpu-tree false positives, re-created synthetically ----------
-# Field evidence: three complete student lab-5 trees that Digital builds
-# and runs (warnings at most) drew ~39 L1 errors from five root causes.
-# Each cause is pinned here on synthetic fixtures.
 
 def _xml_circuit(elements: str, wires: str = "") -> str:
     return (
@@ -142,9 +113,6 @@ def _w(x1, y1, x2, y2) -> str:
 
 
 def test_priority_encoder_f_output_exists_and_is_1bit():
-    # Students wire PriorityEncoder.f (the "any input set" flag, directly
-    # below num) as a ROM chip select; without it the ROM sel net looked
-    # undriven.
     from dlc.facts.width import pin_width
     pe = _c("PriorityEncoder", **{"Selector Bits": 3})
     f = _pin(get_pin_specs(pe), "f")
@@ -155,17 +123,12 @@ def test_priority_encoder_f_output_exists_and_is_1bit():
 
 
 def test_rom_output_sits_on_60_wide_box():
-    # Digital's ROM box is 60 wide (SVG-verified): D at (60, 20). The old
-    # (80, 20) survived only through loose endpoint snapping.
     rom = _c("ROM", AddrBits=4, Bits=8)
     d = _pin(get_pin_specs(rom), "D")
     assert (d.offset_x, d.offset_y) == (60, 20)
 
 
 def test_unwired_output_does_not_grab_a_routing_corner(tmp_path):
-    # s002/s008 comparator ladders: only eq is wired, and its wire turns a
-    # corner 20 px from the unused gr pin. gr must NOT claim the corner —
-    # that fabricated "gr and eq wired together" multi-driver errors.
     elements = (
         _ve("In", 0, 0, _entry("Label", "A") + _entry("Bits", 7, "int"))
         + _ve("In", 0, 20, _entry("Label", "B") + _entry("Bits", 7, "int"))
@@ -174,9 +137,9 @@ def test_unwired_output_does_not_grab_a_routing_corner(tmp_path):
     )
     wires = (
         _w(0, 0, 40, 0) + _w(0, 20, 40, 20)
-        + _w(100, 20, 120, 20)      # eq leaves its pin...
-        + _w(120, 0, 120, 20)       # ...turns a corner at (120, 0)
-        + _w(120, 0, 180, 0)        # ...20 px from unwired gr (100, 0)
+        + _w(100, 20, 120, 20)
+        + _w(120, 0, 120, 20)
+        + _w(120, 0, 180, 0)
     )
     p = tmp_path / "ladder.dig"
     p.write_text(_xml_circuit(elements, wires), encoding="utf-8")
@@ -188,9 +151,6 @@ def test_unwired_output_does_not_grab_a_routing_corner(tmp_path):
 
 
 def test_output_tied_to_ground_is_warning_not_error(tmp_path):
-    # s008's register file shorts x0's Q to Ground on purpose ("always
-    # 0"); Digital only errors at run time if the values ever disagree,
-    # and its official test passes. One constant + one signal => warning.
     elements = (
         _ve("In", 0, 0, _entry("Label", "D") + _entry("Bits", 8, "int"))
         + _ve("Clock", 0, 20, _entry("Label", "C"))
@@ -200,7 +160,7 @@ def test_output_tied_to_ground_is_warning_not_error(tmp_path):
     )
     wires = (
         _w(0, 0, 60, 0) + _w(0, 20, 60, 20)
-        + _w(120, 20, 160, 20)                    # Q -- Ground pin
+        + _w(120, 20, 160, 20)
         + _w(140, 20, 140, 60) + _w(140, 60, 200, 60)
     )
     p = tmp_path / "x0tie.dig"
@@ -212,8 +172,6 @@ def test_output_tied_to_ground_is_warning_not_error(tmp_path):
 
 
 def test_two_register_outputs_tied_is_still_an_error(tmp_path):
-    # The demotion is ONLY for constant ties: two real outputs shorted
-    # together remain a hard error.
     elements = (
         _ve("In", 0, 0, _entry("Label", "D") + _entry("Bits", 8, "int"))
         + _ve("Clock", 0, 20, _entry("Label", "C"))
@@ -238,10 +196,6 @@ def test_two_register_outputs_tied_is_still_an_error(tmp_path):
 
 
 def test_no_width_child_defaults_to_digital_3_grid(tmp_path):
-    # Student subcircuits carry no Width attribute; Digital renders them 3
-    # grid units (60 px) wide. Our old default of 10 put every output pin
-    # 140 px too far right, and the implicit-pin fallback then misnamed
-    # pins (ImmSrc landing where ALUOp belongs, "Clock not wired", ...).
     child = _xml_circuit(
         _ve("In", 0, 0, _entry("Label", "A"))
         + _ve("Out", 200, 0, _entry("Label", "Y"))
@@ -253,7 +207,6 @@ def test_no_width_child_defaults_to_digital_3_grid(tmp_path):
         _ve("In", 0, 0, _entry("Label", "X"))
         + _ve("inv.dig", 100, 0)
         + _ve("Out", 220, 0, _entry("Label", "Z")),
-        # output wire starts at pos.x + 3*20 = 160: Digital's real edge
         _w(0, 0, 100, 0) + _w(160, 0, 220, 0),
     )
     p = tmp_path / "top.dig"
@@ -265,8 +218,6 @@ def test_no_width_child_defaults_to_digital_3_grid(tmp_path):
         (i.kind, i.title) for i in issues.errors()
     ]
 
-
-# ---- Digital's built-in RegisterFile-------------
 
 def test_register_file_pins_and_widths():
     from dlc.facts.width import pin_width
@@ -284,8 +235,6 @@ def test_register_file_pins_and_widths():
 
 
 def test_register_file_write_then_read(tmp_path):
-    # jar-validated trace: write 7@1, then 9@2, then 5@0; reads follow
-    # post-edge state; unwritten words read 0.
     elements = (
         _ve("In", 100, 0, _entry("Label", "Din") + _entry("Bits", 8, "int"))
         + _ve("Const", 160, 20, _entry("Value", 1, "long") + _entry("Bits", 1, "int"))
@@ -339,20 +288,11 @@ def test_register_file_write_then_read(tmp_path):
 
 
 def test_rom_run_length_data_expands():
-    # Digital's "N*value" Data syntax stores value at N consecutive
-    # addresses; mis-reading it as one token shifts every later word.
     from dlc.sim.simulator import _rom_words
     rom = _c("ROM", **{"AddrBits": 4, "Bits": 8, "Data": "3*1f,2a"})
     assert _rom_words(rom) == [0x1F, 0x1F, 0x1F, 0x2A]
 
-
-# ---- r34: real Lab-1/2/5 false positives -----------------------------------
-
 def test_mirrored_splitter_pins_flip_up():
-    # SVG-verified on a real add-sub "32 -> 31, 1" sign extractor:
-    # mirror=true puts pin i at -i*spacing (out1 one row ABOVE the
-    # anchor). Without it the unwired 31-bit out0 loose-snapped onto the
-    # sign wire and produced width_mismatch on correct files.
     s = _c("Splitter", **{"Input Splitting": "32",
                           "Output Splitting": "31, 1", "mirror": True})
     got = {p.name: (p.offset_x, p.offset_y) for p in get_pin_specs(s)}
@@ -360,8 +300,6 @@ def test_mirrored_splitter_pins_flip_up():
 
 
 def test_seven_seg_pins_sit_on_anchor_and_140():
-    # SVG-verified on a real Lab-2 file: a-d ON the anchor row, e/f/g/dp
-    # all at +140 (dp is NOT a row lower).
     seg = _c("Seven-Seg")
     got = {p.name: (p.offset_x, p.offset_y) for p in get_pin_specs(seg)}
     assert got == {
@@ -371,9 +309,6 @@ def test_seven_seg_pins_sit_on_anchor_and_140():
 
 
 def test_equal_valued_consts_tied_by_tunnels_is_warning(tmp_path):
-    # Real control-unit ladders reuse Const(51) via one tunnel name —
-    # several equal constants on one net always agree, and Digital runs
-    # them fine. Unequal constants stay an error.
     def circuit(v2):
         elements = (
             _ve("Const", 0, 0, _entry("Value", 51, "long") + _entry("Bits", 7, "int"))
@@ -397,11 +332,6 @@ def test_equal_valued_consts_tied_by_tunnels_is_warning(tmp_path):
 
 
 def test_testcase_unlisted_in_tap_is_warning(tmp_path):
-    # jar-probed (r34): an In the testcase does not drive YIELDS to the
-    # other driver — a real student cpu taps rs1/rs2/rd nets with In
-    # elements while the official testcase drives only clk. With no
-    # testcase at all every In drives (interactive mode) and the same
-    # short stays an error.
     tap = (
         _ve("In", 0, 0, _entry("Label", "rs1") + _entry("Bits", 5, "int"))
         + _ve("In", 0, 100, _entry("Label", "src") + _entry("Bits", 5, "int"))
@@ -432,11 +362,6 @@ def test_testcase_unlisted_in_tap_is_warning(tmp_path):
 
 
 def test_duplicated_identical_gates_tied_is_warning(tmp_path):
-    # jar-probed (r37): a Lab-2 SOP decoder rebuilds the same product
-    # term in several segment blocks and ties every copy with one
-    # tunnel name. Identical gates on identical nets always agree, so
-    # Digital runs it. A pair that differs in gate type or in an
-    # inverter bubble can disagree and stays a hard error.
     def circuit(second_gate, invert_second=False):
         inv = (
             "<entry><string>inverterConfig</string><inverterConfig>"
@@ -483,16 +408,12 @@ def test_duplicated_identical_gates_tied_is_warning(tmp_path):
 
 
 def test_mute_contract_unblocks_test_runs(tmp_path):
-    # r36: when the last run fully passed and the file sits within the
-    # mute threshold, the server-side L1 gate stands down — the run that
-    # proved "tests pass" must stay repeatable (per-row and general).
     from dlc.web.server import _l1_error_block
     elements = (
         _ve("In", 0, 0, _entry("Label", "A"))
         + _ve("And", 40, 0, _entry("wideShape", "true", "boolean"))
         + _ve("Out", 160, 20, _entry("Label", "Y"))
     )
-    # in1 (0,40) left unwired -> exactly one dangling_input error
     wires = _w(0, 0, 40, 0) + _w(120, 20, 160, 20)
     p = tmp_path / "one_err.dig"
     p.write_text(_xml_circuit(elements, wires), encoding="utf-8")
@@ -500,6 +421,6 @@ def test_mute_contract_unblocks_test_runs(tmp_path):
     errs = check_all_l1(c).errors()
     assert errs, "fixture must carry at least one L1 error"
 
-    assert _l1_error_block(c) is not None                       # default: blocked
+    assert _l1_error_block(c) is not None
     assert _l1_error_block(c, {"last_all_passed": False}) is not None
-    assert _l1_error_block(c, {"last_all_passed": True}) is None   # mute hit
+    assert _l1_error_block(c, {"last_all_passed": True}) is None

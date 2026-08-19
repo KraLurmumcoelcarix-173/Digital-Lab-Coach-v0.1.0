@@ -20,10 +20,6 @@ class PerRowResult:
     status: str
     error_message: str | None = None
     raw_output: str | None = None
-    # Fast-runner extra: for a failed row, the exact expected-vs-found
-    # cells from Digital's value table, e.g.
-    # [{"column": "Sum", "expected": "7", "found": "0"}]. None when the
-    # cumulative runner produced this result (it can't know cells).
     mismatches: list[dict] | None = None
 
 
@@ -34,7 +30,7 @@ class TestRun:
 
     spec: TestSpec
     bindings: dict[str, VariableBinding]
-    result: TestcaseResult | None = None         
+    result: TestcaseResult | None = None
     per_row_results: list[PerRowResult] = field(default_factory=list)
 
     @property

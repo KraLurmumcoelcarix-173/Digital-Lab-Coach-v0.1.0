@@ -1,16 +1,3 @@
-"""L3 Mode A evidence core (dlc/l3/evidence.py).
-
-Ground truth comes from the seeded 30-bug benchmark, all offline (the
-Python evaluator decides pass/fail — no Digital.jar):
-  * bug3_wrong_cin       — every row fails on Sum (carry-in stuck high);
-                           one cluster, Add + Const among the suspects.
-  * bug1_meaningless_mux_in3 — only the two Op=3 rows fail; the cluster
-                           signature carries Op, the mux and its Ground
-                           rank on top.
-  * bug4_missing_pipeline — clocked testcase, zero clocked elements:
-                           the gross-check sends it to the lazy branch.
-"""
-
 import pytest
 
 from dlc.l3.evidence import (
@@ -49,15 +36,7 @@ def _parsed(path):
     return c, nl, g
 
 
-# ---------------------------------------------------------------------------
-# Mode decision on the benchmark
-# ---------------------------------------------------------------------------
-
 def test_bug3_is_analysis_with_one_cluster_and_the_const_suspect():
-    # Digital's per-row verdict flags 2 of bug3's 4 rows (50% pass = right
-    # at the 1-5 row bar); the evaluator-only sweep flags all 4, which the
-    # tiered gate correctly calls a low-pass-rate circuit. Analysis tests
-    # therefore feed the jar-style verdict through the caller seam.
     res = assemble_evidence_for_file(
         _BUG3, use_manifest=False, failing_indices=[0, 1],
     )
@@ -73,8 +52,6 @@ def test_bug3_is_analysis_with_one_cluster_and_the_const_suspect():
 
 
 def test_small_circuit_is_exempt_from_the_rate_bars():
-    # bug3 has 17 components (<= 30): even 0% passing stays analyzable —
-    # a small Layer-3-ready circuit is exactly the close-to-answer case
     res = assemble_evidence_for_file(_BUG3, use_manifest=False)
     assert res.mode == "analysis"
     assert res.failing_count == 4
@@ -117,9 +94,6 @@ def test_bug4_missing_pipeline_goes_lazy():
 
 
 def test_big_circuit_below_its_bar_goes_lazy_before_any_evidence():
-    # the LED lab has 160+ components and these caller-seam mismatches
-    # scatter over FOUR columns (unfocused, so the bars apply): 1 of 5
-    # rows passing (20%) is under the 30% bar
     res = assemble_evidence_for_file(
         _BUG5, use_manifest=False, failing_indices=[0, 1, 2, 3],
         jar_mismatches={
@@ -136,7 +110,6 @@ def test_big_circuit_below_its_bar_goes_lazy_before_any_evidence():
 
 
 def test_big_circuit_on_or_above_its_bar_is_analyzable():
-    # 3 of 5 passing (60%) clears the 30% bar even without column focus
     res = assemble_evidence_for_file(
         _BUG5, use_manifest=False, failing_indices=[1, 2],
     )
@@ -156,43 +129,23 @@ def _spec_of(n):
 
 
 def test_tiered_pass_rate_bars():
-    # exercised with the bars forced on (bug3 itself is a small circuit,
-    # exempt by default — asserted at the end). v0.1.0 bars: 20/60/30 —
-    # the >10-row bar was lowered from 80% to 20% (r34, instructor's
-    # call) so a 27%-passing real cpu still gets Mode A analysis.
     c, _nl, _g = _parsed(_BUG3)
     on = {"rate_gate_min_components": 0}
-    # big suite: >10 failing alone is fine while >=80% still passes
     assert gross_check(c, _spec_of(200), failing_count=15, **on) == []
-    # the old 90% bar rejected this near-passing suite; 85% is analyzable
     assert gross_check(c, _spec_of(100), failing_count=15, **on) == []
-    # big suite: 45% passing (11 of 20 failing) is analyzable at the 20% bar
     assert gross_check(c, _spec_of(20), failing_count=11, **on) == []
-    # a 27%-passing cpu-style suite is analyzable too (the r34 motivator)
     assert gross_check(c, _spec_of(23), failing_count=17, **on) == []
-    # 19 of 23 failing = 17% passing, but <= 20 absolute failures is
-    # still analyzable (r35: max_failing raised from 10 to 20)
     assert gross_check(c, _spec_of(23), failing_count=19, **on) == []
-    # big suite: MORE than 20 failing AND under 20% -> structural
     kinds = [f["kind"] for f in gross_check(c, _spec_of(30), 25, **on)]
     assert kinds == ["too_many_failures"]
-    # big suite: many rows failing but <=10 absolute -> still analyzable
     assert gross_check(c, _spec_of(12), failing_count=2, **on) == []
-    # 6-10 rows: 60% bar (3 of 8 failing = 62.5% passing = ok now)
     assert gross_check(c, _spec_of(8), failing_count=3, **on) == []
     assert [f["kind"] for f in gross_check(c, _spec_of(8), 4, **on)] == [
         "low_pass_rate"]
-    # 1-5 rows: 30% bar (2 of 4 failing = 50% = ok; 3 of 4 = 25% = lazy)
     assert gross_check(c, _spec_of(4), failing_count=2, **on) == []
     assert [f["kind"] for f in gross_check(c, _spec_of(4), 3, **on)] == [
         "low_pass_rate"]
-    # default threshold: bug3's 17 components sit under 30 -> bars off
     assert gross_check(c, _spec_of(4), failing_count=4) == []
-
-
-# ---------------------------------------------------------------------------
-# Gross-check pieces
-# ---------------------------------------------------------------------------
 
 def test_gross_check_flags_unbound_columns():
     c, _nl, _g = _parsed(_BUG3)
@@ -207,8 +160,6 @@ def test_gross_check_flags_unbound_columns():
 def test_gross_check_quiet_on_registered_clocked_circuit():
     c, _nl, _g = _parsed(_BUG3)
     spec = extract_test_specs(c)[0]
-    # 2 of 4 failing sits well above the 30% bar; registers exist, so no
-    # missing_clocked_logic either — nothing gross about this circuit
     assert gross_check(c, spec, failing_count=2) == []
 
 
@@ -220,10 +171,6 @@ def test_select_columns_probe_and_hints():
     spec3 = extract_test_specs(c3)[0]
     assert select_columns(c3, nl3, spec3) == []
 
-
-# ---------------------------------------------------------------------------
-# Clustering (synthetic rows, pure logic)
-# ---------------------------------------------------------------------------
 
 def _fake_row(idx, columns, selects=(), category=None, suspects=()):
     report = SuspectReport(
@@ -280,11 +227,6 @@ def test_cluster_cap_folds_overflow_instead_of_dropping():
     assert sum(c.folded_rows for c in clusters) == 2
     assert notes and "folded" in notes[0]
 
-
-# ---------------------------------------------------------------------------
-# Payload shape (frozen l3.debug.v1.1 §3)
-# ---------------------------------------------------------------------------
-
 def test_payload_matches_frozen_contract_shape():
     res = assemble_evidence_for_file(
         _BUG3, use_manifest=False, failing_indices=[0, 1],
@@ -315,8 +257,6 @@ def test_payload_matches_frozen_contract_shape():
 
 
 def test_suspect_wiring_names_the_true_driver():
-    # bug3 has FOUR identical Consts; only #16 feeds the adder's carry-in.
-    # The wiring block must say so, or the sub-agent is left guessing.
     res = assemble_evidence_for_file(
         _BUG3, use_manifest=False, failing_indices=[0, 1],
     )
@@ -339,10 +279,6 @@ def test_jar_verdict_is_authoritative_when_evaluator_disagrees():
     assert res.clusters[0].rows[0].mismatches == cells
     assert any("cannot reproduce" in n for n in res.notes)
 
-
-# ---------------------------------------------------------------------------
-# Program-category plumbing
-# ---------------------------------------------------------------------------
 
 def test_row_category_is_none_without_a_program_rom():
     c, nl, g = _parsed(_BUG3)
@@ -380,8 +316,6 @@ def test_row_category_decodes_through_a_program_rom():
 
 
 def test_suspect_wiring_carries_pin_values_for_representative_rows():
-    # the LED-lab lesson: same-scored suspects separate by BEHAVIOR, so
-    # every wiring pin carries its actual value on the representative rows
     res = assemble_evidence_for_file(
         _BUG3, use_manifest=False, failing_indices=[0, 1],
     )
@@ -393,9 +327,6 @@ def test_suspect_wiring_carries_pin_values_for_representative_rows():
 
 
 def test_case3_fixture_is_clean_but_hides_the_mux_bug():
-    # bug6: bug1's circuit with the Op=3 rows REMOVED — passes everything,
-    # so Mode B's select-coverage gate is the only trace of the hidden
-    # bug (the raw arm note is folded into the gate card, not repeated)
     path = (f"{_BENCH}/bug6_hidden_mux_case3/uncovered_op_calculator.dig")
     res = assemble_evidence_for_file(path, use_manifest=False)
     assert res.mode == "clear"
@@ -408,11 +339,6 @@ def test_case3_fixture_is_clean_but_hides_the_mux_bug():
 
 
 def test_focus_is_a_requisite_not_an_amnesty():
-    # v0.1.0: LED5 with 5 of 5 rows failing in ONE column (Ff) meets the
-    # focus requisite (no scattered rows) but no longer skips the rate
-    # bars — 0% passing is under the 30% bar, so the run is lazy. "You
-    # have <=3 columns wrong, so you can debug? no way" — the focus is a
-    # precondition, the pass rate still gets the last word.
     led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
             f"wrong_bool_LED5.dig")
     cells = {i: [{"column": "Ff", "expected": "1", "found": "0"}]
@@ -425,7 +351,6 @@ def test_focus_is_a_requisite_not_an_amnesty():
     kinds = [f["kind"] for f in res.gross_flags]
     assert "low_pass_rate" in kinds
     assert "scattered_failures" not in kinds
-    # without column info the requisite stays silent; the bars still judge
     res2 = assemble_evidence_for_file(
         led5, use_manifest=False, failing_indices=[0, 1, 2, 3, 4],
     )
@@ -433,10 +358,6 @@ def test_focus_is_a_requisite_not_an_amnesty():
 
 
 def test_scattered_rows_are_lazy_regardless_of_pass_rate():
-    # Charles's ruling: failing rows wrong in 4+ output columns AT ONCE
-    # are a fundamentals symptom even when the pass rate looks fine.
-    # 3 of 5 rows pass (60%, above the 30% bar) — but TWO of the five
-    # rows scatter over four columns: 2/5 = 40% >= 25% of ALL rows -> lazy.
     led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
             f"wrong_bool_LED5.dig")
     four = [{"column": c, "expected": "1", "found": "0"}
@@ -450,9 +371,6 @@ def test_scattered_rows_are_lazy_regardless_of_pass_rate():
 
 
 def test_rare_scattered_row_in_a_long_suite_passes():
-    # one scattered row in a 20-row suite (1/20 = 5% < 25% of ALL rows)
-    # usually shares the focused rows' root cause — it passes; the same
-    # scattered row in a 4-row suite is 25% of the testcase -> lazy
     c, _nl, _g = _parsed(_BUG3)
     on = {"rate_gate_min_components": 0}
     rows_cols = [{"Fa", "Fb", "Fd", "Ff"}] + [{"Ff"}] * 4
@@ -464,10 +382,6 @@ def test_rare_scattered_row_in_a_long_suite_passes():
 
 
 def test_dead_trunk_full_output_surface_is_analyzable():
-    # r37 (s008 control unit): every failing row wrong on EVERY output
-    # column = one mechanism upstream of all outputs (dead stage, empty
-    # decode ROM) — analyzable despite 0% passing. A shared SUBSET of
-    # columns keeps the ratified bars (tests above).
     led5 = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
             f"wrong_bool_LED5.dig")
     all_cols = [{"column": c, "expected": "1", "found": "0"}
@@ -478,17 +392,11 @@ def test_dead_trunk_full_output_surface_is_analyzable():
     )
     assert res.mode == "analysis"
     assert res.failing_count == 5
-    # the single frozen-trunk cluster must carry the MERGED
-    # localizer report — an empty default stripped suspect_wiring from
-    # the payload and left the model with no component indices at all
     assert res.clusters and res.clusters[0].merged.suspect_indices()
     assert res.payloads[0].get("suspect_wiring")
 
 
 def test_suspect_attrs_show_student_words_hide_injected_ones():
-    # a student's own small stored table rides the payload so a
-    # partially-wrong word can be convicted; grader-injected words never
-    # do (a reply echoing them would leak the course program).
     from types import SimpleNamespace
     from dlc.l3.evidence import _suspect_attrs
 
@@ -509,10 +417,6 @@ def test_suspect_attrs_show_student_words_hide_injected_ones():
 
 
 def test_address_input_drivers_traces_selector_gates():
-    # the model twice named the right story
-    # ("the gate on encoder input 5 asserts on the wrong rows") and
-    # twice guessed a wrong component_index. Which gate feeds selector
-    # input k is netlist fact — trace it, with per-row values.
     from types import SimpleNamespace as NS
     from dlc.l3.evidence import _address_input_drivers
 
@@ -539,6 +443,5 @@ def test_address_input_drivers_traces_selector_gates():
     assert out["inputs"]["in_1"] == {"driven_by": "Or[3]",
                                      "values": {"0": 1}}
 
-    # a multi-driven address net is ambiguous — trace nothing
     nets[0].pins.append(pin(2, "out", "out"))
     assert _address_input_drivers(circuit, netlist, 10, 0, rows) is None

@@ -1,19 +1,9 @@
-"""Reasoning-tier request shaping in the client wrapper.
-
-claude-opus-5 thinks by default; at the provider-default effort it can
-spend the ENTIRE max_tokens budget on thinking blocks, returning a reply
-with zero text.
-The wrapper therefore shapes opus-5 requests the same way its OpenAI
-branch already shapes gpt-5 ones: bounded effort + a token floor so
-thinking + text fit. These tests pin that at the SDK boundary."""
-
 import pytest
 
 import dlc.llm.client as lc
 
 
 class _CaptureSDK:
-    """Stands in for Anthropic(): records messages.create kwargs."""
     last_kwargs = None
 
     def __init__(self, *a, **kw):
@@ -55,7 +45,7 @@ def test_opus5_gets_bounded_effort_and_token_floor(_capture):
     assert resp["ok"] is True
     kw = _capture.last_kwargs
     assert kw["output_config"] == {"effort": "low"}
-    assert kw["max_tokens"] == 8000  # floor: thinking + text share the cap
+    assert kw["max_tokens"] == 8000
 
 
 def test_opus5_caller_effort_and_headroom_win(_capture):
@@ -74,8 +64,6 @@ def test_non_reasoning_models_keep_provider_defaults(_capture):
 
 
 def test_sonnet5_is_shaped_like_the_reasoning_tier(_capture):
-    # Claude 5-family models think by default — sonnet-5 gets the same
-    # bounded effort + token floor that saved opus-5 from empty replies.
     resp = lc.call_llm("hi", model="claude-sonnet-5", max_tokens=2000)
     assert resp["ok"] is True
     kw = _capture.last_kwargs

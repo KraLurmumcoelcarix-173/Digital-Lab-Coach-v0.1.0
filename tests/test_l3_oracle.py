@@ -1,8 +1,5 @@
-"""L3 oracle, row-injection half (dlc/l3/oracle.py).
-
-Covers: byte-preserving dataString injection, row validation, multi-testcase
-targeting, XML escaping, and (jar-gated) the inject + per-row rerun loop
-Mode B's accept-flow uses.
+"""
+L3 oracle, row-injection half (dlc/l3/oracle.py).
 """
 
 import glob
@@ -28,11 +25,6 @@ _CALC = "data/sample_circuits/tier3_realistic/tier3_calculator.dig"
 def _calc_spec_name() -> str:
     return extract_test_specs(parse_dig_file(_CALC))[0].name
 
-
-# ---------------------------------------------------------------------------
-# Injection is byte-preserving outside the target block
-# ---------------------------------------------------------------------------
-
 def test_injected_temp_differs_only_inside_datastring(tmp_path):
     spec_name = _calc_spec_name()
     rows = [InjectedRow("5 3 0 0 8 0 0 0"), InjectedRow("5 3 0 0 8 0 0 0")]
@@ -40,12 +32,9 @@ def test_injected_temp_differs_only_inside_datastring(tmp_path):
     try:
         original = Path(_CALC).read_text(encoding="utf-8")
         injected = Path(temp_path).read_text(encoding="utf-8")
-        # identical up to the closing tag of the (single) dataString block...
         cut = original.index("</dataString>")
         assert injected.startswith(original[:cut])
-        # ...and identical from that closing tag to EOF.
         assert injected.endswith(original[cut:])
-        # the injected middle carries exactly our two extra lines
         assert injected.count("5 3 0 0 8 0 0 0") == original.count("5 3 0 0 8 0 0 0") + 2
     finally:
         os.unlink(temp_path)
@@ -78,10 +67,6 @@ def test_original_file_never_modified():
     assert Path(_CALC).read_bytes() == before
 
 
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
-
 def _calc_spec():
     return extract_test_specs(parse_dig_file(_CALC))[0]
 
@@ -111,13 +96,8 @@ def test_validate_rejects_multiline_and_empty():
 
 
 def test_validate_allows_trailing_comment_and_special_tokens():
-    # clock / don't-care / hex / parenthesized negative are all legal cells
     validate_rows(_calc_spec(), [InjectedRow("0x1 1 0 0 (-2) x 0 1  # why: edge")])
 
-
-# ---------------------------------------------------------------------------
-# Multi-testcase targeting + escaping
-# ---------------------------------------------------------------------------
 
 _TWO_TC_DIG = """<?xml version="1.0" encoding="utf-8"?>
 <circuit>
@@ -171,8 +151,8 @@ def test_injection_targets_named_testcase_only(tmp_path):
     temp_path, _ = write_temp_with_rows(str(src), "T2", [InjectedRow("0 0")])
     try:
         specs = {s.name: s for s in extract_test_specs(parse_dig_file(temp_path))}
-        assert specs["T1"].row_count() == 1          # untouched
-        assert specs["T2"].row_count() == 2          # extended
+        assert specs["T1"].row_count() == 1
+        assert specs["T2"].row_count() == 2
         assert specs["T2"].rows[-1].raw == "0 0"
     finally:
         os.unlink(temp_path)
@@ -194,7 +174,7 @@ def test_comment_with_xml_specials_is_escaped(tmp_path):
     try:
         text = Path(temp_path).read_text(encoding="utf-8")
         assert "a&lt;b &amp; c&gt;d" in text
-        parsed = extract_test_specs(parse_dig_file(temp_path))  # still valid XML
+        parsed = extract_test_specs(parse_dig_file(temp_path))
         assert {s.name for s in parsed} == {"T1", "T2"}
     finally:
         os.unlink(temp_path)
@@ -204,11 +184,6 @@ def test_inject_rows_text_ordinal_bounds():
     with pytest.raises(ValueError, match="not found"):
         inject_rows_text("<x>no blocks here</x>", 0, [InjectedRow("1")])
 
-
-# ---------------------------------------------------------------------------
-# Inject + rerun through the real Digital CLI (jar-gated)
-# ---------------------------------------------------------------------------
-
 _needs_jar = pytest.mark.skipif(
     find_digital_jar() is None, reason="Digital.jar not configured",
 )
@@ -217,8 +192,8 @@ _needs_jar = pytest.mark.skipif(
 @_needs_jar
 def test_rerun_flags_wrong_added_row_and_keeps_originals_green():
     spec_name = _calc_spec_name()
-    good = InjectedRow("5 3 0 0 8 0 0 0", origin="coach")       # duplicate of row 0
-    bad = InjectedRow("5 3 0 0 9 0 0 0", origin="coach")        # wrong expected Result
+    good = InjectedRow("5 3 0 0 8 0 0 0", origin="coach")
+    bad = InjectedRow("5 3 0 0 9 0 0 0", origin="coach")
     out = rerun_with_rows(_CALC, spec_name, [good, bad])
     assert out.ok, out.warning
     originals = [r for r in out.rows if not r["added"]]
@@ -240,7 +215,7 @@ def test_rerun_all_added_pass_sets_mode_b_lock_signal():
     assert out.ok
     assert out.added_all_passed is True
     assert out.all_passed is True
-    assert out.temp_path is None                     # cleaned up by default
+    assert out.temp_path is None
     leftovers = glob.glob("data/sample_circuits/tier3_realistic/dlc_row_l3_*.dig")
     assert leftovers == []
 
@@ -254,11 +229,8 @@ def test_rerun_keep_temp_hands_ownership_to_caller():
     assert out.ok and out.temp_path and os.path.exists(out.temp_path)
     os.unlink(out.temp_path)
 
-# ---------------------------------------------------------------------------
-# 2.10: second testcase + program-ROM extension
-# ---------------------------------------------------------------------------
 
-from dlc.l3.oracle import (              # noqa: E402
+from dlc.l3.oracle import (
     add_testcase_text,
     extend_program_rom_text,
     find_program_rom,
@@ -287,7 +259,7 @@ def test_program_rom_found_extended_and_capacity_guarded():
     out = extend_program_rom_text(_ROMISH, [0x628E33])
     assert "<data>13,93,628e33</data>" in out
     assert find_program_rom(out)[0] == [0x13, 0x93, 0x628E33]
-    with pytest.raises(ValueError):                 # 3 addr bits = 8 words max
+    with pytest.raises(ValueError):
         extend_program_rom_text(_ROMISH, [1] * 7)
     assert find_program_rom("<circuit><visualElements/></circuit>") is None
 
@@ -297,7 +269,7 @@ def test_parse_program_words_accepts_hex_rejects_junk():
     with pytest.raises(ValueError):
         parse_program_words(["not-hex"])
     with pytest.raises(ValueError):
-        parse_program_words(["1ffffffff"])          # > 32 bits
+        parse_program_words(["1ffffffff"])
 
 
 def test_add_testcase_text_second_spec_original_untouched(tmp_path):
@@ -312,7 +284,7 @@ def test_add_testcase_text_second_spec_original_untouched(tmp_path):
     second = next(s for s in specs if s.name == label)
     assert second.headers == spec.headers and second.row_count() == 1
     base = next(s for s in specs if s.name == spec.name)
-    assert base.row_count() == spec.row_count()     # official spec untouched
+    assert base.row_count() == spec.row_count()
     assert base.raw_data_string == spec.raw_data_string
 
 
@@ -322,7 +294,7 @@ def test_rerun_with_second_runs_both_specs_and_guards_base():
     out = rerun_with_second(_AND, spec_name, [InjectedRow("1 0 0")], [])
     assert out.ok is True
     assert out.spec_name == f"{spec_name}_second"
-    assert out.spec_index == 1                      # appended after spec 0
+    assert out.spec_index == 1
     assert [r["status"] for r in out.rows] == ["passed"]
     assert out.rows[0]["added"] is True and out.rows[0]["origin"] == "coach"
     assert out.base_spec == {"name": spec_name, "total": 4,
@@ -337,15 +309,10 @@ def test_rerun_with_second_needs_a_program_rom_for_words():
     assert out.ok is False
     assert "program memory" in (out.warning or "")
 
+from types import SimpleNamespace
 
-# ---------------------------------------------------------------------------
-# append-mode program injection — rows join the OFFICIAL testcase
-# ---------------------------------------------------------------------------
-
-from types import SimpleNamespace                    # noqa: E402
-
-from dlc.l3 import oracle as _om                     # noqa: E402
-from dlc.l3.oracle import rerun_with_program         # noqa: E402
+from dlc.l3 import oracle as _om
+from dlc.l3.oracle import rerun_with_program
 
 _PROGFX = """<?xml version="1.0" encoding="utf-8"?>
 <circuit>
@@ -412,15 +379,12 @@ def test_rerun_with_program_appends_to_official_spec(_progfx):
         assert out.ok is True
         assert out.spec_name == "prog" and out.spec_index == 0
         assert out.rom_program == "13,93,628e33,40628433"
-        # official rows first (origin "original"), coach rows appended
         assert [r["added"] for r in out.rows] == [False, False, True, True]
         assert [r["origin"] for r in out.rows] == [
             "original", "original", "coach", "coach"]
         assert out.base_spec == {"name": "prog", "total": 2, "passed": 2,
                                  "all_passed": True}
         assert out.all_passed is True and out.added_all_passed is True
-        # the temp really carries the extended ROM + appended rows;
-        # no second testcase anywhere
         temp = Path(out.temp_path).read_text(encoding="utf-8")
         assert "<data>13,93,628e33,40628433</data>" in temp
         specs = extract_test_specs(parse_dig_file(out.temp_path))
@@ -438,8 +402,8 @@ def test_rerun_with_program_reports_official_regression(_progfx, monkeypatch):
     assert out.ok is True
     assert out.base_spec == {"name": "prog", "total": 2, "passed": 1,
                              "all_passed": False}
-    assert out.all_passed is False          # regression trips the lock…
-    assert out.added_all_passed is True     # …even with the new row green
+    assert out.all_passed is False
+    assert out.added_all_passed is True
 
 
 def test_rerun_with_program_validation_errors(_progfx):

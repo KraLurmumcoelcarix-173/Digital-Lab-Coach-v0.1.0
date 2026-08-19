@@ -1,8 +1,3 @@
-"""
-Asserts that every clean tier sample produces zero issues across all
-Layer-1 checkers.
-"""
-
 import glob
 
 import pytest

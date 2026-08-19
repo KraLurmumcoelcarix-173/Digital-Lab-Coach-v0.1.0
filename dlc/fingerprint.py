@@ -1,19 +1,6 @@
-"""Fingerprint helper CLI — instructor tooling for shipping
+"""
+Fingerprint helper CLI — instructor tooling for shipping
 official tests in a fork.
-
-Turns .dig files into ready-to-ship official-test entries:
-
-    uv run python -m dlc.fingerprint cpu.dig register-file.dig
-    uv run python -m dlc.fingerprint *.dig -o defaults.json
-    uv run python -m dlc.fingerprint --hashes-only *.dig
-
-Default output is the data/official_tests_defaults.json shape
-({filename: {content, sha1}}); --hashes-only prints the manifest
-official_tests shape ({filename: sha1}). The fingerprint is the SAME
-normalized sha1 Mode B matches with (comments and whitespace ignored),
-and the same one the Settings list shows next to each saved test.
-
-Each file contributes its FIRST testcase — the one Mode B scans.
 """
 
 from __future__ import annotations

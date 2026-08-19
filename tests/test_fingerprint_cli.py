@@ -1,6 +1,8 @@
-"""Fingerprint helper CLI (dlc/fingerprint.py): turns .dig files into
+"""
+Fingerprint helper CLI (dlc/fingerprint.py): turns .dig files into
 ready-to-ship official-test entries; the sha1 must be byte-identical to
-what the store/manifest machinery matches with."""
+what the store/manifest machinery matches with.
+"""
 
 import json
 import subprocess
@@ -27,7 +29,7 @@ def test_defaults_shape_written_to_file(tmp_path):
     entry = data["single_and.dig"]
     assert entry["content"] == spec.raw_data_string
     assert entry["sha1"] == normalized_test_hash(spec.raw_data_string)
-    assert set(entry) == {"content", "sha1"}     # exactly the shipped shape
+    assert set(entry) == {"content", "sha1"}
 
 
 def test_hashes_only_prints_manifest_shape(capsys):
@@ -39,8 +41,6 @@ def test_hashes_only_prints_manifest_shape(capsys):
 
 
 def test_entry_feeds_the_official_store(tmp_path, monkeypatch):
-    """End to end: CLI output pasted into the defaults file IS a working
-    default — the store answers 'official' for the untouched testcase."""
     from dlc.l3 import official_store as ost
     out = tmp_path / "defaults.json"
     assert fp.main([_AND, "-o", str(out)]) == 0
@@ -55,11 +55,11 @@ def test_bad_files_are_skipped_with_nonzero_exit(tmp_path, capsys):
     no_tc.write_text("<circuit><visualElements/><wires/></circuit>")
     rc = fp.main([str(no_tc), str(tmp_path / "ghost.dig"), _AND])
     err = capsys.readouterr().err
-    assert rc == 1                               # partial failure
+    assert rc == 1
     assert "SKIPPED empty.dig" in err and "SKIPPED ghost.dig" in err
-    assert "single_and.dig" in err               # the good one still listed
+    assert "single_and.dig" in err
     rc = fp.main([str(no_tc)])
-    assert rc == 1                               # nothing fingerprinted
+    assert rc == 1
 
 
 def test_runs_as_a_module():

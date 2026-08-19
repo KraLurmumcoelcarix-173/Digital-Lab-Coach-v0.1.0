@@ -1,26 +1,3 @@
-"""Parametric component glyphs for the signal-flow graph.
-
-Each node in the Cytoscape graph can carry a small inline-SVG drawn to look
-like the real Digital part instead of a plain round-rectangle. The SVG is
-returned as a base64 data-URI that the front end drops into Cytoscape's
-`background-image`, with the node width/height sized to match.
-
-Design goals (from the Layer-1 UI plan):
-  * Real silhouettes for the multi-input parts: gates (D / curved bodies with
-    output + inverter bubbles), multiplexer trapezoid, decoder / priority
-    boxes, splitter comb, seven-seg.
-  * WIDTH stays fixed, HEIGHT grows with the port count.
-  * A 3-tier fallback so a pathological port count never breaks anything:
-      - "glyph"  : the real silhouette (within a sensible port budget)
-      - "box"    : a plain labelled rectangle, still sized to the ports
-      - "failed" : a small red "render failed" placeholder
-    In every tier the node still exists with all its edges, so the
-    signal-flow graph is completely unaffected.
-
-This module is display-only: it never touches the netlist, evaluator, or the
-Layer-1 checkers.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -29,7 +6,6 @@ from dlc.parser.models import Component
 from dlc.parser.pin_geometry import get_pin_specs, inverted_input_names
 
 
-# Fill palette — mirrors FAMILY_COLORS in app.js so glyphs match the legend.
 _FAMILY_FILL = {
     "io-in": "#cfe5ff", "io-out": "#ffdcb3", "gate": "#b9e4c1",
     "arith": "#f4b9b9", "mux": "#d8c4ef", "splitter": "#f1ea9a",
@@ -38,7 +14,7 @@ _FAMILY_FILL = {
 }
 _STROKE = "#334155"
 
-# Port-count budgets for the 3-tier fallback (my call; tell me to re-tune).
+
 _GATE_GLYPH_MAX = 16     # real gate silhouette up to 16 inputs
 _GATE_BOX_MAX = 64       # plain box 17..64, then "render failed"
 _MUX_GLYPH_SEL = 4       # trapezoid up to 4 selector bits (16 data inputs)
@@ -487,13 +463,15 @@ def _ep(xf: float, yf: float) -> str:
 
 
 def port_endpoints(comp: Component, w: int, h: int) -> dict:
-    """Map each pin name to a Cytoscape edge endpoint aligned with the glyph's
+    """
+    Map each pin name to a Cytoscape edge endpoint aligned with the glyph's
     drawn port stub, so wires meet the ports instead of the bounding box.
 
     Inputs sit on the left edge, outputs on the right, mux/`sel`-style pins on
     the bottom; Ground/VDD drive from top/bottom. Positions mirror the
     _even_ys layout the draw functions use (exact for gates/boxes, within a
-    pixel or two for mux/splitter). Seven-seg keeps the default endpoint."""
+    pixel or two for mux/splitter). Seven-seg keeps the default endpoint.
+    """
     name = comp.element_name
     if name == "Seven-Seg":
         return {}
@@ -532,8 +510,10 @@ def port_endpoints(comp: Component, w: int, h: int) -> dict:
     return out
 
 def shape_for(comp: Component, family: str) -> dict | None:
-    """Return {svg, w, h, tier, ports} for a component, or None to keep the
-    default round-rectangle. Never raises: any failure falls back to None."""
+    """
+    Return {svg, w, h, tier, ports} for a component, or None to keep the
+    default round-rectangle. Never raises: any failure falls back to None.
+    """
     fill = _FAMILY_FILL.get(family, "#e9ecef")
     name = comp.element_name
     try:
@@ -578,9 +558,9 @@ def _draw_glyph(comp: Component, fill: str, name: str) -> dict | None:
         if name == "Add":
             return _box_with_pins(comp, fill, symbol="+")
         if name == "Comparator":
-            return _box_with_pins(comp, fill, symbol="⋛")   # ⋛
+            return _box_with_pins(comp, fill, symbol="⋛")
         if name == "BarrelShifter":
-            return _box_with_pins(comp, fill, symbol="≪")   # ≪
+            return _box_with_pins(comp, fill, symbol="≪")
         if name == "ROM":
             return _box_with_pins(comp, fill, label="ROM")
         if name == "BitExtender":
@@ -590,15 +570,6 @@ def _draw_glyph(comp: Component, fill: str, name: str) -> dict | None:
     return None
 
 def react_svg(comp: Component, family: str, state: dict) -> str | None:
-    """Return a *reacted* glyph data-URI for a clicked row, or None if this part
-    has no determined reaction. Same w/h as the base glyph, so the front end
-    just swaps the node's background-image.
-
-      Seven-Seg -> segments lit from state["segments"] ({seg: truthy})
-      Multiplexer / Decoder -> ring the selected input / asserted output
-        from state["sel"] (the evaluated selector value)
-      Register -> show the stored value from state["value"] (reset assumed 0)
-    """
     fill = _FAMILY_FILL.get(family, "#e9ecef")
     name = comp.element_name
     try:

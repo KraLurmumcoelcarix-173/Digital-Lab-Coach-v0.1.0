@@ -1,8 +1,5 @@
-"""Mode B row proposer (dlc/l3/proposer.py) + POST /api/l3/propose.
-
-The model is always faked — these tests never touch the network. What IS
-real: the coverage scan grounding, the prompt build, and the untrusted-
-output pipeline (JSON parsing, header validation, value-level dedupe).
+"""
+Mode B row proposer (dlc/l3/proposer.py) + POST /api/l3/propose.
 """
 
 import json
@@ -35,7 +32,6 @@ def _fake(text):
 
 
 def _fake_two(first, second):
-    """First call (proposals), second call (self-check derivation)."""
     n = {"v": 0}
     def call(prompt, **kw):
         n["v"] += 1
@@ -43,10 +39,6 @@ def _fake_two(first, second):
                 "error": None, "usage": None, "model": kw.get("model")}
     return call
 
-
-# ---------------------------------------------------------------------------
-# Grounding + prompt build
-# ---------------------------------------------------------------------------
 
 def test_targets_carry_headers_io_and_existing_rows():
     report = scan_tree_coverage(_AND)
@@ -66,12 +58,8 @@ def test_prompt_embeds_report_and_targets_not_paths():
     assert "SPOILER GUARD" in prompt
     assert '"single_and.dig"' in prompt
     assert '"existing_rows"' in prompt
-    assert "sample_circuits" not in prompt      # no filesystem paths leak
+    assert "sample_circuits" not in prompt
 
-
-# ---------------------------------------------------------------------------
-# Untrusted-output pipeline
-# ---------------------------------------------------------------------------
 
 def test_parse_tolerates_fences_and_prose():
     text = ("Here you go:\n```json\n"
@@ -95,9 +83,6 @@ def test_validate_drops_illegal_duplicate_and_mistargeted_rows():
     targets = proposer.build_targets(report)
     proposals = [
         {"file": "single_and.dig", "spec_name": targets[0]["spec_name"],
-         # 0x1 0x1 0x1 duplicates existing "1 1 1" by VALUE; "1 0" is short;
-         # "1 0 1" is new and legal (even though the circuit will fail it —
-         # that is 2.4's job to discover, not the validator's).
          "rows": ["0x1 0x1 0x1", "1 0", "1 0 1"], "why": "w"},
         {"file": "ghost.dig", "spec_name": "T", "rows": ["1 1 1"], "why": "w"},
     ]
@@ -105,8 +90,8 @@ def test_validate_drops_illegal_duplicate_and_mistargeted_rows():
     assert len(valid) == 1 and valid[0]["rows"] == ["1 0 1"]
     reasons = " | ".join(r["reason"] for r in rejected)
     assert "duplicate" in reasons
-    assert "columns" in reasons                 # the short row
-    assert "unknown target" in reasons          # ghost.dig
+    assert "columns" in reasons
+    assert "unknown target" in reasons
 
 
 def test_total_row_cap_applies_across_groups():
@@ -116,24 +101,15 @@ def test_total_row_cap_applies_across_groups():
     many = [{"file": "single_and.dig", "spec_name": sp,
              "rows": [f"1 0 {i % 2}" if i else "1 0 1" for i in range(10)],
              "why": "w"}]
-    # craft 10 distinct legal rows: vary A/B/Y bits
     many[0]["rows"] = ["1 0 1", "0 1 1", "1 1 0", "0 0 1",
-                       "0x1 0x0 0x0", "0b0 0b1 0b0", "1 1 1",  # dup of existing
-                       "0 0 0",                                 # dup of existing
+                       "0x1 0x0 0x0", "0b0 0b1 0b0", "1 1 1",
+                       "0 0 0",
                        "1 0 0", "0 1 0"]
     valid, rejected = proposer.validate_and_dedupe(many, targets)
     n_valid = sum(len(v["rows"]) for v in valid)
     assert n_valid <= proposer._MAX_TOTAL_ROWS
 
-
-# ---------------------------------------------------------------------------
-# propose_rows end to end (fake model)
-# ---------------------------------------------------------------------------
-
 def _two_row_and(tmp_path):
-    """single_and with only 2 of 4 vectors tested — leaves correct new
-    rows free to propose (the full fixture has all four, so every correct
-    row would be a duplicate)."""
     import re as _re
     xml = open(_AND).read()
     m = _re.search(r"<dataString>.*?</dataString>", xml, _re.S)
@@ -162,11 +138,6 @@ def test_propose_rows_happy_path_with_fake_model(tmp_path):
 
 
 def test_selfcheck_delivers_unconfirmed_rows_as_disputed(tmp_path):
-    # A row the coach cannot re-derive ("1 0 1" — 1 AND 0 is NOT 1) is no
-    # longer silently dropped: the self-check gate has no machine truth
-    # behind it, so the row ships as DISPUTED and the student decides.
-    # Accepting it fails on the temp copy → the accept-failed popup →
-    # either discard the row or debug the circuit with Mode A (case 3).
     student = _two_row_and(tmp_path)
     spec_name = proposer.build_targets(
         scan_tree_coverage(str(student)))[0]["spec_name"]
@@ -187,8 +158,6 @@ def test_selfcheck_delivers_unconfirmed_rows_as_disputed(tmp_path):
 
 def test_reference_gate_drops_rows_the_reference_refutes(tmp_path, monkeypatch):
     student = _two_row_and(tmp_path)
-    # Reference: the correct full circuit, under the manifest's applies_to
-    # name, in a dir DLC_REFERENCE_DIR points at.
     refdir = tmp_path / "refs"
     refdir.mkdir()
     (refdir / "single_and.dig").write_text(open(_AND).read())
@@ -204,8 +173,6 @@ def test_reference_gate_drops_rows_the_reference_refutes(tmp_path, monkeypatch):
     spec_name = proposer.build_targets(scan_tree_coverage(str(student)))[0]["spec_name"]
     text = json.dumps({"proposals": [
         {"file": "single_and.dig", "spec_name": spec_name,
-         # "1 0 1" is DELIBERATELY WRONG (proves the reference kills it);
-         # "0 1 0" is correct and must survive.
          "rows": ["1 0 1", "0 1 0"], "why": "gaps"},
     ]})
     selfcheck = json.dumps({"rows": [{"index": 0, "outputs": {"Y": "0"}}]})
@@ -225,8 +192,6 @@ def test_propose_rows_refuses_when_scan_has_flags():
 
 
 def test_propose_rows_refuses_on_select_gate_with_zero_model_calls():
-    # Case 3.B: an op the tests never define has no semantic anchor —
-    # the refusal is deterministic and must never reach the model
     bug = ("data/sample_circuits/30_bug_benchmark/"
            "bug6_hidden_mux_case3/uncovered_op_calculator.dig")
 
@@ -250,11 +215,6 @@ def test_propose_rows_survives_model_failure_and_garbage():
     assert out2["ok"] is True and out2["proposals"] == []
     assert out2["notes"]
 
-
-# ---------------------------------------------------------------------------
-# Endpoint
-# ---------------------------------------------------------------------------
-
 def _upload_and():
     with open(_AND, "rb") as fh:
         r = client.post("/api/circuit",
@@ -276,7 +236,6 @@ def test_propose_endpoint_uses_the_proposer(monkeypatch):
             "session_id": sid, "filename": "single_and.dig",
         })
         body = r.json()
-        # "0 1 0" duplicates an existing row by value -> validator drops it
         assert body["ok"] is True
         assert body["proposals"] == []
         assert body["rejected"] and body["rejected"][0]["kind"] == "duplicate"
@@ -292,7 +251,7 @@ def test_propose_endpoint_404s_on_unknown_session():
 
 
 
-from dlc.testing.runner import find_digital_jar  # noqa: E402
+from dlc.testing.runner import find_digital_jar
 
 _needs_jar = pytest.mark.skipif(
     find_digital_jar() is None, reason="Digital.jar not configured",
@@ -319,7 +278,7 @@ def test_program_group_survives_validation_atomically():
     valid, rejected = proposer.validate_and_dedupe(props, [t])
     assert rejected == []
     assert len(valid) == 1
-    assert valid[0]["program_words"] == ["628e33", "40430eb3"]  # normalized
+    assert valid[0]["program_words"] == ["628e33", "40430eb3"]
     assert valid[0]["rows"] == ["C 1 2", "C 3 4"]
 
 
@@ -336,7 +295,7 @@ def test_program_group_rejections():
         {**base, "rows": ["C 1 2"], "program_words": ["13", "93"]})
     assert "hex" in reason(
         {**base, "rows": ["C 1 2"], "program_words": ["not-hex"]})
-    assert "clock" in reason(                      # row must pulse the clock
+    assert "clock" in reason(
         {**base, "rows": ["0 1 2"], "program_words": ["93"]})
     assert "duplicates an instruction" in reason(
         {**base, "rows": ["C 1 2"], "program_words": ["13"]})
@@ -354,7 +313,6 @@ def test_parse_proposals_carries_program_words():
          "why": "w", "program_words": ["628e33"]}]})
     got = proposer.parse_proposals(text)
     assert got[0]["program_words"] == ["628e33"]
-    # absent key stays absent on normal groups
     text2 = json.dumps({"proposals": [
         {"file": "f.dig", "spec_name": "T", "rows": ["1 0 0"], "why": "w"}]})
     assert "program_words" not in proposer.parse_proposals(text2)[0]
@@ -397,18 +355,15 @@ def test_program_word_decode_gate_and_word_info():
     m = _lab5ish_manifest()
     t = {**_cpu_like_target(), "program_words": ["fec00213"],
          "program_categories_missing": ["add"]}
-    # a word the lab ISA does not define is rejected
     v, r = proposer.validate_and_dedupe(
         [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
           "why": "w", "program_words": ["ffffffff"]}], [t], manifest=m)
     assert v == [] and "not an instruction this lab defines" in r[0]["reason"]
-    # a defined word that closes a missing category survives with word_info
     v, r = proposer.validate_and_dedupe(
         [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
           "why": "w", "program_words": ["628e33"]}], [t], manifest=m)
     assert r == [] and v[0]["word_info"] == [
         {"word": "628e33", "category": "add", "closes_gap": True}]
-    # duplicating an existing program word names its category in the reason
     v, r = proposer.validate_and_dedupe(
         [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2"],
           "why": "w", "program_words": ["fec00213"]}], [t], manifest=m)
@@ -419,11 +374,6 @@ _PIPE = "data/sample_circuits/tier3_realistic/pipelined_adder_correct.dig"
 
 
 def test_replay_gate_disputes_state_ignorant_rows_without_reference():
-    # The 2-stage pipelined adder: Sum lags two rows. Without a reference
-    # the student's own circuit is the only replay oracle, and its
-    # disagreement is not truth about intent — rows are kept and marked
-    # DISPUTED (with the computed value attached), never dropped, and no
-    # prefix-kill: the replay threads the circuit's own state regardless.
     from dlc.parser.dig_parser import parse_dig_file
     from dlc.testing.spec import extract_test_specs
     spec = extract_test_specs(parse_dig_file(_PIPE))[0]
@@ -433,11 +383,6 @@ def test_replay_gate_disputes_state_ignorant_rows_without_reference():
          "has_clock": True, "clock_col": "Clk", "has_program_rom": False}
     paths = {"pipelined_adder_correct.dig": _PIPE}
     valid = [{"file": t["file"], "spec_name": spec.name,
-              # Sum lags ONE row (the official test shows 3+4 landing a
-              # row later). Row 0 agrees (official tail was 0+0), row 1
-              # disagrees (expects 5+5 immediately — it lands here as
-              # Sum=0xA, the row says 99), row 2 agrees (its Sum is row
-              # 1's 0+0) and SURVIVES because nothing is dropped ahead.
               "rows": ["5 5 C 0", "0 0 C 99", "7 2 C 0"], "why": "w"}]
     kept, rejected, notes = proposer._replay_gate(valid, [], [], [t], paths)
     assert rejected == []
@@ -449,9 +394,6 @@ def test_replay_gate_disputes_state_ignorant_rows_without_reference():
 
 
 def test_replay_gate_disputes_case3_rows_on_the_buggy_led():
-    # bug8 end-to-end shape: a correct-semantics row for the gapped digit
-    # disagrees with the student's buggy LED — exactly the case-3 hand-off
-    # that a silent drop used to suppress. It must arrive DISPUTED.
     led = ("data/sample_circuits/30_bug_benchmark/bug8_gapped_led_minterm/"
            "gapped_LED1.dig")
     from dlc.parser.dig_parser import parse_dig_file
@@ -461,7 +403,7 @@ def test_replay_gate_disputes_case3_rows_on_the_buggy_led():
          "headers": list(spec.headers), "inputs": [], "outputs": [],
          "existing_rows": [], "existing_rows_omitted": 0,
          "has_clock": True, "clock_col": "Clock", "has_program_rom": False}
-    good_row = "1 0 1 0 1 C 1 1 1 0 1 1 1"   # true 'A' display; bug fires
+    good_row = "1 0 1 0 1 C 1 1 1 0 1 1 1"
     valid = [{"file": t["file"], "spec_name": spec.name,
               "rows": [good_row], "why": "w"}]
     kept, rejected, notes = proposer._replay_gate(
@@ -490,7 +432,7 @@ def test_category_gate_drops_undefined_operations():
     valid = [{"file": "alu-like.dig", "spec_name": "T",
               "rows": ["1 1 9 0", "1 1 0 1", "1 1 X 0"], "why": "w"}]
     kept, rejected, _ = proposer._category_gate(valid, [], [], [t], m)
-    assert kept[0]["rows"] == ["1 1 0 1", "1 1 X 0"]   # defined op + don't-care
+    assert kept[0]["rows"] == ["1 1 0 1", "1 1 X 0"]
     assert len(rejected) == 1
     assert "does not define" in rejected[0]["reason"]
     assert rejected[0]["file"] == "alu-like.dig"
@@ -540,10 +482,6 @@ def test_uninject_endpoint_evicts_registered_temp():
         server._SESSIONS.pop(sid, None)
 
 
-# ---------------------------------------------------------------------------
-#  anti-lazy word gate + append-mode inject routing
-# ---------------------------------------------------------------------------
-
 def _lab5rich_manifest():
     """_lab5ish + rd/rs1/rs2 fields, so the lazy gate can judge."""
     m = _lab5ish_manifest()
@@ -570,17 +508,14 @@ def test_lazy_program_words_are_rejected_with_lazy_kind():
     v, r = proposer.validate_and_dedupe(
         [{**base, "rows": ["C 1 2"], "program_words": ["28013"]}], [t], manifest=m)
     assert r == [] and v[0]["word_info"][0]["category"] == "addi"
-    # addi x4, x0, -20 — the idiomatic loader passes the LAZY gate; since
-    # nothing reads x4 back, the R4 observability pass then auto-appends a
-    # machine-derived read-back (observe mapping present)
+    # addi x4, x0, -20 — the idiomatic loader passes the LAZY gate
     mo = _observing_manifest()
     v, r = proposer.validate_and_dedupe(
         [{**base, "rows": ["C 1 2"], "program_words": ["fec00213"]}],
         [t], manifest=mo)
     assert r == [] and v[0]["word_info"][0]["category"] == "addi"
-    assert len(v[0]["program_words"]) == 2      # + auto read-back of x4
+    assert len(v[0]["program_words"]) == 2
     assert v[0]["rows"][1].startswith("C (-20)")
-    # real-operand add stays accepted and closes the gap
     v, r = proposer.validate_and_dedupe(
         [{**base, "rows": ["C 1 2"], "program_words": ["628e33"]}],
         [t], manifest=mo)
@@ -610,12 +545,10 @@ def test_inject_endpoint_routes_program_words_to_append_mode(monkeypatch):
     spec_name = proposer.build_targets(scan_tree_coverage(_AND))[0]["spec_name"]
     sid = _upload_and()
     try:
-        # rom_words without as_second => 2.11 append mode
         r = client.post("/api/l3/inject", json={
             "session_id": sid, "filename": "single_and.dig",
             "spec_name": spec_name, "rows": ["1 0 0"], "rom_words": ["13"]})
         assert r.json()["outcome"] == "all_set"
-        # explicit as_second still reaches the isolated path
         r = client.post("/api/l3/inject", json={
             "session_id": sid, "filename": "single_and.dig",
             "spec_name": spec_name, "rows": ["1 0 0"],
@@ -626,10 +559,6 @@ def test_inject_endpoint_routes_program_words_to_append_mode(monkeypatch):
         server._SESSIONS.pop(sid, None)
 
 
-# ---------------------------------------------------------------------------
-# observability guarantee — write it, then READ IT BACK
-# ---------------------------------------------------------------------------
-
 def _observing_manifest():
     m = _lab5rich_manifest()
     m["program_decode"]["observe"] = {
@@ -639,10 +568,8 @@ def _observing_manifest():
 
 def test_unobserved_write_gets_auto_readback_with_proven_value():
     m = _observing_manifest()
-    # existing program: addi x4, x0, -20  =>  x4 = -20 proven
     t = {**_cpu_like_target(), "program_words": ["fec00213"],
          "program_categories_missing": ["add"]}
-    # add x8, x4, x4 writes x8 = -40 and nothing reads it back
     from dlc.l3 import manifest as mf
     w = mf.encode_category_word(m, "add", rd=8, rs1=4, rs2=4)
     v, r = proposer.validate_and_dedupe(
@@ -652,7 +579,7 @@ def test_unobserved_write_gets_auto_readback_with_proven_value():
     g = v[0]
     auto = mf.encode_category_word(m, "addi", rd=0, rs1=8, imm=0)
     assert g["program_words"] == [f"{w:x}", f"{auto:x}"]
-    assert g["rows"][1] == "C (-40) 0"          # machine-derived read-back
+    assert g["rows"][1] == "C (-40) 0"
     assert g["word_info"][1]["auto_readback"] is True
     assert g["word_info"][1]["observes"] == "x8"
 
@@ -667,11 +594,11 @@ def test_extension_with_own_readback_is_untouched():
         [{"file": "cpu.dig", "spec_name": "Test", "rows": ["C 1 2", "C 3 4"],
           "why": "w", "program_words": [f"{w:x}", f"{rb:x}"]}], [t], manifest=m)
     assert r == [] and v[0]["program_words"] == [f"{w:x}", f"{rb:x}"]
-    assert len(v[0]["rows"]) == 2               # nothing auto-added
+    assert len(v[0]["rows"]) == 2
 
 
 def test_unobserved_write_without_observe_mapping_is_rejected():
-    m = _lab5rich_manifest()                     # no observe block
+    m = _lab5rich_manifest()
     from dlc.l3 import manifest as mf
     t = {**_cpu_like_target(), "program_words": ["fec00213"]}
     w = mf.encode_category_word(m, "add", rd=8, rs1=4, rs2=4)
@@ -710,11 +637,6 @@ def test_replay_gate_prefers_the_reference_circuit(monkeypatch, tmp_path):
     assert kept and not rejected
     assert called["path"] == str(ref_dir / "pipelined_adder_correct.dig")
 
-
-# ---------------------------------------------------------------------------
-# never-drop synthesis for program-driven targets
-# ---------------------------------------------------------------------------
-
 def test_synthesis_fallback_builds_a_gate_clean_extension():
     m = _observing_manifest()
     t = {**_cpu_like_target(), "program_words": ["fec00213"],
@@ -727,18 +649,13 @@ def test_synthesis_fallback_builds_a_gate_clean_extension():
     from dlc.l3 import manifest as mf
     decoded = [mf.decode_program_word(m, int(w, 16)) for w in g["program_words"]]
     cats = [d["category"] for d in decoded]
-    assert "add" in cats                       # the gap word is there
-    # setups load distinct nonzero constants; auto read-back was appended
-    assert cats.count("addi") >= 3             # 2 setups + >=1 read-back
+    assert "add" in cats
+    assert cats.count("addi") >= 3
     assert g["word_info"][-1]["auto_readback"] is True
-    # the add row asserts the setup values, the read-back their sum
     add_i = cats.index("add")
     assert g["rows"][add_i] == "C 7 (-3)"
-    assert g["rows"][-1] == "C 4 0"            # 7 + (-3), machine-derived
-    assert notes == []          # the card's why says it — no extra note
-    # a program group judged on the STUDENT's circuit (no reference dir)
-    # is not atomically killed anymore: its disagreeing rows arrive
-    # DISPUTED with per-row details, and the group survives
+    assert g["rows"][-1] == "C 4 0"
+    assert notes == []
     m2 = _observing_manifest()
     t2 = {**_cpu_like_target(), "program_words": ["fec00213"]}
     from dlc.l3 import manifest as mfm
@@ -765,16 +682,14 @@ def test_synthesis_fallback_builds_a_gate_clean_extension():
 
 def test_replay_gate_program_group_still_drops_atomically_on_reference(
         monkeypatch, tmp_path):
-    # WITH a reference the replay is intended truth: a disagreeing program
-    # extension dies as a unit, each dropped row paired with its detail
     import shutil
     from dlc.l3 import coverage as covm
     ref_dir = tmp_path / "refs"
     ref_dir.mkdir()
-    shutil.copy(_PIPE, ref_dir / "cpu.dig")   # existence is what matters —
+    shutil.copy(_PIPE, ref_dir / "cpu.dig")
     monkeypatch.setenv("DLC_REFERENCE_DIR", str(ref_dir))
 
-    def fake_replay(path, spec_name, rows, rom_words=None):  # replay faked
+    def fake_replay(path, spec_name, rows, rom_words=None):
         return [{"row": r, "verdict": "disagrees", "detail": f"d {r}"}
                 for r in rows]
 
@@ -786,7 +701,7 @@ def test_replay_gate_program_group_still_drops_atomically_on_reference(
         [grp], [], [], [t], {"cpu.dig": "/tmp/nope.dig"})
     assert kept == [] and rej
     assert rej[0]["details"] == [{"row": "C 9 9", "detail": "d C 9 9"}]
-    assert "—" not in rej[0]["reason"]      # short reason, no joined wall
+    assert "—" not in rej[0]["reason"]
 
 
 def test_synthesis_skipped_when_a_model_extension_survived():
@@ -799,10 +714,6 @@ def test_synthesis_skipped_when_a_model_extension_survived():
         [survivor], [], [], [t], m, {})
     assert valid == [survivor] and notes == []
 
-
-# ---------------------------------------------------------------------------
-# an empty run refunds the day's use — once
-# ---------------------------------------------------------------------------
 
 def _upload_paths(*paths):
     files, handles = [], []
@@ -833,7 +744,6 @@ def test_empty_propose_refunds_the_scan_use_once(monkeypatch):
         assert body["refunded"] is True
         assert body["limits"]["used"]["modeB"] == 0
         assert any("refunded" in n for n in body["notes"])
-        # a second empty propose must NOT refund again
         body2 = client.post("/api/l3/propose", json={
             "session_id": sid, "filename": "single_and.dig"}).json()
         assert "refunded" not in body2
@@ -845,7 +755,6 @@ def test_empty_propose_refunds_the_scan_use_once(monkeypatch):
 def test_delivering_propose_clears_refundability(monkeypatch, tmp_path):
     from dlc.l3 import limits
     student = _two_row_and(tmp_path)
-    # serve the trimmed fixture through a session
     sid = _upload_paths(str(student))
     spec_name = proposer.build_targets(
         scan_tree_coverage(str(student)))[0]["spec_name"]
@@ -862,6 +771,6 @@ def test_delivering_propose_clears_refundability(monkeypatch, tmp_path):
             "session_id": sid, "filename": "single_and.dig"}).json()
         assert body["proposals"], "fixture should deliver a row"
         assert "refunded" not in body
-        assert limits.state()["used"]["modeB"] == 1   # delivered => kept
+        assert limits.state()["used"]["modeB"] == 1
     finally:
         server._SESSIONS.pop(sid, None)

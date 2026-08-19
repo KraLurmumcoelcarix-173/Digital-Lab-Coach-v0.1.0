@@ -57,7 +57,7 @@ def prompt_for_jar_path() -> str | None:
 
     try:
         root = tk.Tk()
-        root.withdraw()       
+        root.withdraw()
         root.attributes("-topmost", True)
         path = filedialog.askopenfilename(
             title="Locate Digital.jar",
@@ -68,6 +68,6 @@ def prompt_for_jar_path() -> str | None:
         return None
 
     if not path:
-        return None              
+        return None
     set_digital_jar_path(path)
     return path

@@ -26,7 +26,6 @@ def _idx_by_element(circuit, element_name):
     return next(i for i, c in enumerate(circuit.components)
                 if c.element_name == element_name)
 
-# basic graph test
 
 def test_graph_builds_for_all_samples():
     """Graph builder must not crash, and every component is a node."""

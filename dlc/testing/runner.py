@@ -1,57 +1,3 @@
-"""
-F4: Digital subprocess runner — per-row pass/fail, two strategies.
-
-STRATEGY 1 (default): FAST single-invocation run, `per_file_run_fast`.
-
-Digital's `CLI test -verbose` prints, under every FAILED testcase, its
-own value table: one line per executed row in execution order, with
-each mismatched output cell rendered as `E: <expected> / F: <found>`
-(see dlc/testing/results.py for the full grammar). Because Digital
-expands `loop(...)` blocks and sequences clock (`C`) rows exactly the
-way DLC's TestSpec does — one table line per expanded spec row — table
-line i corresponds 1:1 to spec.rows[i]. So ONE subprocess call yields:
-
-  - per-row pass/fail for every testcase in the file (passed testcase
-    => all its rows passed; failed testcase => rows with E:/F: cells
-    failed), and
-  - the exact expected-vs-found cells per failing row (PerRowResult
-    .mismatches) — which is precisely what Layer 3 needs.
-
-Digital sequences stateful rows internally, so registers/pipelines are
-correct without any cumulative re-running. Wallclock: one JVM startup
-(~1 s) regardless of row count, vs N startups for strategy 2.
-
-STRATEGY 2 (fallback + reference): CUMULATIVE per-row run,
-`per_row_run` / `per_row_run_iter` — one Digital call per row K with
-the dataString replaced by rows 0..K (cumulative prefix keeps stateful
-circuits correct). Row K's pass/fail is inferred from the delta in
-Digital's failure percentage between prefix K-1 and prefix K.
-
-The fast strategy falls back to the cumulative one, per testcase, when
-the 1:1 row mapping cannot be trusted:
-  - the spec has unexpanded loop expressions or malformed rows (DLC and
-    Digital would disagree on the executed row list),
-  - the verbose table is missing or doesn't split into header-width
-    cells (older/newer Digital builds),
-  - the echoed table row count != the spec row count.
-`per_row_run_auto` packages exactly that policy for one spec.
-
-Locating Digital.jar:
-  - `DIGITAL_JAR` env var takes precedence.
-  - Otherwise the saved config, then common install paths, are probed.
-  - If still not found, the runner returns "error" results across the
-    board with a clear message — the L3 prompt builder treats this as
-    "we only have overall results" and proceeds.
-
-Other notes:
-
-- We surface error states for "jar missing", "java missing",
-  "timeout", "parse failure" so callers can degrade gracefully.
-- Multi-Testcase .dig files: the cumulative strategy regex-substitutes
-  the FIRST `<dataString>...</dataString>` block only; the fast
-  strategy handles every testcase in the file in the single call.
-"""
-
 import atexit
 import time
 import os
@@ -66,7 +12,7 @@ from dlc.testing.spec import TestSpec
 
 
 _DATASTRING_RE = re.compile(r'(<dataString>).*?(</dataString>)', flags=re.DOTALL)
-_SYNTHETIC_NAME_RE = re.compile(r"Testcase_\d+")   # parser's name for label-less testcases
+_SYNTHETIC_NAME_RE = re.compile(r"Testcase_\d+")
 _PENDING_CLEANUP: list[str] = []
 
 
@@ -125,7 +71,7 @@ def ensure_digital_jar(interactive: bool = True) -> str | None:
     if not interactive:
         return None
     from dlc.testing.config import prompt_for_jar_path
-    return prompt_for_jar_path()        
+    return prompt_for_jar_path()
 
 def run_digital_cli(
     dig_path: str,
@@ -250,8 +196,6 @@ def per_row_run_iter(
             if tc is None and len(run.testcases) == 1:
                 tc = run.testcases[0]
             if tc is None and _SYNTHETIC_NAME_RE.fullmatch(spec.name):
-                # Digital prints 'unnamed' for a label-less testcase; our
-                # parser names it 'Testcase_<idx>'. Alias when unambiguous.
                 unnamed = [t for t in run.testcases if t.name == "unnamed"]
                 if len(unnamed) == 1:
                     tc = unnamed[0]
@@ -310,11 +254,11 @@ def attach_per_row_results(
         )
 
 
-# Fast single-invocation strategy
-
 def _spec_is_fast_safe(spec: TestSpec) -> bool:
-    """True when DLC's expanded row list provably matches what Digital
-    will execute (the precondition for the 1:1 table mapping)."""
+    """
+    True when DLC's expanded row list provably matches what Digital
+    will execute (the precondition for the 1:1 table mapping).
+    """
     if spec.has_unexpanded_loops:
         return False
     if any(row.is_malformed for row in spec.rows):
@@ -331,8 +275,6 @@ def _error_rows(spec: TestSpec, msg: str, raw: str | None = None) -> list[PerRow
     ]
 
 def _map_section_to_rows(spec: TestSpec, section) -> list[PerRowResult] | None:
-    """Map one VerboseSection onto spec.rows. None => not trustworthy,
-    caller should fall back to the cumulative strategy."""
     if section.status == "passed":
         return [
             PerRowResult(spec_name=spec.name, row_index=row.line_index,
@@ -341,7 +283,6 @@ def _map_section_to_rows(spec: TestSpec, section) -> list[PerRowResult] | None:
         ]
     if section.status == "error":
         return _error_rows(spec, section.error_message or "Digital reported an error")
-    # status == "failed": need a clean table of exactly len(spec.rows) lines.
     if not section.table_ok:
         return None
     if section.headers != spec.headers:
@@ -367,12 +308,6 @@ def per_file_run_fast(
     jar_path: str | None = None,
     timeout: float = 60.0,
 ) -> tuple[dict[str, list[PerRowResult]], list[TestSpec]]:
-    """ONE `CLI test -verbose` call covering every testcase in the file.
-
-    Returns (results_by_spec_name, fallback_specs). Specs in
-    fallback_specs got no trustworthy mapping — run them through the
-    cumulative strategy (or accept overall-only results).
-    """
     if jar_path is None:
         jar_path = find_digital_jar()
     if jar_path is None:
@@ -401,15 +336,11 @@ def per_file_run_fast(
     for spec in specs:
         section = sections.get(spec.name)
         if section is None and len(specs) == 1 and len(sections) == 1:
-            # Single testcase whose label Digital renders differently
-            # (e.g. unnamed) — same tolerance the slow path applies.
             section = next(iter(sections.values()))
         if (section is None and _SYNTHETIC_NAME_RE.fullmatch(spec.name)
                 and "unnamed" in sections
                 and sum(1 for s in specs
                         if _SYNTHETIC_NAME_RE.fullmatch(s.name)) == 1):
-            # Digital prints 'unnamed' for a label-less testcase; alias our
-            # synthetic 'Testcase_<idx>' to it when it is the only one.
             section = sections["unnamed"]
         if section is None:
             names_seen = ", ".join(sections) or "<none>"
@@ -436,7 +367,6 @@ def per_row_run_fast(
     jar_path: str | None = None,
     timeout: float = 60.0,
 ) -> list[PerRowResult] | None:
-    """Fast strategy for ONE spec. None => fall back to cumulative."""
     results, fallback = per_file_run_fast(
         [spec], original_dig_path, jar_path=jar_path, timeout=timeout,
     )
@@ -450,7 +380,6 @@ def per_row_run_auto(
     jar_path: str | None = None,
     timeout: float = 30.0,
 ) -> list[PerRowResult]:
-    """Fast strategy first; cumulative when the mapping can't be trusted."""
     fast = per_row_run_fast(
         spec, original_dig_path, jar_path=jar_path,
         timeout=max(timeout, 60.0),

@@ -1,8 +1,5 @@
-"""Global test isolation.
-
-Every scan consults the user's official-test store — point it into
-tmp for ALL tests so a developer's real ~/.dlc/official_tests.json can
-never leak into (or be touched by) a test run.
+"""
+Global test isolation.
 """
 
 import pytest

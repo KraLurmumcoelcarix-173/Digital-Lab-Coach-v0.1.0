@@ -1,17 +1,3 @@
-"""L3 Mode A coordinator + verifier (dlc/l3/debugger.py).
-
-Every test injects a fake model via `call=` — the pipeline never touches
-the network. The default fixture pins the NO-JAR path (the Python
-evaluator is both judge and verifier) so results are identical with or
-without a configured Digital.jar; one jar-gated test exercises the real
-Digital verify path end to end.
-
-Ground truth: bug3_wrong_cin — the Const feeding the adder's c_i omits
-Value (defaults to 1). The correct fix is change_attribute[16].Value=0;
-setting Value=1 instead applies cleanly but changes nothing (refutation
-fodder).
-"""
-
 import json
 import shutil
 from pathlib import Path
@@ -63,8 +49,6 @@ def _reply(ops, why="Sum is one too high on every failing row."):
 
 
 def _fake(replies):
-    """call= stub: pops canned replies (dicts are JSON-encoded), records
-    every prompt on .log, and refuses unexpected extra calls."""
     replies = list(replies)
     def call(prompt, **_kw):
         call.log.append(prompt)
@@ -87,11 +71,6 @@ def _never(prompt, **_kw):
 def _no_jar(monkeypatch):
     """Pin the evaluator path; the jar-gated test below re-enables it."""
     monkeypatch.setattr(debugger, "find_digital_jar", lambda: None)
-
-
-# ---------------------------------------------------------------------------
-# End to end on the benchmark (offline)
-# ---------------------------------------------------------------------------
 
 def test_bug3_end_to_end_confirmed_card():
     call = _fake([_reply(GOOD_OPS)])
@@ -152,8 +131,6 @@ def test_refuted_fix_earns_one_retry_with_evidence():
     res = debug_circuit(_BUG3, call=call, use_manifest=False,
                         failing_indices=[0, 1])
     assert res["llm_calls"] == 2
-    # the template mentions "[REFUTED ATTEMPT]" itself, so the real
-    # refutation block is recognized by its payload keys
     assert '"refuted_ops"' in call.log[1]
     assert '"still_failing"' in call.log[1]
     assert len(res["cards"]) == 1
@@ -161,13 +138,6 @@ def test_refuted_fix_earns_one_retry_with_evidence():
 
 
 def test_refuted_rom_data_rewrite_steers_the_retry_off_the_table():
-    # r27, from a live control-unit failure: once a Data rewrite is
-    # refuted on a ROM that HOLDS words, the retry must carry the
-    # machine fact that the stored words are consistent and point at
-    # the address/select path instead. r37 refinement: a Data rewrite
-    # on an EMPTY ROM must NOT be steered off — the missing words ARE
-    # the bug there (s008's unprogrammed decode ROM), so the steer's
-    # premise ("the stored words satisfy every passing row") is false.
     from types import SimpleNamespace
     from dlc.l3.debugger import _touches_stored_data, _refutation_block
 
@@ -178,14 +148,13 @@ def test_refuted_rom_data_rewrite_steers_the_retry_off_the_table():
     empty = SimpleNamespace(components=[SimpleNamespace(attributes={})])
     assert _touches_stored_data([data_op], stored) is True
     assert _touches_stored_data([data_op], empty) is False
-    assert _touches_stored_data([data_op], None) is True  # unknown: steer
+    assert _touches_stored_data([data_op], None) is True
     assert _touches_stored_data([GOOD_OPS], stored) is False
 
     verdict = {"apply_ok": True, "still_failing": [0], "regressions": [],
                "details": {}, "warning": None}
     assert "MACHINE FACT" in _refutation_block(data_op, verdict, stored)
     assert "MACHINE FACT" not in _refutation_block(data_op, verdict, empty)
-    # end to end: a refuted NON-data fix never carries the steer
     call2 = _fake([_reply(BAD_OPS), _reply(GOOD_OPS)])
     debug_circuit(_BUG3, call=call2, use_manifest=False,
                   failing_indices=[0, 1])
@@ -206,9 +175,6 @@ def test_unknown_op_is_a_format_error_then_dropped():
 
 @_needs_jar
 def test_bug3_fix_verifies_through_real_digital(monkeypatch):
-    # Digital's own bug3 verdict varies by jar version. 
-    # Pin the verdict through the caller seam so the REAL
-    # Digital VERIFY path is what this test exercises, deterministically.
     monkeypatch.setattr(debugger, "find_digital_jar",
                         lambda: find_digital_jar())
     call = _fake([_reply(GOOD_OPS)])
@@ -219,10 +185,6 @@ def test_bug3_fix_verifies_through_real_digital(monkeypatch):
     assert res["cards"][0]["verified"]["confirmed"] is True
     assert res["cards"][0]["verified"]["runner"] == "digital"
 
-
-# ---------------------------------------------------------------------------
-# Verifier
-# ---------------------------------------------------------------------------
 
 def test_verify_ops_confirms_the_correct_fix_offline():
     v = verify_ops(_BUG3, "Testcase_12", GOOD_OPS,
@@ -249,10 +211,6 @@ def test_verify_ops_reports_apply_failure():
     assert v["confirmed"] is False and v["apply_ok"] is False
     assert v["warning"]
 
-
-# ---------------------------------------------------------------------------
-# Pure helpers
-# ---------------------------------------------------------------------------
 
 def _hyp(ops, rows, confirmed, confidence=0.5, ci=0):
     return {"cluster_index": ci, "cluster_rows": rows,
@@ -320,8 +278,6 @@ def test_validate_hypothesis_requires_contract_and_ops():
 
 
 def test_small_circuit_stays_analyzable_even_when_every_row_fails():
-    # bug3 has 17 components (<= 30): the rate bars are off, so the
-    # evaluator's 4-of-4 failing verdict still runs the full pipeline
     call = _fake([_reply(GOOD_OPS)])
     res = debug_circuit(_BUG3, call=call, use_manifest=False)
     assert res["mode"] == "analysis"
@@ -330,8 +286,6 @@ def test_small_circuit_stays_analyzable_even_when_every_row_fails():
 
 
 def test_big_circuit_below_its_bar_goes_lazy_with_suggestions():
-    # unfocused (4 scattered columns) + 20% passing on a 160+ component
-    # tree: under the 30% bar -> the free suggestion branch
     led = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
            f"wrong_bool_LED1.dig")
     res = debug_circuit(led, call=_never, use_manifest=False,
@@ -370,8 +324,6 @@ def test_describe_ops_arrows_follow_signal_direction():
 
 
 def test_zero_card_run_earns_one_escalation_per_cluster():
-    # first answer refuted, its retry refuted again -> the run would be
-    # empty -> ONE escalation attempt with the refuted ops disclosed
     call = _fake([_reply(BAD_OPS), _reply(BAD_OPS), _reply(GOOD_OPS)])
     res = debug_circuit(_BUG3, call=call, use_manifest=False,
                         failing_indices=[0, 1])
@@ -379,13 +331,10 @@ def test_zero_card_run_earns_one_escalation_per_cluster():
     assert "[ESCALATION]" in call.log[2] and '"refuted_ops"' in call.log[2]
     assert len(res["cards"]) == 1
     assert res["cards"][0]["fix"]["ops"] == GOOD_OPS
-    # pipeline internals stay off the student's board
     assert not any("escalation" in n for n in res["notes"])
 
 
 def test_led5_gate_swap_fix_confirms_offline():
-    # the seeded LED5 bug: an Or turned into an And at index 164 — the
-    # single replace_element found by exhaustive verification
     led = (f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
            f"wrong_bool_LED5.dig")
     reply = _reply([{"op": "replace_element", "component_index": 164,
@@ -401,9 +350,6 @@ def test_led5_gate_swap_fix_confirms_offline():
 
 
 def test_best_unverified_survivor_when_everything_is_refuted():
-    # first answer, refutation retry, escalation — all three refuted →
-    # zero cards, but the top-ranked idea ships as best_unverified with
-    # exactly which rows it failed to fix; the board can offer a re-run
     call = _fake([_reply(BAD_OPS), _reply(BAD_OPS), _reply(BAD_OPS)])
     res = debug_circuit(_BUG3, call=call, use_manifest=False,
                         failing_indices=[0, 1])
@@ -415,7 +361,6 @@ def test_best_unverified_survivor_when_everything_is_refuted():
     assert b["fix"]["ops_pretty"] == ["set [16] Const attribute Value = 1"]
     assert b["verdict"]["still_failing"] == [0, 1]
     assert b["hint"]["suspect_region"]
-    # the amber card itself explains the state — no extra note on the board
     assert not any("unverified" in n.lower() for n in res["notes"])
     assert all((d.get("ops_pretty") or []) for d in res["dropped_ideas"]), \
         "dropped ideas must show what they tried"
@@ -430,9 +375,6 @@ def test_no_best_unverified_without_any_valid_hypothesis():
 
 
 def test_failing_subcircuit_gates_the_parent_into_suggestions():
-    # bug7: the calculator's bool_unit child carries its OWN testcase with
-    # 2 failing rows — parent analysis is noise until the child is fixed,
-    # so the run goes to the (free) suggestion branch, zero model calls
     parent = f"{_BENCH}/bug7_broken_child/tier3_calculator.dig"
     res = debug_circuit(parent, call=_never, use_manifest=False)
     assert res["mode"] == "lazy"
@@ -443,24 +385,12 @@ def test_failing_subcircuit_gates_the_parent_into_suggestions():
     assert "bottom-up" in res["suggestions"][0]["hint"]
 
 
-# ---------------------------------------------------------------------------
-# Coach-added rows: strict improvement, not perfection (the Mode B hand-off)
-# ---------------------------------------------------------------------------
-
 _BUG6 = f"{_BENCH}/bug6_hidden_mux_case3/uncovered_op_calculator.dig"
-# the hidden-mux repair: in3 stops feeding from the stray Ground [23] and
-# takes the boolean unit's Result, like in2 does
 MUX_FIX = [{"op": "rewire_pin", "component_index": 14, "pin": "in3",
             "to": {"component_index": 9, "pin": "Result"}}]
 
 
 def _coach_temp(tmp_path):
-    """bug6 + ONE coach-style row appended to its testcase:
-    '5 10 0 3 15 1 0 1' — Result/Zero/Bit0 assert the TRUE Op=3 values
-    (the mux fix repairs them; pre-fix all four columns mismatch), but
-    Carry is deliberately mis-guessed (1; truly 0 on both sides), so the
-    row can never FULLY pass. Exactly the bug6 case-3 hand-off shape that
-    used to refute the correct fix."""
     src = Path(_BUG6)
     shutil.copy(src.parent / "bool_unit.dig", tmp_path / "bool_unit.dig")
     text = src.read_text(encoding="utf-8")
@@ -475,8 +405,6 @@ def _coach_temp(tmp_path):
 
 
 def test_verify_ops_refutes_partial_fix_without_coach_targets(tmp_path):
-    # baseline: no coach knowledge -> the imperfect Carry guess refutes
-    # the CORRECT mux fix (this was the 90% case-3 failure)
     path = _coach_temp(tmp_path)
     v = verify_ops(path, "Testcase_25", MUX_FIX, [10], [10])
     assert v["confirmed"] is False
@@ -494,22 +422,17 @@ def test_coach_row_strict_improvement_confirms_with_residual(tmp_path):
 
 def test_coach_row_must_improve_and_break_nothing(tmp_path):
     path = _coach_temp(tmp_path)
-    # a do-nothing patch repairs no flagged column -> still refuted
     noop = [{"op": "change_attribute", "component_index": 23,
              "name": "Bits", "value": 4}]
     v = verify_ops(path, "Testcase_25", noop, [10], [10],
                    coach_targets={10: {"Result", "Carry", "Zero", "Bit0"}})
     assert v["confirmed"] is False and v["still_failing"] == [10]
-    # a residual column OUTSIDE the originally-flagged set -> refuted too
     v2 = verify_ops(path, "Testcase_25", MUX_FIX, [10], [10],
                     coach_targets={10: {"Result", "Zero", "Bit0"}})
     assert v2["confirmed"] is False and v2["still_failing"] == [10]
 
 
 def test_debug_circuit_judges_coach_rows_by_improvement(tmp_path):
-    # end to end: the evaluator sweep finds only the coach row failing;
-    # with coach_rows the correct fix earns a CONFIRMED card that names
-    # the residual cell instead of being refuted by it
     path = _coach_temp(tmp_path)
     call = _fake([_reply(MUX_FIX)])
     res = debug_circuit(path, call=call, use_manifest=False,
@@ -522,16 +445,7 @@ def test_debug_circuit_judges_coach_rows_by_improvement(tmp_path):
     assert card["fix"]["ops"] == MUX_FIX
 
 
-# ---------------------------------------------------------------------------
-# r37: runaway firewalls — build refusal, official child tests, stop budget
-# ---------------------------------------------------------------------------
-
 def test_all_rows_error_returns_build_refused_lazy(monkeypatch):
-    # jar-probed (r37, s008 tree): a dangling tunnel makes Digital refuse
-    # the whole build, so EVERY per-row result is an error. Analysis on
-    # an unbuildable circuit would only guess (and its verifier would
-    # refute every idea through the same refusal) — the run must stop
-    # free, pointing at the Layer 1 errors.
     from types import SimpleNamespace
     monkeypatch.setattr(debugger, "find_digital_jar", lambda: "fake.jar")
     monkeypatch.setattr(
@@ -552,11 +466,6 @@ def test_all_rows_error_returns_build_refused_lazy(monkeypatch):
 
 
 def test_child_failing_official_tests_gates_the_parent(tmp_path):
-    # r37 (s008): the real bug lives in control-unit.dig, which carries NO
-    # testcase of its own — the official rows must be injected for the
-    # children gate to see it, or Mode A burns model calls on parent
-    # wiring that can never fix a child. Child = a synthetic control unit
-    # whose outputs are all grounded (fails the official add row).
     child_parts = []
     for i, (label, bits) in enumerate(
             [("opcode", 7), ("funct3", 3), ("funct7", 7)]):
@@ -614,21 +523,16 @@ def test_child_failing_official_tests_gates_the_parent(tmp_path):
         "subcircuit_failing_official"]
     assert "control-unit.dig" in res["gross_flags"][0]["detail"]
     assert "official" in res["gross_flags"][0]["detail"]
-    # the tool-owned injected temp must not survive the gate
     assert not list(tmp_path.glob(".dlc_injected__*"))
 
 
 def test_stop_condition_returns_best_solution_early(monkeypatch):
-    # r37 stop condition: once _MAX_REFUTED_IDEAS ideas are refuted with
-    # no confirmed card, the run stops spending (no refute retry, no
-    # escalation) and ships the best unverified idea — the benchmark's
-    # "best solution" hard trigger reads stopped_early.
     monkeypatch.setattr(debugger, "_MAX_REFUTED_IDEAS", 1)
     call = _fake([_reply(BAD_OPS)])
     res = debug_circuit(_BUG3, call=call, use_manifest=False,
                         failing_indices=[0, 1])
     assert res["mode"] == "analysis"
-    assert res["llm_calls"] == 1           # no retry, no escalation
+    assert res["llm_calls"] == 1
     assert res["stopped_early"] is True
     assert res["refuted_ideas"] == 1
     assert res["cards"] == []
@@ -651,10 +555,6 @@ def test_unstopped_run_reports_flag_false():
 
 def test_all_rows_error_with_unbound_columns_gets_rename_guidance(
         monkeypatch, tmp_path):
-    # r37 (s008 raw control unit): Digital refuses with "Test signal
-    # funct3 not found" when the testcase columns don't match the port
-    # labels. That refusal is an INTERFACE problem, not wiring — the
-    # lazy result must say "rename your ports", not "fix Layer 1".
     from types import SimpleNamespace
     p = tmp_path / "renamed.dig"
     p.write_text(
@@ -692,10 +592,6 @@ def test_all_rows_error_with_unbound_columns_gets_rename_guidance(
 
 
 def test_control_unit_files_skip_the_lazy_gate(tmp_path):
-    # instructor ruling (marked temporary): control-unit files
-    # always analyze — the decode-table lab must reach Mode A no matter
-    # how gross the failure shape looks. Same content under any other
-    # name keeps every ratified lazy bar.
     from dlc.l3.debugger import _lazy_exempt_name
     assert _lazy_exempt_name("control-unit.dig") is True
     assert _lazy_exempt_name("ControlUnit.dig") is True
@@ -704,10 +600,6 @@ def test_control_unit_files_skip_the_lazy_gate(tmp_path):
     assert _lazy_exempt_name("register-file.dig") is False
     assert _lazy_exempt_name(None) is False
 
-    # 160+ component LED lab in a would-be-lazy shape: 4 of 5 rows
-    # failing on scattered single columns (low pass rate, no frozen
-    # trunk). Under its own name: lazy. Renamed control-unit.dig: the
-    # SAME verdict shape goes to analysis.
     led5 = Path(f"{_BENCH}/bug5_wrong_boolean_gate_decoder_logic/"
                 f"wrong_bool_LED5.dig")
     cells = {0: [{"column": "Fa", "expected": "1", "found": "0"}],
@@ -731,11 +623,6 @@ def test_control_unit_files_skip_the_lazy_gate(tmp_path):
 
 
 def test_rom_injected_note_rides_every_cluster_prompt():
-    # when the analyzed copy runs with grader-injected rom content,
-    # every cluster prompt carries the [ROM NOTE] so the model never
-    # proposes Data changes against official words. Plain runs don't.
-    # the template MENTIONS "[ROM NOTE]" in its reading guide, so the
-    # live block is recognized by its unique closing sentence
     marker = "still has that ROM unprogrammed"
     call = _fake([_reply(GOOD_OPS)])
     debug_circuit(_BUG3, call=call, use_manifest=False,
@@ -749,19 +636,11 @@ def test_rom_injected_note_rides_every_cluster_prompt():
 
 
 def test_prompt_checks_stored_data_first_not_last():
-    # r38 instructor ruling: the old "ROM data is a last resort" bias is
-    # gone; unverified stored data is now checked FIRST, and only
-    # grader-injected content is off limits (via the [ROM NOTE]).
     from dlc.l3.debugger import _load_prompt
     text = _load_prompt()
     assert "LAST RESORT" not in text
     assert "CHECK IT FIRST" in text
     assert "[ROM NOTE]" in text
-
-
-# ---------------------------------------------------------------------------
-# Data-op retargeting + stop on a complete verified answer
-# ---------------------------------------------------------------------------
 
 def test_retarget_data_ops_unit():
     from types import SimpleNamespace
@@ -790,7 +669,7 @@ def test_retarget_data_ops_unit():
 
     two_roms = circ("ROM", "ROM", "And")
     same4, note4 = _retarget_data_ops(two_roms, bad)
-    assert same4 == bad and note4 is None    # ambiguous: never guess
+    assert same4 == bad and note4 is None
 
 
 def test_verify_ops_exposes_remaining_failing():
@@ -851,10 +730,6 @@ _ROM_DECOY = (
 
 
 def test_misdirected_data_op_is_retargeted_verified_and_stops(tmp_path):
-    # r41 live case: the model derived the CORRECT rom table but wrote
-    # it at a gate's index; the verifier refuted a no-op and a correct
-    # answer was lost. Now the op is redirected to the only storage
-    # element, verifies, and — being a complete answer — ends the run.
     p = tmp_path / "romdecoy.dig"
     p.write_text(_ROM_DECOY, encoding="utf-8")
     reply = _reply([{"op": "change_attribute", "component_index": 5,
@@ -867,15 +742,11 @@ def test_misdirected_data_op_is_retargeted_verified_and_stops(tmp_path):
     assert len(res["cards"]) == 1
     card = res["cards"][0]
     assert card["verified"]["confirmed"] is True
-    assert card["fix"]["ops"][0]["component_index"] == 1   # the ROM
+    assert card["fix"]["ops"][0]["component_index"] == 1
     assert any("redirected" in n for n in res["notes"])
 
 
 def test_truncated_reply_earns_a_json_only_retry():
-    # measured live: claude-opus-5 hit the output cap on all four
-    # calls of a run — every reply died as invalid_response. A reply
-    # whose stop_reason is max_tokens now earns a retry that names the
-    # truncation and demands JSON-only output.
     replies = [
         {"ok": True, "text": '{"contract": "l3.debug.v1.1", "hint": ',
          "error": None, "usage": {"input_tokens": 1, "output_tokens": 1},
@@ -903,9 +774,6 @@ def test_opus5_gets_reasoning_headroom():
 
 
 def test_refutation_block_names_partial_progress():
-    # r42 (cu 3-gate exam circuit): a refuted fix that turned SOME
-    # target rows green is partially right — the retry must say so and
-    # demand keep-and-extend instead of a from-scratch restart.
     from dlc.l3.debugger import _refutation_block
     ops = [{"op": "replace_element", "component_index": 5,
             "new_element": "And"}]
@@ -916,13 +784,11 @@ def test_refutation_block_names_partial_progress():
     assert "KEEP the refuted ops" in txt
     assert "rows_these_ops_did_fix" in txt
 
-    # a full miss earns no progress claim
     verdict = {"apply_ok": True, "still_failing": [0, 1],
                "regressions": [], "details": {}, "warning": None}
     txt = _refutation_block(ops, verdict, target_rows=[0, 1])
     assert "PARTIALLY RIGHT" not in txt
 
-    # progress bought with regressions is not progress
     verdict = {"apply_ok": True, "still_failing": [1], "regressions": [4],
                "details": {}, "warning": None}
     txt = _refutation_block(ops, verdict, target_rows=[0, 1])
@@ -930,8 +796,6 @@ def test_refutation_block_names_partial_progress():
 
 
 def test_prompt_teaches_the_wrong_address_rule():
-    # mis-selected addresses must beat data rewrites, and the
-    # culprit index comes from the machine-traced selector table.
     from dlc.l3.debugger import _load_prompt
     text = _load_prompt()
     assert "WRONG ADDRESS beats wrong data" in text
@@ -939,10 +803,6 @@ def test_prompt_teaches_the_wrong_address_rule():
 
 
 def test_opus5_thinking_depth_is_bounded():
-    """claude-opus-5 thinks by default and, uncapped, spends the whole
-    output budget on thinking blocks - the reply carries zero text.
-    Mode A must pin effort=low; other models
-    keep provider defaults."""
     from dlc.l3.debugger import _effort_for
     assert _effort_for("claude-opus-5") == "low"
     assert _effort_for("claude-opus-4-8") is None

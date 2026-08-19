@@ -1,11 +1,13 @@
-"""offline audit: every LLM touchpoint must FAIL SOFT when there is
+"""
+offline audit: every LLM touchpoint must FAIL SOFT when there is
 no internet — a clear message, never a crash, and every deterministic
 feature (scans, gates, synthesis, jar verification) keeps working.
 
 Context for the ratified rule: API keys are only tickets — the models run
 in the providers' clouds, so every LLM call needs the network no matter
 whose key is configured. These tests simulate the offline case at the SDK
-boundary."""
+boundary.
+"""
 
 import pytest
 
@@ -51,8 +53,6 @@ def test_propose_rows_offline_reports_and_never_raises(_offline, monkeypatch):
 
 
 def test_deterministic_paths_work_fully_offline(_offline):
-    # the scan, the manifest machinery, and program synthesis never touch
-    # the network — the RISC-V coach can even BUILD extensions offline
     from dlc.l3 import manifest as mf
     from dlc.l3.coverage import scan_tree_coverage
     import json

@@ -1,9 +1,3 @@
-"""
-Grader flags are normalized to structured objects:
-{"paragraph": 1-6|None, "quote": str, "issue": str}.
-Plain-string flags (models ignoring the shape) must still survive.
-"""
-
 from dlc.llm.grade import _normalize_flag
 
 
@@ -46,8 +40,6 @@ def test_overlong_quote_is_truncated():
 
 
 def test_grade_summary_normalizes_mixed_flags(monkeypatch):
-    """End-to-end through grade_summary with a canned grader reply:
-    structured + string flags both come out structured."""
     import dlc.llm.grade as grade_mod
 
     canned = {

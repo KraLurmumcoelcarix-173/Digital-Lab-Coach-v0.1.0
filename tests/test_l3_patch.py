@@ -1,10 +1,3 @@
-"""L3 circuit-patch applier (dlc/l3/patch.py).
-
-The two flagship cases are SELF-VERIFYING fixes of seeded benchmark bugs:
-apply the known-correct patch, rerun Digital per-row, and the previously
-failing suite goes green — the exact Mode-A verify loop.
-"""
-
 import glob
 import os
 from pathlib import Path
@@ -85,11 +78,6 @@ def _edges(path):
                  cv.label or cv.element_name, d["sink_pin"]))
     return out
 
-
-# ---------------------------------------------------------------------------
-# Individual ops (no jar needed)
-# ---------------------------------------------------------------------------
-
 def test_swap_pins_exchanges_the_feeding_wires(tmp_path):
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
@@ -119,15 +107,13 @@ def test_rewire_pin_moves_a_sink_to_another_driver(tmp_path):
     assert report.ok, report.warning
     try:
         after = _edges(temp)
-        assert ("A", "out", "Comparator", "B") in after       # rewired to A
+        assert ("A", "out", "Comparator", "B") in after
         assert ("B", "out", "Comparator", "B") not in after
     finally:
         os.unlink(temp)
 
 
 def test_swap_pins_refuses_a_shared_junction(tmp_path):
-    # A second segment continues out of Comparator.A's coordinate, so the
-    # pin sits on a junction — pin-level ops must refuse, not corrupt.
     wires = _SIMPLE_WIRES + """
     <wire><p1 x="200" y="0"/><p2 x="200" y="-40"/></wire>"""
     src = tmp_path / "mini.dig"
@@ -144,7 +130,6 @@ def test_replace_element_keeps_attributes(tmp_path):
         {"op": "replace_element", "component_index": 2, "new_element": "Or"},
     ]) if parse_dig_file(_AND).components[2].element_name == "And" else (None, None)
     if temp is None:
-        # locate the And's index robustly instead of assuming position
         c = parse_dig_file(_AND)
         idx = next(i for i, comp in enumerate(c.components)
                    if comp.element_name == "And")
@@ -178,7 +163,7 @@ def test_change_attribute_preserves_existing_value_tag(tmp_path):
     assert report.ok, report.warning
     try:
         text = Path(temp).read_text(encoding="utf-8")
-        assert "<long>5</long>" in text            # Digital types Value as long
+        assert "<long>5</long>" in text
         patched = parse_dig_file(temp)
         assert patched.components[4].attributes["Value"] == 5
     finally:
@@ -208,9 +193,6 @@ def test_change_attribute_creates_missing_entry_with_typed_tag(tmp_path):
 
 
 def test_change_attribute_normalizes_rom_data_forms(tmp_path):
-    # models hand ROM Data back as JSON lists or 0x-prefixed words; the
-    # applier must write Digital's comma-separated bare-hex form, or a
-    # semantically CORRECT fix dies on formatting inside the ROM parser
     extra = """
     <visualElement>
       <elementName>ROM</elementName>
@@ -223,9 +205,9 @@ def test_change_attribute_normalizes_rom_data_forms(tmp_path):
     </visualElement>"""
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES, extra), encoding="utf-8")
-    for value in (["0x82", "0x86", "0xC2"],          # JSON list, 0x, casing
-                  "0x82, 0x86, 0xC2",                # prefixed string
-                  "82,86,c2"):                       # already canonical
+    for value in (["0x82", "0x86", "0xC2"],
+                  "0x82, 0x86, 0xC2",
+                  "82,86,c2"):
         temp, report = apply_patch(str(src), [
             {"op": "change_attribute", "component_index": 4,
              "name": "Data", "value": value},
@@ -252,10 +234,6 @@ def test_add_and_delete_wire_roundtrip(tmp_path):
         os.unlink(temp)
 
 
-# ---------------------------------------------------------------------------
-# Validation & guards
-# ---------------------------------------------------------------------------
-
 def test_unknown_op_and_bad_index_are_rejected(tmp_path):
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
@@ -277,7 +255,6 @@ def test_delete_missing_wire_is_rejected(tmp_path):
 
 
 def test_patch_introducing_l1_errors_is_rejected(tmp_path):
-    # Shorting In A's net into In B's output creates a multi-driver net.
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
     temp, report = apply_patch(str(src), [
@@ -289,15 +266,8 @@ def test_patch_introducing_l1_errors_is_rejected(tmp_path):
     leftovers = glob.glob(str(tmp_path / "dlc_row_l3fix_*.dig"))
     assert leftovers == []
 
-
-# ---------------------------------------------------------------------------
-# Self-verifying fixes of seeded bugs (jar-gated — the Mode-A verify loop)
-# ---------------------------------------------------------------------------
-
 @_needs_jar
 def test_bug3_fix_carry_const_makes_all_rows_pass():
-    # Seeded bug: Const[16] (omitted Value -> 1) drives Add.c_i.
-    # The fix: give it an explicit Value of 0.
     out = rerun_with_patch(_BUG3, [
         {"op": "change_attribute", "component_index": 16,
          "name": "Value", "value": 0},
@@ -313,10 +283,9 @@ def test_bug3_fix_carry_const_makes_all_rows_pass():
 
 @_needs_jar
 def test_bug3_unpatched_baseline_still_fails():
-    # The self-verify contrast: a no-op patch must NOT make the suite pass.
     out = rerun_with_patch(_BUG3, [
         {"op": "change_attribute", "component_index": 16,
-         "name": "Value", "value": 1},          # explicit 1 == the bug
+         "name": "Value", "value": 1},
     ])
     assert out.ok
     assert out.all_passed is False
@@ -324,8 +293,6 @@ def test_bug3_unpatched_baseline_still_fails():
 
 @_needs_jar
 def test_bug1_rewire_mux_in3_to_bool_unit_makes_all_rows_pass():
-    # Seeded bug: mux[14].in3 tied to Ground[23]; correct wiring routes the
-    # boolean unit's Result (already on in2) to in3 as well (Op=3 -> OR).
     out = rerun_with_patch(_BUG1, [
         {"op": "rewire_pin", "component_index": 14, "pin": "in3",
          "to": {"component_index": 9, "pin": "Result"}},
@@ -333,14 +300,8 @@ def test_bug1_rewire_mux_in3_to_bool_unit_makes_all_rows_pass():
     assert out.ok, out.warning
     assert out.all_passed is True, out.specs
 
-# ---------------------------------------------------------------------------
-# add_component / delete_component
-# ---------------------------------------------------------------------------
 
 def test_add_component_wired_via_add_wire(tmp_path):
-    # Insert a NOT between In B and Comparator.B: add the component, cut the
-    # old wire, wire B -> Not.A and Not.Y -> Comparator.B at its pin offsets
-    # (Not: A@anchor, Y@anchor+40).
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
     temp, report = apply_patch(str(src), [
@@ -353,7 +314,7 @@ def test_add_component_wired_via_add_wire(tmp_path):
     assert report.ok, report.warning
     try:
         patched = parse_dig_file(temp)
-        assert patched.components[-1].element_name == "Not"   # appended at END
+        assert patched.components[-1].element_name == "Not"
         assert patched.components[-1].attributes["Bits"] == 1
         after = _edges(temp)
         assert ("B", "out", "Not", "A") in after
@@ -366,21 +327,19 @@ def test_delete_component_removes_element_and_deadend_wire(tmp_path):
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
     temp, report = apply_patch(str(src), [
-        {"op": "delete_component", "component_index": 3},     # the Out G
+        {"op": "delete_component", "component_index": 3},
     ])
     assert report.ok, report.warning
     try:
         patched = parse_dig_file(temp)
         assert len(patched.components) == 3
         assert not any(c.element_name == "Out" for c in patched.components)
-        assert len(patched.wires) == 2                        # gr->G wire gone
+        assert len(patched.wires) == 2
     finally:
         os.unlink(temp)
 
 
 def test_delete_component_keeps_junction_wires(tmp_path):
-    # Out G's pin coordinate is a junction (a second segment continues from
-    # it): deleting G must not remove the shared routing.
     wires = _SIMPLE_WIRES + """
     <wire><p1 x="300" y="0"/><p2 x="300" y="100"/></wire>"""
     src = tmp_path / "mini.dig"
@@ -391,14 +350,13 @@ def test_delete_component_keeps_junction_wires(tmp_path):
     assert report.ok, report.warning
     try:
         patched = parse_dig_file(temp)
-        assert len(patched.wires) == 4                        # nothing removed
+        assert len(patched.wires) == 4
         assert not any(c.element_name == "Out" for c in patched.components)
     finally:
         os.unlink(temp)
 
 
 def test_delete_component_breaking_the_circuit_is_rejected(tmp_path):
-    # Deleting In A orphans Comparator.A -> NEW dangling_input -> guard trips.
     src = tmp_path / "mini.dig"
     src.write_text(_mini_circuit(_SIMPLE_WIRES), encoding="utf-8")
     temp, report = apply_patch(str(src), [
@@ -410,8 +368,6 @@ def test_delete_component_breaking_the_circuit_is_rejected(tmp_path):
 
 
 def test_deletes_apply_last_so_indices_stay_original(tmp_path):
-    # Two isolated Consts [4] and [5]; delete [4] while changing [5]'s Value.
-    # If deletion ran first, index 5 would shift and the change would miss.
     extra = """
     <visualElement>
       <elementName>Const</elementName>

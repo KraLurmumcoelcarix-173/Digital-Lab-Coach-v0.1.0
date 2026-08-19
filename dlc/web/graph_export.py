@@ -1,7 +1,6 @@
 """
 Convert a parsed Circuit + NetList + signal_graph into the JSON shape
 Cytoscape.js consumes for rendering.
-
 """
 
 from dlc.parser.models import Circuit
@@ -122,9 +121,6 @@ def _resolve_edge_bits(
     return None
 
 def _synthetic_not_node(node_id: str, gate_comp) -> dict:
-    """A visible NOT glyph standing in for a gate's inverter bubble
-    (inverterConfig). Not a real component — flagged `synthetic` so the
-    overlay / L3 can tell it apart from a true Not element."""
     return {
         "data": {
             "id": node_id,
@@ -147,12 +143,9 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
     omitted 
     """
     child_by_index = _build_child_by_index(circuit)
-    # Single source of truth for bit width: the per-net inference. Computed
-    # once here so every edge on a given net reports the SAME width and so
-    # we don't keep a second, independently-drifting width path.
     per_net, _conflicts = infer_net_widths(circuit, netlist)
     nodes = []
-    node_ports: dict[str, dict] = {}   # node id -> {pin_name: endpoint}
+    node_ports: dict[str, dict] = {}
     for idx, comp in enumerate(circuit.components):
         family = _family(comp.element_name)
         if family in ("annotation", "tunnel"):
@@ -172,9 +165,6 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
             "x_dig": comp.position.x,
             "y_dig": comp.position.y,
         }
-        # Optional parametric glyph (gate/mux/decoder/splitter/…). Absent for
-        # components we don't specially draw — the front end keeps the default
-        # round-rectangle for those.
         glyph = shape_for(comp, family)
         if glyph is not None:
             data["shape_svg"] = glyph["svg"]
@@ -184,9 +174,6 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
             node_ports[str(idx)] = glyph.get("ports", {})
         nodes.append({"data": data})
 
-   # Gates whose inputs carry an inverter bubble: render the bubble as a
-    # visible NOT node spliced onto the wire feeding that input, so the
-    # inversion isn't silently hidden inside the gate.
     inverted_by_comp = {}
     for idx, comp in enumerate(circuit.components):
         inv = inverted_input_names(comp)
@@ -202,8 +189,6 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
         driver_pin = data.get("driver_pin")
         sink_pin = data.get("sink_pin")
         net_id = data.get("net_id")
-        # Prefer the per-net inferred width; fall back to the per-pin
-        # estimate only when the net's width couldn't be inferred.
         info = per_net.get(net_id) if net_id is not None else None
         bits = info.width if info is not None else None
         if bits is None:
@@ -213,7 +198,6 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
             )
 
         if v in inverted_by_comp and sink_pin in inverted_by_comp[v]:
-            # splice driver -> NOT -> gate(inverted input)
             key = (v, sink_pin)
             not_id = not_node_ids.get(key)
             if not_id is None:
@@ -262,9 +246,6 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
-    """
-    Right-sidebar headline numbers. Static L2 (no LLM).
-    """
     inventory: dict[str, int] = {}
     for comp in circuit.components:
         if comp.element_name in ("Testcase", "Rectangle"):
@@ -298,10 +279,6 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         1 for c in circuit.components if c.element_name == "Testcase"
     )
 
-    # Gradescope-style: an official test set registered for this FILENAME
-    # means test runs use the official rows whenever the file's own
-    # testcase is missing or does not match them (dlc/testing/inject) —
-    # so the panel can say so from the second the file is uploaded.
     official_status = None
     try:
         import os as _os
@@ -322,9 +299,6 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         "has_testcases": n_testcases > 0,
         "testcase_count": n_testcases,
         "official_test_available": official_status is not None,
-        # None = no official set registered for this filename;
-        # 'official' = file's testcase matches it (runs untouched);
-        # 'modified' / 'missing' = runs will inject the official rows.
         "official_test_status": official_status,
         "net_stats": {
             "total": len(netlist.nets),

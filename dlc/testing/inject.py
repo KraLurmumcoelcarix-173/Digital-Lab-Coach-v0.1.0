@@ -1,30 +1,5 @@
-"""Gradescope-style official-testcase injection for test runs.
-
-The autograder always runs a submission against the OFFICIAL test vectors:
-whatever a student's own Testcase element holds — missing, header-only, or
-edited — the grade comes from the instructor's rows. The coach mirrors
-that: when a filename has an official test set registered
-(data/official_tests_defaults.json, or a Settings entry) and the file's
-own testcase does not MATCH it (normalized-content hash), test runs use
-the official rows instead. A file whose testcase already matches runs
-untouched.
-
-EMPTY ROMs: when the course registers a runtime payload for the filename
-(official_store.get_runtime_payload — an opaque, base64-stored blob that
-no UI ever renders), an empty ROM's Data is filled in the RUN COPY so
-the run grades the student's logic instead of an unprogrammed memory.
-The data itself is never shown to the student — only a note that the
-course program was loaded. A ROM that already has ANY data is never
-touched (a wrong decode table stays the student's problem — Layer 3's
-teaching material), the student's real file keeps its empty ROM, the
-Layer-1 empty_rom WARNING still shows, and Layer 3 coaches the real
-file. Payloads are registered ONLY for instructor-given ROM content
-(cpu.dig's Instruction Memory) — never for ROMs that are themselves the
-deliverable (control-unit decode table).
-
-The student's file on disk is never modified: injection writes a sibling
-temp copy (same directory, so child .dig references still resolve), the
-jar runs on the copy, and the caller removes it afterwards.
+"""
+Gradescope-style official-testcase injection for test runs.
 """
 
 from __future__ import annotations
@@ -39,13 +14,6 @@ def _official_testcase(filename: str) -> str | None:
 
 
 def file_test_status(circuit, filename: str) -> str | None:
-    """How this file's own tests relate to the official set for `filename`.
-
-    Returns None when no official test set is registered for the filename;
-    otherwise 'official' (some testcase hash-matches the official rows),
-    'modified' (it has test rows, but none match), or 'missing' (no
-    testcase with data rows at all).
-    """
     from dlc.l3 import official_store
     from dlc.testing.spec import extract_test_specs
 
@@ -62,19 +30,10 @@ def file_test_status(circuit, filename: str) -> str | None:
     specs = [s for s in extract_test_specs(circuit) if s.rows]
     return "modified" if specs else "missing"
 
-
-# The injected Testcase element's Label. It MUST be set: an unlabeled
-# testcase prints as "unnamed" in Digital's CLI output while our spec
-# extractor names it "Testcase_<index>", so every runner's name-matching
-# misses and per-row runs error out with "no matching result line"
-# (found live on a real control-unit upload, r32).
 INJECTED_TEST_LABEL = "official"
 
 
 def _replace_testcases(root: ET.Element, content: str) -> bool:
-    """Drop every Testcase element and add ONE labeled holding `content` —
-    the run should exercise exactly the official rows, like the grader
-    does. Returns True when the XML changed."""
     ves = root.find("visualElements")
     if ves is None:
         return False
@@ -103,8 +62,6 @@ def _replace_testcases(root: ET.Element, content: str) -> bool:
 
 
 def _fill_empty_roms(root: ET.Element, data: str) -> int:
-    """Write `data` into every ROM whose Data is empty/missing (a ROM the
-    student DID program is never touched). Returns how many were filled."""
     if not (data or "").strip():
         return 0
     filled = 0
@@ -129,7 +86,6 @@ def _fill_empty_roms(root: ET.Element, data: str) -> int:
 
 
 def _entry_map(element: ET.Element) -> dict[str, ET.Element]:
-    """{key: value-element} for a Digital elementAttributes block."""
     out: dict[str, ET.Element] = {}
     for entry in element.findall("./elementAttributes/entry"):
         kids = list(entry)
@@ -139,16 +95,6 @@ def _entry_map(element: ET.Element) -> dict[str, ET.Element]:
 
 
 def prepare_injected_run(path: str, filename: str) -> tuple[str | None, list[str]]:
-    """Return (temp_path, notes) when injection applies to this file, or
-    (None, []) when the file runs as-is.
-
-    temp_path is a sibling copy where (a) the testcase is replaced by the
-    official rows when the file's own testcase is missing or modified,
-    and (b) empty ROMs are filled from the course runtime payload when
-    one is registered for this filename. The caller runs the jar on it
-    and unlinks it in a finally block. Any hiccup returns (None, []) —
-    injection must never break a run that would have worked without it.
-    """
     try:
         from dlc.parser.dig_parser import parse_dig_file
         from dlc.l3.official_store import get_runtime_payload
@@ -181,9 +127,6 @@ def prepare_injected_run(path: str, filename: str) -> tuple[str | None, list[str
             if n:
                 changed = True
                 plural = "s" if n != 1 else ""
-                # "course program was loaded" is a MARKER: the Mode A
-                # route detects rom injection off this substring
-                # (l3_routes._rom_injected_notes) — keep it if rewording.
                 notes.append(
                     f"the course program was loaded into {n} empty "
                     f"ROM{plural} for this run so your logic could be "
@@ -201,13 +144,6 @@ def prepare_injected_run(path: str, filename: str) -> tuple[str | None, list[str
 
 
 def inject_official_tests_in_place(path: str, filename: str) -> list[str]:
-    """Apply testcase injection (only — never ROM) directly to `path`,
-    which must be a TOOL-OWNED scratch copy (an L3 coach temp), never a
-    student's real file. Returns the notes, [] when nothing applied.
-
-    Layer 3's fix-retest loop rebuilds a temp from the student's base
-    file: without this, an empty/modified testcase makes the retest see
-    zero (or non-official) rows and report "all fixed" on nothing."""
     try:
         from dlc.parser.dig_parser import parse_dig_file
         circuit = parse_dig_file(path)

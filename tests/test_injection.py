@@ -1,14 +1,3 @@
-"""Gradescope-style injection (dlc/testing/inject.py).
-
-Runs use the OFFICIAL test rows whenever a file's own testcase is
-missing, header-only, or modified relative to the registered official
-set; an EMPTY ROM is filled in the run copy from the course runtime
-payload when one is registered for the filename. The payload is stored
-opaquely (base64) and must never surface in any UI — students only see
-a note that the course program was loaded. A ROM with any data, and the
-student's real file, are never touched. All fixtures are synthetic.
-"""
-
 import json
 import os
 import xml.etree.ElementTree as ET
@@ -21,8 +10,6 @@ from dlc.testing.inject import (
 )
 
 
-# A minimal cpu-shaped file: one ROM with NO Data, one header-only
-# testcase. The wiring is irrelevant to injection (no jar run here).
 _EMPTY_CPU = """<?xml version="1.0" encoding="utf-8"?>
 <circuit>
   <version>2</version>
@@ -68,7 +55,6 @@ def _with_testcase(rows: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _isolated_user_store(tmp_path, monkeypatch):
-    # user layer empty -> only the shipped defaults answer lookups
     monkeypatch.setenv(
         "DLC_OFFICIAL_TESTS_PATH", str(tmp_path / "official_tests.json")
     )
@@ -76,8 +62,6 @@ def _isolated_user_store(tmp_path, monkeypatch):
 
 def test_defaults_expose_cpu_testcase_and_hidden_runtime():
     assert official_store.get_content("cpu.dig")
-    # the course program ships ONLY as an opaque runtime payload: no
-    # plaintext program data anywhere, and no legacy accessor
     assert not hasattr(official_store, "get_rom_program")
     defaults_path = os.path.join(
         os.path.dirname(__file__), "..", "data",
@@ -86,7 +70,6 @@ def test_defaults_expose_cpu_testcase_and_hidden_runtime():
     assert "fec00213" not in open(defaults_path).read()
     rom = official_store.get_runtime_payload("cpu.dig", "rom")
     assert rom and rom.startswith("fec00213")
-    # never registered for student-authored ROMs, and never listed
     assert official_store.get_runtime_payload("control-unit.dig", "rom") is None
     assert "fec00213" not in json.dumps(official_store.list_tests())
     assert "runtime" not in json.dumps(official_store.list_tests())
@@ -120,13 +103,12 @@ def test_injects_official_testcase_when_missing(tmp_path):
     temp, notes = prepare_injected_run(str(p), "cpu.dig")
     try:
         assert temp and os.path.exists(temp)
-        assert os.path.dirname(temp) == str(tmp_path)  # sibling: children resolve
+        assert os.path.dirname(temp) == str(tmp_path)
         assert any("no test rows" in n for n in notes)
 
         root = ET.parse(temp).getroot()
         ds = [el.text or "" for el in root.iter("dataString")]
         assert any("ReadData1" in t and len(t.splitlines()) > 5 for t in ds)
-        # the RUN COPY gets the course program in its empty ROM
         datas = [
             kids[1].text
             for ve in root.iter("visualElement")
@@ -135,7 +117,6 @@ def test_injects_official_testcase_when_missing(tmp_path):
         ]
         assert any((d or "").startswith("fec00213") for d in datas)
         assert any("course program was loaded" in n for n in notes)
-        # the student's file itself is untouched (ROM stays empty there)
         assert p.read_text(encoding="utf-8") == before
     finally:
         cleanup_injected(temp)
@@ -152,7 +133,7 @@ def test_injects_official_testcase_when_modified(tmp_path):
         root = ET.parse(temp).getroot()
         tcs = [ve for ve in root.iter("visualElement")
                if ve.findtext("elementName") == "Testcase"]
-        assert len(tcs) == 1          # replaced, not appended
+        assert len(tcs) == 1
         ds = [el.text or "" for el in root.iter("dataString")]
         assert any("ReadData1" in t and len(t.splitlines()) > 5 for t in ds)
         assert not any("C 1 1" in t for t in ds)
@@ -161,8 +142,6 @@ def test_injects_official_testcase_when_modified(tmp_path):
 
 
 def test_official_testcase_kept_but_empty_rom_still_filled(tmp_path):
-    # testcase matches official -> kept verbatim; the empty ROM alone
-    # still gets the course program in the run copy.
     p = tmp_path / "cpu.dig"
     p.write_text(_with_testcase(official_store.get_content("cpu.dig")),
                  encoding="utf-8")
@@ -173,7 +152,7 @@ def test_official_testcase_kept_but_empty_rom_still_filled(tmp_path):
         root = ET.parse(temp).getroot()
         tcs = [ve for ve in root.iter("visualElement")
                if ve.findtext("elementName") == "Testcase"]
-        assert len(tcs) == 1          # their (official-matching) testcase kept
+        assert len(tcs) == 1
     finally:
         cleanup_injected(temp)
 
@@ -194,8 +173,6 @@ def test_no_injection_for_unregistered_filename(tmp_path):
     p = tmp_path / "mystery.dig"
     p.write_text(_EMPTY_CPU, encoding="utf-8")
     temp, notes = prepare_injected_run(str(p), "mystery.dig")
-    # mystery.dig has no official testcase; its empty ROM alone must not
-    # trigger anything (ROMs are never injected).
     assert temp is None and notes == []
 
 
@@ -215,11 +192,6 @@ def test_empty_rom_is_warning_and_never_blocks(tmp_path):
 
 
 def test_injected_testcase_is_labeled(tmp_path):
-    # An unlabeled testcase prints as "unnamed" in Digital's CLI output
-    # while our spec extractor names it "Testcase_<index>" — every
-    # runner's name-matching then misses and per-row runs error out
-    # (found live on a real control-unit upload). The injected element
-    # must carry the canonical label, and the spec must pick it up.
     from dlc.testing.inject import INJECTED_TEST_LABEL
     from dlc.parser.dig_parser import parse_dig_file
     from dlc.testing.spec import extract_test_specs
