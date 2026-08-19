@@ -1,7 +1,7 @@
 """
 Web API: tests are blocked while Layer 1 structural ERRORS exist.
 
-The gate fires before the Digital.jar lookup, so these tests run with
+Such case fires before the Digital.jar lookup, so these tests run with
 or without a configured jar.
 """
 

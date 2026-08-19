@@ -15,8 +15,6 @@ _CALC_DIR = "data/sample_circuits/30_bug_benchmark/bug1_meaningless_mux_in3"
 
 @pytest.fixture(autouse=True)
 def _tmp_db(tmp_path, monkeypatch):
-    # /api/circuit runs the GC sweep + telemetry lives next door; keep every
-    # test pointed at a throwaway sink, never the developer's ~/.dlc.
     monkeypatch.setenv("DLC_TELEMETRY_DB", str(tmp_path / "telemetry.db"))
 
 
@@ -49,7 +47,7 @@ def test_coverage_endpoint_scans_the_whole_tree():
         assert [c["file"] for c in body["circuits"]] == [
             "tier3_calculator.dig", "bool_unit.dig",
         ]
-        assert body["total_flags"] > 0            # bug1's seeded mismatch
+        assert body["total_flags"] > 0
         flags = body["circuits"][0]["flags"]
         assert {f["row_index"] for f in flags} == {6, 11}
         child = body["circuits"][1]
@@ -75,8 +73,6 @@ def test_coverage_endpoint_clean_circuit_reports_no_flags():
 
 
 def test_coverage_endpoint_select_gate_is_free(monkeypatch, tmp_path):
-    # Case 3.B: bug6 scans clean but Op=3 is never exercised — the scan
-    # carries select_gate, consumes NO Mode B use, and the UI locks propose
     monkeypatch.setenv("DLC_LIMITS_PATH", str(tmp_path / "limits.json"))
     d = "data/sample_circuits/30_bug_benchmark/bug6_hidden_mux_case3"
     sid = _upload(f"{d}/uncovered_op_calculator.dig", f"{d}/bool_unit.dig")
@@ -95,8 +91,6 @@ def test_coverage_endpoint_select_gate_is_free(monkeypatch, tmp_path):
 
 
 def test_coverage_endpoint_notes_unresolved_children_instead_of_failing():
-    # Parent uploaded WITHOUT its child: the missing subcircuit becomes a
-    # report note; the endpoint itself still succeeds.
     sid = _upload(f"{_CALC_DIR}/tier3_calculator.dig")
     try:
         r = client.post("/api/l3/coverage", json={

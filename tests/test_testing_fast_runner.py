@@ -1,8 +1,8 @@
 """
-F4 fast runner: verbose-table parsing + 1:1 row mapping.
+Fast runner: verbose-table parsing + 1:1 row mapping.
 
 Fixture texts are real `CLI test -verbose` outputs captured from
-Digital v0.31 (java -cp Digital.jar CLI test -circ ... -verbose).
+java -cp Digital.jar CLI test -circ ... -verbose.
 """
 
 import os
@@ -21,7 +21,6 @@ from dlc.testing.spec import TestSpec, parse_data_string
 SAMPLES = Path(__file__).parent.parent / "data" / "sample_circuits"
 
 
-# Captured output: stateful circuit, one C-clock row failing in place.
 VERBOSE_FAILED = """\
 this_is_a_test: failed (20%)
 A B C D load Clock Fa Fb Fc Fd Fe Ff Fg
@@ -34,7 +33,6 @@ A B C D load Clock Fa Fb Fc Fd Fe Ff Fg
 Tests have failed.
 """
 
-# Captured output: two testcases, first failed (with table), second passed.
 VERBOSE_TWO_TC = VERBOSE_FAILED.replace(
     "\nTests have failed.\n", "\nsecond_test: passed\nTests have failed.\n"
 )
@@ -46,7 +44,6 @@ this_is_a_test: Test signal Qx not found in the circuit!
 Tests have failed.
 """
 
-# Spaced testcase name + multiple failing cells in one row.
 VERBOSE_SPACED_NAME = """\
 Register File Test: failed (1%)
 WriteReg WriteData RegWrite Clock ReadReg1 ReadReg2 ReadData1 ReadData2
@@ -116,9 +113,7 @@ def test_verbose_parse_spaced_name_and_multi_mismatch_row():
 
 
 def test_verbose_parse_testcase_error_needs_known_names():
-    # Without known names the error line is ignored (could be log noise)...
     assert parse_cli_output_verbose(VERBOSE_TC_ERROR) == {}
-    # ...with known names it becomes an error section with the real message.
     sections = parse_cli_output_verbose(
         VERBOSE_TC_ERROR, known_names={"this_is_a_test"},
     )

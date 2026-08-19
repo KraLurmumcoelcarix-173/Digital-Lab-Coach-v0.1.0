@@ -523,7 +523,8 @@ def propose_rows(
     used_model = model or _propose_model()
     # stronger models front-load visible analysis before the JSON;
     # 1500 tokens truncated mid-thought and parsed as "nothing usable".
-    resp = call(prompt, model=used_model, max_tokens=4000)
+    resp = call(prompt, model=used_model, max_tokens=4000,
+                feature="modeB")
     if not resp.get("ok"):
         return {"ok": False, "proposals": [], "rejected": [],
                 "model": used_model,
@@ -536,7 +537,7 @@ def propose_rows(
         # JSON. One bounded retry with a terse reminder fixes most of it.
         resp2 = call(prompt + "\n\nREMINDER: output ONLY the JSON object "
                      "now — no analysis text.",
-                     model=used_model, max_tokens=4000)
+                     model=used_model, max_tokens=4000, feature="modeB")
         if resp2.get("ok"):
             proposals = parse_proposals(resp2.get("text") or "")
     if not proposals:
@@ -900,7 +901,8 @@ def _selfcheck_gate(valid, rejected, notes, targets, call, used_model):
                   {c[2]["file"]: [o["label"] for o in c[2]["outputs"]]
                    for c in candidates}))
               .replace("<<ROWS_JSON>>", json.dumps(payload_rows, indent=1)))
-    resp = call(prompt, model=used_model, max_tokens=1200)
+    resp = call(prompt, model=used_model, max_tokens=1200,
+                feature="modeB")
     if not resp.get("ok"):
         notes.append("self-check call failed — rows pass through to the "
                      "inject verification unchecked.")

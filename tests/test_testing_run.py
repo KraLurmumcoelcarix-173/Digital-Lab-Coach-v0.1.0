@@ -1,5 +1,5 @@
 """
-Tests for dlc.testing.run — F4 TestSpec×TestRunResults join.
+Tests for dlc.testing.run — TestSpec×TestRunResults join.
 """
 
 from pathlib import Path
@@ -35,7 +35,7 @@ def test_join_with_no_cli_result():
     assert len(runs) == 1
     assert not runs[0].has_result
     assert not runs[0].passed
-    assert runs[0].bindings  
+    assert runs[0].bindings
 
 
 def test_join_with_mismatched_name():

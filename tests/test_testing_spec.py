@@ -1,5 +1,5 @@
 """
-Tests for dlc.testing.spec 
+Tests for dlc.testing.spec
 """
 
 from pathlib import Path
@@ -156,11 +156,11 @@ def test_multiple_loops_in_one_datastring():
         "loop(K, 3)\n(K) (K+10)\nend loop\n"
     )
     _, rows, has_unexpanded = parse_data_string(text)
-    assert len(rows) == 5     
+    assert len(rows) == 5
     assert not has_unexpanded
-    assert rows[0].values[0].value == 1   
-    assert rows[2].values[0].value == 0   
-    assert rows[4].values[1].value == 12  
+    assert rows[0].values[0].value == 1
+    assert rows[2].values[0].value == 0
+    assert rows[4].values[1].value == 12
 
 def test_parse_data_string_malformed_row_recorded_but_kept():
 

@@ -1,10 +1,5 @@
 """
 Tests for the .dig parser.
-
-Run from repo root:
-    uv run pytest                    # all tests
-    uv run pytest tests/test_parser.py    # only parser tests
-    uv run pytest -v                 # verbose
 """
 
 from pathlib import Path
@@ -24,9 +19,6 @@ def _load(name: str) -> Circuit:
 
 def _load_tier2(name: str) -> Circuit:
     return parse_dig_file(str(TIER2_DIR / name))
-
-
-# Per-file structural tests (tier-1 minimal)
 
 
 def test_single_and():
@@ -147,10 +139,7 @@ def test_register():
     assert len(clocks) == 1
 
 
-# Invariant + error-handling tests
-
 def test_all_samples_parse_without_error():
-    """No sample file should ever raise an exception during parsing."""
     for dig_path in SAMPLES_DIR.glob("*.dig"):
         circuit = parse_dig_file(str(dig_path))
         assert isinstance(circuit, Circuit)
@@ -158,7 +147,6 @@ def test_all_samples_parse_without_error():
 
 
 def test_all_samples_have_format_version():
-    """Every .dig file in our samples should have <version>2</version>."""
     for dig_path in SAMPLES_DIR.glob("*.dig"):
         c = parse_dig_file(str(dig_path))
         assert c.format_version == 2, f"{dig_path.name} has version {c.format_version}"
@@ -183,11 +171,6 @@ def test_malformed_xml_raises(tmp_path):
 
 
 def test_rotation_attribute_parses_as_integer():
-    """
-    The <rotation rotation="N"/> XML form stores N in an attribute, not
-    as text. The parser must extract N as an integer rather than the
-    literal string "rotation".
-    """
     c = _load_tier2("uses_subcircuit.dig")
     assert c is not None
 
@@ -302,7 +285,7 @@ def test_ambiguous_subcircuit_flagged_but_resolved(tmp_path):
     assert "deeper" not in sub.resolved_path.replace("\\", "/")
 
 
-# Testcase dataString extraction 
+# Testcase dataString extraction
 
 def test_testcase_dataString_extracted_into_attribute():
     c = _load("single_and.dig")
@@ -312,7 +295,7 @@ def test_testcase_dataString_extracted_into_attribute():
     assert raw.startswith("A B Y")
     assert "1 1 1" in raw
     lines = [line for line in raw.strip().splitlines() if line.strip()]
-    assert len(lines) == 5  
+    assert len(lines) == 5
 
 def test_testcase_with_clock_token_captured(tmp_path):
     dig = tmp_path / "tc.dig"

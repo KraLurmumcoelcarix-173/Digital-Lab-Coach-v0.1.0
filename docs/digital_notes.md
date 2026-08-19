@@ -478,6 +478,33 @@ verified empirically:
   tables, own lookup tables) stays fully fixable — the guard keys on
   payload registration + isProgramMemory, nothing else.
 
+## Telemetry + course proxy (machine-keyed, re-download-proof)
+
+- **Machine identity** (`dlc/telemetry/machine.py`): install_id =
+  sha256("dlc-v1:" + OS machine id)[:16] — Windows MachineGuid, macOS
+  IOPlatformUUID, Linux /etc/machine-id; stable fallback = hash of
+  (platform, node, user). The cache file is a convenience only:
+  deleting the tool/cache and re-downloading on the same machine
+  recomputes the SAME id, so records and limits continue. `issued`
+  date stamps locally; the proxy keeps authoritative first_seen.
+- **Spool → ship**: events always land in the local SQLite sink first
+  (fully offline-capable), then `ship.py` batches everything past a
+  high-water mark to the proxy — at-least-once, deduped server-side on
+  (install_id, client_row_id), fire-and-forget threads from the app.
+- **Proxy** (`proxy/dlc_proxy.py`): key custody (/v1/llm relays via
+  the same client wrapper), per-machine per-day CALL budgets per
+  feature (v1 backstop: modeA 8, modeB 10 — generous inside client
+  limits, wipe-proof against re-downloads; v1.1 path = analysis-
+  granular limits with refunds), events ingest, /admin/summary +
+  /admin/export.csv. Client relays automatically when `proxy_url` is
+  configured, with direct-call fallback only if the proxy is
+  unreachable AND a local key exists.
+- **Feature tags**: every call_llm site is tagged (modeA/modeB/grade/
+  explain) so proxy budgets and usage accounting are per-feature.
+- **Server-side result events**: l3_modeA_result_server,
+  l3_modeB_result_server, l3_accept_fix_server — authoritative rows
+  (mode, cards, tokens, consumed) next to the FE click events.
+
 ## Known limitations to revisit (Keep updating during path 1 development)
 
 

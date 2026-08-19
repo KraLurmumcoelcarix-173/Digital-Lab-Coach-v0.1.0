@@ -1,35 +1,78 @@
-# Digital Lab Coach (DLC) [This is a temp readme]
+# Digital Lab Coach (DLC)
 
-A hybrid deterministic-checker + LLM feedback tool for student debugging
-in Digital circuit simulator labs. Path 1 (external
-companion tool) prototype. 
+A hybrid deterministic-checker + LLM feedback tool for debugging
+[Digital](https://github.com/hneemann/Digital) circuit labs.
+Three layers: structural analysis (Layer 1), conceptual explanation
+(Layer 2), and a machine-verified debugging + test-coverage coach
+(Layer 3) — every LLM fix proposal is re-run against the official tests
+before a student sees it.
 
-![Dashboard view of cpu](docs/screenshots/dashboard.png) 
-![Dashboard view of t3 calculator](docs/screenshots/dashboard2.png) 
+![Dashboard view of cpu](docs/screenshots/dashboard.png)
+![Dashboard view of t3 calculator](docs/screenshots/dashboard2.png)
 
 ## Status
 
-Active development. No release yet.
+v0.1.0 (2026/8/18)
+
+## Which start flow are you?
+
+- **Student in a course using DLC** → follow *Quick start (students)* below.
+  For UNC Comp 311 students, your ULA gives you a course-server URL — you do NOT need any API key.
+- **Instructor releasing DLC for a course** → follow *Instructor setup* below.
+- **Developer / contributor** → *Developer setup* below.
+
+## Quick start (students)
+
+1. Install `uv` (one command — see Developer setup for your OS), then
+   download/clone this repository.
+2. From the repo folder: `uv sync`, then `uv run python -m dlc.web.server`
+   and open the printed local address in your browser.
+3. First run asks for your `Digital.jar` location (the same jar you run
+   labs with — see the Digital.jar section below).
+4. Paste the **course server URL + token** from your instructor under
+   Settings. That's what powers the AI features — no personal API key
+   needed. (Working fully offline? Everything deterministic — the
+   graph, structural issues, per-row tests, signal flow — still works;
+   only the AI coach needs the connection.)
+
+**Telemetry notice**: DLC records anonymized usage events (feature
+clicks, test runs, coach outcomes) keyed to a hashed machine id — never
+your name, files' contents beyond what the coach needs, or anything
+reversible. Events sync to the course server for course-improvement
+research; deleting and re-downloading the tool continues the same
+anonymous record. Questions or opt-out: contact your instructor.
+
+## Instructor setup
+
+1. Fork this repository; configure the official test set (and manifest,
+   if your labs go beyond the built-ins) — step-by-step:
+   [docs/MANIFEST_GUIDE.md](docs/MANIFEST_GUIDE.md).
+2. Labs whose instruction ROM should carry a course program at grading
+   time: [docs/instructor_rom_config.md](docs/instructor_rom_config.md).
+3. Deploy the course proxy (holds YOUR API key, enforces per-machine
+   daily limits that survive re-downloads, and collects the anonymized
+   telemetry): [proxy/README.md](proxy/README.md).
+4. Hand students your fork's URL + the proxy URL and course token.
 
 ## File Layout
 
 | Path | Role |
 |---|---|
-| `dlc/parser/` | Reads `.dig` XML into structured Python objects: components, wires, nets, signal-flow graph. 
+| `dlc/parser/` | Reads `.dig` XML into structured Python objects: components, wires, nets, signal-flow graph.
 | `dlc/facts/` | Extracts a JSON-serializable bundle of facts the LLM and deterministic checkers consume: inventory, per-net widths, per-component topology, structural bug list.
-| `dlc/testing/` | Reads each Testcase's embedded test rows out of the `.dig`, parses Digital's CLI output, and pinpoints which specific rows fail — one fast `CLI test -verbose` call per file (with expected-vs-found cells per failing row), falling back to cumulative one-row-at-a-time runs when the fast mapping can't be trusted. 
-| `dlc/analyzer/` | Deterministic checkers — wire completeness, bit widths, combinational loops, interface conformance, sequential timing. Shallow (top circuit) and deep (whole subcircuit tree) variants. 
-| `dlc/sim/` | Deterministic value evaluator — combinational + sequential simulator (`simulator.py`) that computes the value on every net for a given test row, with hierarchical (path-keyed) register state for clocked designs and recursive subcircuit evaluation. Powers the signal-flow-on-row-click UI and the subcircuit drill-in. 
-| `dlc/web/` | FastAPI server (`server.py`) + browser front-end (`static/app.js`) for the Layer 1/2 web app: interactive graph, structural-issue overlay, per-row test runner, signal-flow-on-row-click, subcircuit drill-in, and the Layer 2 coach. 
-| `dlc/llm/` | LLM client wrapper and versioned prompts for conceptual explanation + credibility grading (Layer 2) and strategic debugging (Layer 3). 
-| `dlc/evaluator/` | Layer-2 research harness: model-competition benchmark (generate + grade per cell), grader selection, and Pareto/cost plots. All outputs write outside the repo. 
-| `dlc/telemetry/` | Per-interaction logging to a local SQLite database. 
-| `dlc/cli/` | Command-line entrypoint that wires the layers together for student use. 
+| `dlc/testing/` | Reads each Testcase's embedded test rows out of the `.dig`, parses Digital's CLI output, and pinpoints which specific rows fail — one fast `CLI test -verbose` call per file (with expected-vs-found cells per failing row), falling back to cumulative one-row-at-a-time runs when the fast mapping can't be trusted.
+| `dlc/analyzer/` | Deterministic checkers — wire completeness, bit widths, combinational loops, interface conformance, sequential timing. Shallow (top circuit) and deep (whole subcircuit tree) variants.
+| `dlc/sim/` | Deterministic value evaluator — combinational + sequential simulator (`simulator.py`) that computes the value on every net for a given test row, with hierarchical (path-keyed) register state for clocked designs and recursive subcircuit evaluation. Powers the signal-flow-on-row-click UI and the subcircuit drill-in.
+| `dlc/web/` | FastAPI server (`server.py`) + browser front-end (`static/app.js`) for the Layer 1/2 web app: interactive graph, structural-issue overlay, per-row test runner, signal-flow-on-row-click, subcircuit drill-in, and the Layer 2 coach.
+| `dlc/llm/` | LLM client wrapper and versioned prompts for conceptual explanation + credibility grading (Layer 2) and strategic debugging (Layer 3).
+| `dlc/telemetry/` | Anonymous machine identity, per-interaction logging to a local SQLite spool, and the shipper that syncs it to the course proxy.
+| `proxy/` | The course proxy server an instructor deploys: API-key custody, per-machine daily limits (re-download-proof), telemetry ingest, admin summary/export.
+| `dlc/cli/` | Command-line entrypoint that wires the layers together for student use.
 | `prompts/` | Versioned LLM prompt templates — one file per prompt variant, consumed by `dlc/llm/`. 
-| `configs/` | Per-lab YAML configs (expected I/Os, handout context etc.). 
-| `data/sample_circuits/` | Test fixtures — public sample circuits created by authors. 
-| `docs/` | Guides for instructors, RISC-V labs manifest guides, screenshots, architecture notes, design decisions, dev log, dev debug guide. 
-| `tests/` | pytest unit tests, one file per source module. 
+| `configs/` | Per-lab YAML configs (expected I/Os, handout context etc.).
+| `data/sample_circuits/` | Test fixtures — public sample circuits created by authors.
+| `docs/` | Guides for instructors, RISC-V labs manifest guides, screenshots, architecture notes, design decisions, dev log, dev debug guide.
+| `tests/` | pytest unit tests, one file per source module.
 
 ## Temp Web testing (Please go over setup first)
 
@@ -45,13 +88,13 @@ values), lets you tick a clock to step the signal flow through the remaining
 rows, and lets you drill into a subcircuit to watch its inner signal flow
 for the same row.
 
-Try the early web version by going over developer setup and running 
+Try the early web version by going over developer setup and running
 the command below:
 
 ```bash
 # From the repo root:
-uv sync                              
-uv run python -m dlc.web.server      
+uv sync
+uv run python -m dlc.web.server
 ```
 
 ## Developer setup (For best experience, run the set up and testing flow using bash)
@@ -86,7 +129,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 # Clone and run tests
 git clone <repo-url>
 cd digital-lab-coach
-uv run pytest      # creates .venv on first call
+uv run pytest
 ```
 After all tests green, you are all set and feel free to try temp web testing!
 
@@ -121,7 +164,7 @@ error: Failed to spawn: `python`
 Querying Python at `...\WindowsApps\python3.exe` failed (exit code 0x800711c7)
 ```
 
-`os error 4551`: 
+`os error 4551`:
 an *application control policy has blocked this file*. Windows 11's **Smart App
 Control** can switch itself from *Evaluation* to *On* (e.g. after an update),
 and then it blocks unsigned executables — including the Python `uv` downloads
@@ -165,10 +208,10 @@ Download Digital from
 If you'd rather configure it manually:
 
 ```bash
-# Option A 
+# Option A
 uv run python -c "from dlc.testing.config import set_digital_jar_path; set_digital_jar_path(r'PATH_TO_YOUR_Digital.jar')"
 
-# Option B 
+# Option B
 # macOS / Linux
 export DIGITAL_JAR=/path_to_Digital/Digital.jar
 # Windows PowerShell

@@ -169,6 +169,7 @@ def grade_summary(
     )
     result = call_llm(
         prompt, api_key=api_key, model=grader_model,
+        feature="grade",
         system=("You are a strict grader. Output ONLY a single JSON object, "
                 "with no prose and no markdown code fences."),
     )

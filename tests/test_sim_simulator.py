@@ -1,4 +1,5 @@
-"""Combinational value evaluator (dlc.sim).
+"""
+Combinational value evaluator (dlc.sim).
 
 Two layers of coverage:
   * pure per-component rules (multi-bit gates, inverter bubbles, mux, decoder,
@@ -23,7 +24,7 @@ def _c(element, **attrs):
                      attributes=attrs, label=attrs.get("Label"))
 
 
-# ---- pure gate rules -------------------------------------------------------
+# pure gate rules
 
 def test_and_or_xor_multibit():
     g = _c("And", Bits=4, Inputs=2)
@@ -44,7 +45,6 @@ def test_nand_nor_xnor_negate_and_mask():
 
 
 def test_gate_inverter_bubble_negates_named_input():
-    # In_1 (1-indexed) -> in0 gets a bubble: A' AND B
     g = _c("And", Bits=1, Inputs=2, inverterConfig=["In_1"])
     assert sim._eval_gate(g, {"in0": 0, "in1": 1}) == {"Y": 1}
     assert sim._eval_gate(g, {"in0": 1, "in1": 1}) == {"Y": 0}
@@ -52,7 +52,7 @@ def test_gate_inverter_bubble_negates_named_input():
 
 def test_gate_unresolved_when_a_wired_input_missing():
     g = _c("And", Bits=1, Inputs=3)
-    assert sim._eval_gate(g, {"in0": 1, "in1": 1}) is None  # in2 missing
+    assert sim._eval_gate(g, {"in0": 1, "in1": 1}) is None
 
 
 def test_mux_selects_the_addressed_input():
@@ -93,28 +93,28 @@ def test_comparator():
     assert sim._eval_comparator(cmp, {"A": 3, "B": 3}) == {"gr": 0, "eq": 1, "le": 0}
 
 def test_barrel_shifter_left_right_arith_rotate():
-    ls = _c("BarrelShifter", Bits=8)                       # left, logical (default)
+    ls = _c("BarrelShifter", Bits=8)
     assert sim._eval_barrel_shifter(ls, {"in": 0x01, "sh": 4}) == {"out": 0x10}
-    rsl = _c("BarrelShifter", Bits=8, direction="right")   # right, logical
+    rsl = _c("BarrelShifter", Bits=8, direction="right")
     assert sim._eval_barrel_shifter(rsl, {"in": 0xF0, "sh": 4}) == {"out": 0x0F}
     rsa = _c("BarrelShifter", Bits=8, direction="right", barrelShifterMode="arithmetic")
-    assert sim._eval_barrel_shifter(rsa, {"in": 0x80, "sh": 2}) == {"out": 0xE0}  # sign
-    rot = _c("BarrelShifter", Bits=8, barrelShifterMode="rotate")   # rotate left
+    assert sim._eval_barrel_shifter(rsa, {"in": 0x80, "sh": 2}) == {"out": 0xE0}
+    rot = _c("BarrelShifter", Bits=8, barrelShifterMode="rotate")
     assert sim._eval_barrel_shifter(rot, {"in": 0x81, "sh": 1}) == {"out": 0x03}
 
 
 def test_bitextender_sign_extends():
     be = _c("BitExtender", inputBits=1, outputBits=32)
-    assert sim._eval_bitextender(be, {"in": 1}) == {"out": 0xFFFFFFFF}   # add-sub invert
+    assert sim._eval_bitextender(be, {"in": 1}) == {"out": 0xFFFFFFFF}
     assert sim._eval_bitextender(be, {"in": 0}) == {"out": 0}
     be4 = _c("BitExtender", inputBits=4, outputBits=8)
-    assert sim._eval_bitextender(be4, {"in": 0x8}) == {"out": 0xF8}      # neg nibble
-    assert sim._eval_bitextender(be4, {"in": 0x7}) == {"out": 0x07}      # pos nibble
+    assert sim._eval_bitextender(be4, {"in": 0x8}) == {"out": 0xF8}
+    assert sim._eval_bitextender(be4, {"in": 0x7}) == {"out": 0x07}
 
 
 
 
-# ---- end-to-end over fixtures ---------------------------------------------
+# end-to-end over fixtures
 
 _T1 = "data/sample_circuits/tier1_minimal"
 _T3 = "data/sample_circuits/tier3_realistic"
@@ -136,7 +136,6 @@ def test_single_and_every_row_matches_truth_table():
         inp = inputs_for_row(c, spec.headers, row)
         res = simulate(c, nl, g, inp)
         assert res.output_values.get("Y") == (inp["A"] & inp["B"]), row.raw
-        # fully combinational -> every net carries a value
         assert not res.unresolved_nets, row.raw
 
 
@@ -147,10 +146,8 @@ def test_tier3_calculator_full_coverage_and_correct_arithmetic():
     for row in rows:
         inp = inputs_for_row(c, spec.headers, row)
         res = simulate(c, nl, g, inp)
-        # this ALU-style circuit is pure combinational: no blank wires
         assert not res.unresolved_nets, row.raw
         assert len(res.net_values) == len(nl.nets), row.raw
-    # spot-check add (Op 0) and or (Op 3) rows against the testcase's expected
     bindings = {h: i for i, h in enumerate(spec.headers)}
     for row in rows:
         inp = inputs_for_row(c, spec.headers, row)
@@ -164,13 +161,12 @@ def test_clocked_circuit_leaves_register_wires_unresolved_in_single_pass():
     spec = extract_test_specs(c)[0]
     row = next(r for r in spec.rows if not r.is_malformed)
     inp = inputs_for_row(c, spec.headers, row)
-    res = simulate(c, nl, g, inp)  # no state -> combinational only
+    res = simulate(c, nl, g, inp)
     assert res.net_values, "input-side combinational nets should still resolve"
     assert res.unresolved_nets, "register-fed nets must stay blank"
     assert any("clocked" in n.lower() for n in res.notes)
 
 def test_const_defaults_to_one_when_value_omitted():
-    # matches Digital + dlc.facts.extractor: omitted Value == 1 (write-enables)
     assert sim._eval_const(_c("Const"), {}) == {"out": 1}
     assert sim._eval_const(_c("Const", Value=0), {}) == {"out": 0}
 
@@ -193,8 +189,6 @@ def _seq_matches_expected(path):
 
 
 def test_pipeline_sequential_replay_matches_reference_outputs():
-    # the CORRECT reference: replaying rows in order reproduces the pipeline,
-    # including the 2-cycle latency that lands 3+4=7 on the third row.
     assert _seq_matches_expected(f"{_T3}/pipelined_adder_correct.dig") == []
 
 
@@ -203,22 +197,19 @@ def test_latched_seven_seg_display_matches_reference_outputs():
 
 
 def test_buggy_circuit_is_faithfully_reproduced_for_red_mismatch():
-    # A known-buggy circuit (wrong carry-in): our evaluator must compute the
-    # *wrong* output the real circuit produces, so the failed-row UI can show
-    # expected-vs-found. Here found should differ from the testcase's expected.
     mism = _seq_matches_expected(
         "data/sample_circuits/30_bug_benchmark/bug3_wrong_cin/Wrong_cin.dig"
     )
     assert mism, "evaluator should reproduce the bug (found != expected)"
 
 def test_rom_reads_the_word_at_the_address():
-    r = _c("ROM", Data="0A, 14, FF", Bits=8, AddrBits=4)   # hex tokens
+    r = _c("ROM", Data="0A, 14, FF", Bits=8, AddrBits=4)
     assert sim._rom_words(r) == [0x0A, 0x14, 0xFF]
     assert sim._eval_rom(r, {"A": 0}) == {"D": 0x0A}
     assert sim._eval_rom(r, {"A": 2}) == {"D": 0xFF}
-    assert sim._eval_rom(r, {"A": 9}) == {"D": 0}         # out of range -> 0
-    assert sim._eval_rom(r, {"A": 2, "sel": 0}) == {"D": 0}  # chip-select low
-    assert sim._eval_rom(_c("ROM", Data="1FF", Bits=8), {"A": 0}) == {"D": 0xFF}  # masked
+    assert sim._eval_rom(r, {"A": 9}) == {"D": 0}
+    assert sim._eval_rom(r, {"A": 2, "sel": 0}) == {"D": 0}
+    assert sim._eval_rom(_c("ROM", Data="1FF", Bits=8), {"A": 0}) == {"D": 0xFF}
 
 
 def test_rom_lookup_fixture_resolves_every_row():

@@ -1,5 +1,5 @@
 """
-Tests for dlc.testing.runner — F4 per-row Digital subprocess runner.
+Tests for dlc.testing.runner — per-row Digital subprocess runner.
 """
 
 import os
@@ -49,9 +49,6 @@ def test_find_digital_jar_uses_env_var(tmp_path):
 
 
 def test_find_digital_jar_returns_none_when_nothing_found():
-    # Isolate ALL three discovery sources: env var, the saved
-    # ~/.dlc/config.json (leaks in from the developer's real machine
-    # otherwise), and the common install-path probe.
     with patch.dict(os.environ, {}, clear=True):
         with patch("dlc.testing.config.get_configured_jar", return_value=None):
             with patch("dlc.testing.runner.Path") as mock_path:
@@ -59,9 +56,7 @@ def test_find_digital_jar_returns_none_when_nothing_found():
                 instance.exists.return_value = False
                 assert find_digital_jar() is None
 
-
 # Jar missing path
-
 
 def test_per_row_run_no_jar_returns_error_per_row(tmp_path):
     src = tmp_path / "x.dig"
@@ -89,7 +84,6 @@ def test_per_row_run_no_jar_returns_error_per_row(tmp_path):
 
 
 # Mocked Digital responses
-
 
 def _spec_with_rows(name, rows_text):
     rows = [

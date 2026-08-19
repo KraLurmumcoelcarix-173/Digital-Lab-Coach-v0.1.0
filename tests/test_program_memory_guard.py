@@ -1,12 +1,5 @@
-"""Program-memory guard: Mode A must never write course-program words.
-
-Benchmark conviction: on a cpu whose instruction memory held wrong
-words, the premium model derived a complete WORKING course program from
-the test expectations, three rounds out of three, machine-verified — a
-card that does the student's homework. On labs where the course
-registers a runtime payload, Data ops aimed at an isProgramMemory ROM
-are now stripped deterministically before verification; the student
-gets the clear-the-ROM tip instead.
+"""
+Program-memory guard: Mode A must never write course-program words.
 """
 
 import base64
@@ -44,10 +37,6 @@ def _wire(x1, y1, x2, y2) -> str:
     return (f"    <wire><p1 x=\"{x1}\" y=\"{y1}\"/>"
             f"<p2 x=\"{x2}\" y=\"{y2}\"/></wire>\n")
 
-
-# A 1-address program-memory ROM lab: A drives the ROM address, D reads
-# its word. The stored word is WRONG (0) while the official rows expect
-# 5/6 — the exact "wrong program words" shape the guard exists for.
 _PROG_LAB = _xml_circuit(
     _ve("In", 0, 0, _entry("Label", "A"))
     + _ve("VDD", 160, 40)
@@ -66,7 +55,7 @@ _PROG_LAB = _xml_circuit(
     + _wire(260, 20, 400, 20),
 )
 
-_ROM_IDX = 2  # In, VDD, ROM, Out, Testcase
+_ROM_IDX = 2
 
 
 def _register_payload(monkeypatch, tmp_path, filename):
@@ -125,14 +114,11 @@ def _fake(replies):
 def test_protected_indices_need_payload_and_flag(monkeypatch, tmp_path):
     path = _write_lab(tmp_path)
     circuit = parse_dig_file(path)
-    # no payload registered -> nothing protected
     monkeypatch.setenv("DLC_OFFICIAL_DEFAULTS_PATH",
                        str(tmp_path / "missing.json"))
     assert _protected_program_memory(circuit, "proglab.dig") == set()
-    # payload registered -> exactly the program-memory ROM
     _register_payload(monkeypatch, tmp_path, "proglab.dig")
     assert _protected_program_memory(circuit, "proglab.dig") == {_ROM_IDX}
-    # injected-temp names normalize back to the real filename
     assert _protected_program_memory(
         circuit, ".dlc_injected__proglab.dig") == {_ROM_IDX}
     assert _protected_program_memory(circuit, None) == set()
@@ -146,13 +132,10 @@ def test_program_data_op_is_stripped_and_run_says_why(monkeypatch,
     res = debug_circuit(path, call=call, use_manifest=False,
                         source_filename="proglab.dig")
     assert res["mode"] == "analysis"
-    assert res["cards"] == []               # the homework was NOT done
+    assert res["cards"] == []
     assert any(d["reason"] == "program_memory_protected"
                for d in res["dropped_ideas"])
     assert any("clear that ROM's Data" in n for n in res["notes"])
-    # the model was TOLD up front — the template MENTIONS the tag in its
-    # reading guide, so the appended block is recognized by its own
-    # unique sentence
     assert "any Data change you propose" in call.log[0]
 
 
@@ -164,8 +147,6 @@ def test_without_payload_the_same_op_flows_normally(monkeypatch,
     call = _fake([_data_fix_reply()])
     res = debug_circuit(path, call=call, use_manifest=False,
                         source_filename="proglab.dig")
-    # student-authored ROM content stays fixable: the op is verified
-    # (and on this fixture actually repairs both rows)
     assert res["cards"] and res["cards"][0]["verified"]["confirmed"]
     assert res["cards"][0]["fix"]["ops"][0]["name"] == "Data"
     assert "any Data change you propose" not in call.log[0]
@@ -180,9 +161,6 @@ def test_prompt_teaches_the_program_memory_rule():
 
 def test_empty_program_rom_warning_names_the_injection(monkeypatch,
                                                        tmp_path):
-    # r45: on payload-registered labs the L1 empty_rom warning must say
-    # the grader loads the course program (so green tests don't hide
-    # that the student's own file still ships no program).
     from fastapi.testclient import TestClient
     from dlc.web.server import app
 
@@ -199,7 +177,6 @@ def test_empty_program_rom_warning_names_the_injection(monkeypatch,
     assert any("YOUR OWN instruction" in i["message"] for i in rom_warns)
     assert all(i["severity"] == "warning" for i in rom_warns)
 
-    # same empty ROM on an UNREGISTERED filename keeps the plain wording
     r2 = client.post("/api/circuit", files=[
         ("files", ("other.dig", empty_lab.encode(), "application/xml"))])
     issues2 = r2.json()["files"][0]["issues"]
@@ -210,9 +187,6 @@ def test_empty_program_rom_warning_names_the_injection(monkeypatch,
 
 def test_add_component_smuggle_route_is_also_stripped(monkeypatch,
                                                       tmp_path):
-    # adversarial route: instead of writing the protected ROM, ADD a new
-    # preloaded storage element and rewire buses to it. Deterministically
-    # stripped too — the guard must not lean on the 6-op ceiling.
     _register_payload(monkeypatch, tmp_path, "proglab.dig")
     path = _write_lab(tmp_path)
     smuggle = {
@@ -230,13 +204,9 @@ def test_add_component_smuggle_route_is_also_stripped(monkeypatch,
                 {"act": "diagnose_line", "text": "swap the memory"},
                 {"act": "retest"}]},
     }
-    # stock the whole gauntlet: initial idea, refutation retry, and the
-    # escalation shot all try to hand the program over
     call = _fake([smuggle, _data_fix_reply(), _data_fix_reply()])
     res = debug_circuit(path, call=call, use_manifest=False,
                         source_filename="proglab.dig")
-    # the preloaded add_component is gone; the leftover bare wire can
-    # never re-create the program, and nothing shown carries the words
     assert not [c for c in res["cards"]
                 if c["verified"]["confirmed"]]
     blob = json.dumps(res)

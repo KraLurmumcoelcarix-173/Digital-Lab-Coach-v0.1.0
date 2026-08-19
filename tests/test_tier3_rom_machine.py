@@ -1,13 +1,3 @@
-"""tier3_rom_machine.dig — the ROM-programmed accumulator fixture.
-
-A microcoded machine (PC + 10-word program ROM + LOAD/ADD/LT/EQ decode)
-built for Layer-3 Mode A practice: corrupting a program word makes rows
-fail while the wiring stays L1-clean. Digital.jar passes its testcase
-(verified out-of-band); these tests pin the jar-free properties: L1
-cleanliness, the 10-word program, and our simulator agreeing with the
-documented Digital trace row by row.
-"""
-
 import os
 
 from dlc.parser.dig_parser import parse_dig_file
@@ -22,8 +12,6 @@ FIXTURE = os.path.join(
     "tier3_realistic", "tier3_rom_machine.dig",
 )
 
-# ACC/PC after reset and after each of the 10 clocked rows — matches both
-# Digital.jar and the embedded testcase's expectations.
 _TRACE = [
     (0x00, 0), (0x25, 1), (0x3C, 2), (0x01, 3), (0x80, 4), (0x01, 5),
     (0x10, 6), (0x00, 7), (0xC3, 8), (0x00, 9), (0x33, 10),

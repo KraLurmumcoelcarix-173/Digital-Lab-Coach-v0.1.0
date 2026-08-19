@@ -1,5 +1,7 @@
-"""GET /api/docs/manifest_guide: the wrapped page for direct visits and
-the ``?raw=1`` markdown text the in-overlay Settings manual fetches."""
+"""
+ET /api/docs/manifest_guide: the wrapped page for direct visits and
+the ``?raw=1`` markdown text the in-overlay Settings manual fetches.
+"""
 
 from fastapi.testclient import TestClient
 

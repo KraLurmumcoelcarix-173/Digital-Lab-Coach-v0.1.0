@@ -20,8 +20,6 @@ def _mk(element_name: str, x=0, y=0, **attrs) -> Component:
     )
 
 
-# Static-table elements
-
 def test_in_out_const_clock_tunnel_have_anchor_pin():
     for name, dir_ in [("In", "out"), ("Out", "in"), ("Const", "out"),
                        ("Clock", "out"), ("Tunnel", "bidir")]:
@@ -70,21 +68,13 @@ def test_rom_has_a_sel_d():
     assert names == {"A", "sel", "D"}
 
 
-# Dynamic-table elements 
-
-
 def test_nary_gate_wideshape_even_n_uses_middle_gap():
-    """
-    For wideShape=True with even N>=4, inputs split top/bottom with a
-    40-unit gap in the middle. Verifies four_inputand.dig's layout.
-    """
     pos = absolute_pin_positions(_mk("And", 0, 0, Inputs=4, wideShape=True))
     in_ys = sorted(p.y for p, spec in pos if spec.direction == "in")
     assert in_ys == [0, 20, 60, 80]
 
 
 def test_multiplexer_2input_uses_spacing_40():
-    """sel_bits=1 → 2 inputs spaced 40, sel at (20, 40), out at (40, 20)."""
     pos = absolute_pin_positions(_mk("Multiplexer", 0, 0))
     by_name = {spec.name: (p.x, p.y) for p, spec in pos}
     assert by_name["in0"] == (0, 0)
@@ -94,7 +84,6 @@ def test_multiplexer_2input_uses_spacing_40():
 
 
 def test_multiplexer_4input_uses_spacing_20():
-    """sel_bits=2 → 4 inputs spaced 20, sel at (20, 80), out at (40, 40)."""
     pos = absolute_pin_positions(_mk("Multiplexer", 0, 0, **{"Selector Bits": 2}))
     by_name = {spec.name: (p.x, p.y) for p, spec in pos}
     assert by_name["in0"] == (0, 0)
@@ -104,10 +93,6 @@ def test_multiplexer_4input_uses_spacing_20():
 
 
 def test_decoder_layout():
-    """Selector Bits=N → 2^N outputs spaced 20 on right edge; sel sits at
-    (20, (n-1)*20) — the LAST output's height, one row ABOVE the Mux rule
-    (measured against a real rotated lab decoder, r27; the old n*20 table
-    falsely flagged its sel undriven)."""
     pos = absolute_pin_positions(_mk("Decoder", 0, 0, **{"Selector Bits": 5}))
     by_name = {spec.name: (p.x, p.y) for p, spec in pos}
     assert by_name["sel"] == (20, 620)
@@ -118,13 +103,12 @@ def test_decoder_layout():
 def test_priority_encoder_layout():
     pos = absolute_pin_positions(_mk("PriorityEncoder", 0, 0, **{"Selector Bits": 3}))
     in_count = sum(1 for _, spec in pos if spec.direction == "in")
-    assert in_count == 8  # 2^3
+    assert in_count == 8
     by_name = {spec.name: (p.x, p.y) for p, spec in pos}
     assert by_name["num"] == (80, 0)
 
 
 def test_splitter_uses_splitterSpreading():
-    """splitterSpreading=2 doubles the pin spacing from 20 to 40."""
     pos = absolute_pin_positions(_mk(
         "Splitter", 0, 0,
         **{"Input Splitting": "0-31",
@@ -149,8 +133,6 @@ def test_comparator_outputs_at_x60_not_x80():
     assert by_name["le"][0] == 60
 
 
-# Rotation
-
 def test_rotation_function_180_degrees():
     assert _rotate(20, 40, 2) == (-20, -40)
     assert _rotate(0, 0, 2) == (0, 0)
@@ -166,7 +148,6 @@ def test_rotation_function_270():
 
 
 def test_rotation_applies_to_component():
-    """A rotated Multiplexer's pins must be in their rotated positions."""
     rotated = _mk("Multiplexer", 100, 100, rotation=1)
     pos = absolute_pin_positions(rotated)
     by_name = {spec.name: (p.x, p.y) for p, spec in pos}

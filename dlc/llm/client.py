@@ -119,6 +119,47 @@ def model_provider(model: str) -> str | None:
     info = MODEL_CATALOG.get(model)
     return info["provider"] if info else None
 
+
+def _proxy_config() -> tuple[str | None, str | None]:
+    """Course proxy (url, token) — env first, then ~/.dlc/config.json.
+    When a proxy is configured, LLM calls relay through it: the course
+    key stays on the instructor's server and limits are enforced there
+    per machine (re-downloading the tool cannot reset them)."""
+    url = os.environ.get("DLC_PROXY_URL")
+    token = os.environ.get("DLC_PROXY_TOKEN")
+    if not url:
+        cfg = _load_config()
+        url = cfg.get("proxy_url") or None
+        token = token or cfg.get("proxy_token") or None
+    return (url.rstrip("/") if url else None), token
+
+
+def _call_proxy(prompt, model, max_tokens, system, effort, feature,
+                url, token) -> dict:
+    try:
+        import httpx
+        from dlc.telemetry.machine import install_id
+        resp = httpx.post(
+            f"{url}/v1/llm",
+            json={"install_id": install_id(),
+                  "feature": feature or "other", "model": model,
+                  "prompt": prompt, "system": system,
+                  "max_tokens": max_tokens, "effort": effort},
+            headers={"X-DLC-Token": token or ""},
+            timeout=_request_timeout() + 30)
+        if resp.status_code // 100 == 2:
+            out = resp.json()
+            if isinstance(out, dict):
+                return out
+        return {"ok": False, "text": None,
+                "error": f"course server error (HTTP {resp.status_code})",
+                "usage": None, "model": model}
+    except Exception:
+        return {"ok": False, "text": None,
+                "error": ("Couldn't reach the course server — check your "
+                          "internet connection."),
+                "usage": None, "model": model, "proxy_unreachable": True}
+
 def _friendly_error(exc, provider: str) -> str:
     """Network/connection failures get a clear message; everything else passes through."""
     if exc is None:
@@ -248,13 +289,24 @@ def _call_openai(prompt, model, key, max_tokens, system, effort=None) -> dict:
 
 
 def call_llm(prompt, *, api_key=None, model=DEFAULT_MODEL,
-             max_tokens=DEFAULT_MAX_TOKENS, system=None, effort=None):
+             max_tokens=DEFAULT_MAX_TOKENS, system=None, effort=None,
+             feature=None):
     info = MODEL_CATALOG.get(model)
     if info is None:
         return {"ok": False, "text": None,
                 "error": f"Unknown model: {model!r}",
                 "usage": None, "model": model}
     provider = info["provider"]
+    # Course-proxy mode: the key lives on the instructor's server and
+    # limits are enforced there per machine. Fall back to a direct call
+    # only when the proxy is unreachable AND a local key exists.
+    proxy_url, proxy_token = _proxy_config()
+    if proxy_url:
+        r = _call_proxy(prompt, model, max_tokens, system, effort,
+                        feature, proxy_url, proxy_token)
+        if not (r.pop("proxy_unreachable", False)
+                and get_api_key(provider)):
+            return r
     key = api_key or get_api_key(provider)
     if not key:
         return {"ok": False, "text": None,

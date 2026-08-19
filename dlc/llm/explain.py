@@ -236,6 +236,7 @@ def explain_circuit(
         api_key=api_key,
         model=model or DEFAULT_MODEL,
         max_tokens=2400,
+        feature="explain",
         system=(
             "You are a circuit reasoning assistant for UNC COMP 311. "
             "Use plain text only. No markdown, no bullets, no headers."

@@ -1,5 +1,10 @@
 # Instructor guide: configuring the answer ROM data for a lab
 
+> Step 2 of the instructor flow (see the README's *Instructor setup*).
+> Start with `MANIFEST_GUIDE.md` if you have not configured the
+> official test set yet; deploy the course proxy last
+> (`../proxy/README.md`).
+
 This page teaches an instructor how to register the **hidden runtime ROM
 payload** for a specific lab — the program words the tool loads into a
 student's *empty* ROM during test runs and Mode A analysis, the same way

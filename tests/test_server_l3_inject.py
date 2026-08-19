@@ -1,9 +1,3 @@
-"""POST /api/l3/inject (dlc/web/l3_routes.py): Mode B's accept-flow — inject
-rows into a temp copy, re-run per-row through the real Digital runner,
-register the temp file in the session. Runner parts are jar-gated exactly
-like the oracle's own tests.
-"""
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -50,17 +44,14 @@ def test_passing_rows_yield_all_set_and_register_the_temp_file():
         assert body["outcome"] == "all_set"
         assert body["all_passed"] is True and body["added_all_passed"] is True
         assert body["temp_filename"] == "single_and__coach.dig"
-        # original 4 rows + 2 injected, provenance carried through
         added = [r for r in body["rows"] if r["added"]]
         assert len(added) == 2
         assert all(r["origin"] == "coach" for r in added)
         assert all(r["status"] == "passed" for r in added)
-        # the temp copy is now addressable like any session file
         names = [f["name"] for f in server._SESSIONS[sid]["files"]]
         assert "single_and__coach.dig" in names
         lt = server._SESSIONS[sid]["l3_temp"]
         assert lt["for"] == "single_and.dig"
-        # 4 original rows, 2 added -> Mode A judges 4 and 5 as coach rows
         assert lt["coach_rows"] == [4, 5]
     finally:
         server._SESSIONS.pop(sid, None)
@@ -70,7 +61,7 @@ def test_passing_rows_yield_all_set_and_register_the_temp_file():
 def test_failing_row_yields_rows_fail_with_the_row_marked():
     sid = _upload_and()
     try:
-        body = _inject(sid, ["0 0 1"])          # 0 AND 0 is not 1
+        body = _inject(sid, ["0 0 1"])
         assert body["ok"] is True
         assert body["outcome"] == "rows_fail"
         assert body["added_all_passed"] is False
@@ -90,7 +81,7 @@ def test_reinjection_replaces_the_previous_temp_file():
         names = [f["name"] for f in server._SESSIONS[sid]["files"]]
         assert names.count("single_and__coach.dig") == 1
         added = [r for r in second["rows"] if r["added"]]
-        assert len(added) == 2                   # not stacked on the first temp
+        assert len(added) == 2
     finally:
         server._SESSIONS.pop(sid, None)
 
@@ -99,7 +90,7 @@ def test_reinjection_replaces_the_previous_temp_file():
 def test_malformed_rows_are_rejected_before_any_run():
     sid = _upload_and()
     try:
-        body = _inject(sid, ["1 1"])             # wrong cell count
+        body = _inject(sid, ["1 1"])
         assert body["ok"] is False
         assert body["outcome"] == "error"
         assert "columns" in body["warning"]

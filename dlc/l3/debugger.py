@@ -1017,7 +1017,7 @@ def debug_circuit(dig_path: str, *, spec_name: str | None = None,
         t0 = time.monotonic()
         r = call(prompt_text, api_key=api_key, model=model,
                  max_tokens=_max_tokens_for(model),
-                 effort=_effort_for(model))
+                 effort=_effort_for(model), feature="modeA")
         llm_seconds.append(round(time.monotonic() - t0, 2))
         calls += 1
         u = r.get("usage") or {}

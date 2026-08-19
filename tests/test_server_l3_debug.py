@@ -1,9 +1,3 @@
-"""POST /api/llm/debug (dlc/web/l3_routes.py): Mode A endpoint wiring —
-limits (consume only on delivered cards, empty runs free), coach-temp
-targeting, and the limited gate. The coordinator itself is covered by
-test_l3_debugger.py; here it is monkeypatched to canned results.
-"""
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -62,13 +56,10 @@ def test_empty_analysis_is_free_and_stays_quiet(monkeypatch):
     body = _debug(sid)
     assert body["consumed_use"] is False
     assert body["limits"]["used"]["modeA"] == 0
-    # the board explains itself through the cards — no bookkeeping notes
     assert body["notes"] == []
 
 
 def test_model_override_reaches_the_coordinator(monkeypatch):
-    # the Mode A model dropdown: a non-default pick rides the request
-    # through to debug_circuit; omitted -> None -> the config default
     sid = _upload_bug3()
     fake = _canned("analysis", [{"rank": 1}])
     monkeypatch.setattr(debugger, "debug_circuit", fake)
@@ -108,8 +99,6 @@ def test_coach_temp_is_targeted_when_registered(monkeypatch):
     assert body["on_coach_temp"] is False
     assert fake.calls[-1]["coach_rows"] is None
 
-    # register a coach temp for this file (point it at a real path so the
-    # existence check passes), exactly like /api/l3/inject does
     server._SESSIONS[sid]["l3_temp"] = {
         "for": "Wrong_cin.dig",
         "name": "Wrong_cin__coach.dig",
@@ -121,13 +110,10 @@ def test_coach_temp_is_targeted_when_registered(monkeypatch):
     assert body["on_coach_temp"] is True
     assert fake.calls[-1]["path"] == _BUG3
     assert fake.calls[-1]["spec_name"] == "Testcase_12"
-    # the strict-improvement seam: added rows reach the coordinator
     assert fake.calls[-1]["coach_rows"] == [4, 5]
 
 
 def test_fix_retest_applies_ops_and_reruns():
-    # the animation's green Retest box: bug3 + the correct Const fix ->
-    # every row green on the patched temp; the original file untouched
     sid = _upload_bug3()
     r = client.post("/api/l3/fix_retest", json={
         "session_id": sid, "filename": "Wrong_cin.dig",
@@ -156,9 +142,6 @@ def test_fix_retest_rejects_empty_and_broken_ops():
 
 
 def test_accept_fix_registers_fixed_temp_and_retargets_everything(monkeypatch):
-    # accept -> fix applied to a TEMP only; session coaches the temp:
-    # Mode A re-run sees it, and Mode B's scan now reports the FIXED
-    # circuit clean (the original bug3 scan would flag disagreements)
     sid = _upload_bug3()
     r = client.post("/api/l3/accept_fix", json={
         "session_id": sid, "filename": "Wrong_cin.dig",
@@ -175,21 +158,18 @@ def test_accept_fix_registers_fixed_temp_and_retargets_everything(monkeypatch):
     names = [f["name"] for f in server._SESSIONS[sid]["files"]]
     assert "Wrong_cin__coach.dig" in names
 
-    # Mode A targets the fixed temp
     fake = _canned("clear", [])
     monkeypatch.setattr(debugger, "debug_circuit", fake)
     b2 = _debug(sid)
     assert b2["on_coach_temp"] is True
     assert fake.calls[-1]["path"] == lt["path"]
 
-    # Mode B scans the fixed temp: zero disagreements
     b3 = client.post("/api/l3/coverage", json={
         "session_id": sid, "filename": "Wrong_cin.dig"}).json()
     assert b3["ok"] is True
     assert b3["on_coach_temp"] is True
     assert b3["total_flags"] == 0
 
-    # the original upload was never touched
     orig = next(f for f in server._SESSIONS[sid]["files"]
                 if f["name"] == "Wrong_cin.dig")
     import dlc.l3.coverage as cov
@@ -204,9 +184,6 @@ def test_accept_fix_refuses_empty_ops():
 
 
 def test_empty_testcase_debug_runs_on_injected_temp(monkeypatch, tmp_path):
-    # Gradescope-style: a cpu whose own testcase has no rows must be
-    # debugged against the OFFICIAL rows — without injection Mode A saw
-    # zero failing rows and wrongly reported "every row passes" (r34).
     import io, os
     empty_cpu = """<?xml version="1.0" encoding="utf-8"?>
 <circuit>
@@ -247,17 +224,11 @@ def test_empty_testcase_debug_runs_on_injected_temp(monkeypatch, tmp_path):
     assert fake.calls, "debug_circuit was not reached"
     called_path = fake.calls[0]["path"]
     target = server._resolve_target(sid, "cpu.dig")
-    # the coordinator ran on the injected sibling temp, not the raw file
     assert called_path != target["path"]
     assert ".dlc_injected__" in os.path.basename(called_path)
     assert res.get("injected"), "response should carry the injection note"
-    # and the temp was cleaned up after the run
     assert not os.path.exists(called_path)
 
-
-# ---------------------------------------------------------------------------
-# rom-injected runs — the model note, the student hint, the rerun
-# ---------------------------------------------------------------------------
 
 def test_rom_hint_rides_verified_cards_on_rom_injected_runs():
     from dlc.web.l3_routes import _apply_rom_hint, _rom_injected_notes
@@ -313,8 +284,6 @@ def test_debug_endpoint_passes_rom_injected_and_applies_hint(
 
 
 def _rom_lab_defaults(tmp_path):
-    """A synthetic rom-injection lab registered via the defaults seam:
-    1-bit address ROM, official rows expect its (injected) words 5,6."""
     import base64
     import json as _json
     defaults = {
@@ -355,11 +324,6 @@ _ROM_LAB = (
 
 
 def test_accept_fix_rerun_runs_with_injected_rom(monkeypatch, tmp_path):
-    # r38: the accept-fix "show the green" rerun must run through the
-    # same injection as every other run — on a rom-injection lab the
-    # temp's empty ROM gets the course program for the rerun, so a
-    # verified logic fix re-tests green instead of all-red. The
-    # registered coach temp itself keeps its ROM empty.
     monkeypatch.setenv("DLC_OFFICIAL_DEFAULTS_PATH",
                        str(_rom_lab_defaults(tmp_path)))
     r = client.post("/api/circuit", files=[
@@ -375,6 +339,5 @@ def test_accept_fix_rerun_runs_with_injected_rom(monkeypatch, tmp_path):
     assert body["ok"] is True
     assert body["all_passed"] is True, body
     assert any("course program" in n for n in body.get("injected", []))
-    # the registered temp never stores the official rom words
     lt = server._SESSIONS[sid]["l3_temp"]
     assert "5,6" not in open(lt["path"], encoding="utf-8").read()

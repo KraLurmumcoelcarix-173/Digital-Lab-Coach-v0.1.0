@@ -147,6 +147,17 @@ def l3_propose(req: ProposeRequest) -> dict:
                 "No usable new tests this time — that can be a coach "
                 "limitation, not proof your tests are complete. Today's "
                 "Coverage Coach use was refunded.")
+    try:
+        from dlc.telemetry.sink import log_events
+        log_events(req.session_id, [{
+            "kind": "l3_modeB_result_server",
+            "filename": req.filename,
+            "proposals": len(result.get("proposals") or []),
+            "refunded": bool(result.get("refunded")),
+            "model": result.get("model"),
+        }])
+    except Exception:
+        pass
     return result
 
 
@@ -453,6 +464,26 @@ def llm_debug(req: DebugRequest) -> dict:
     result["limits"] = limits.consume("modeA") if consumed else limits.state()
     result["consumed_use"] = consumed
     result["on_coach_temp"] = on_temp
+    # server-side authoritative telemetry: the FE logs clicks, this row
+    # records what actually happened (r46; must never break the route)
+    try:
+        from dlc.telemetry.sink import log_events
+        u = result.get("usage") or {}
+        log_events(req.session_id, [{
+            "kind": "l3_modeA_result_server",
+            "filename": req.filename, "mode": result.get("mode"),
+            "cards": len(result.get("cards") or []),
+            "confirmed": sum(1 for c in (result.get("cards") or [])
+                             if (c.get("verified") or {}).get("confirmed")),
+            "llm_calls": result.get("llm_calls"),
+            "in_tokens": u.get("input_tokens"),
+            "out_tokens": u.get("output_tokens"),
+            "model": result.get("model"),
+            "rom_injected": bool(result.get("rom_injected")),
+            "consumed_use": consumed,
+        }])
+    except Exception:
+        pass
     return result
 
 
@@ -573,6 +604,17 @@ def l3_accept_fix(req: AcceptFixRequest) -> dict:
                "all_passed": allp}
         if inj2_notes:
             out["injected"] = inj2_notes
+        try:
+            from dlc.telemetry.sink import log_events
+            log_events(req.session_id, [{
+                "kind": "l3_accept_fix_server",
+                "filename": req.filename,
+                "n_ops": len(req.ops or []),
+                "all_passed": out.get("all_passed"),
+                "injected": bool(out.get("injected")),
+            }])
+        except Exception:
+            pass
         return out
     except Exception as exc:             # registered fine; rerun best-effort
         return {"ok": True, "temp_filename": temp_filename, "spec": None,

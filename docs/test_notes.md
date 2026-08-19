@@ -70,8 +70,8 @@ For each Component, the absolute pin positions and directions (after applying ro
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.pin_geometry import absolute_pin_positions
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
-for pos, spec in absolute_pin_positions(c.components[7]):  # change i in c.components[i] to view geometry for different components
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
+for pos, spec in absolute_pin_positions(c.components[7]):
     print(spec.name, (pos.x, pos.y), spec.direction)
 "
 ```
@@ -94,7 +94,7 @@ Plus `summary()`: `"NetList: N nets, M driven, K undriven-with-pins, J multi-dri
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.netlist import build_netlist
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
 nl = build_netlist(c)
 print(nl.summary())
 print()
@@ -129,7 +129,7 @@ uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.netlist import build_netlist
 from dlc.parser.graph import build_signal_graph, reachable_outputs_from_inputs
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
 nl = build_netlist(c)
 g = build_signal_graph(c, nl)
 reach = reachable_outputs_from_inputs(c, g)
@@ -140,14 +140,14 @@ for in_idx, outs in reach.items():
 ```
 
 
-Text dumb visulization: 
+Text dumb visulization:
 
 ```python
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.netlist import build_netlist
 from dlc.parser.graph import build_signal_graph
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
 nl = build_netlist(c)
 g = build_signal_graph(c, nl)
 print(f'Nodes: {g.number_of_nodes()}, Edges: {g.number_of_edges()}')
@@ -166,7 +166,7 @@ for u, v, data in g.edges(data=True):
 ```
 
 
-Visulization: 
+Visulization:
 
 ```python
 uv run --with matplotlib python -c "
@@ -175,7 +175,7 @@ from dlc.parser.netlist import build_netlist
 from dlc.parser.graph import build_signal_graph
 import networkx as nx, matplotlib.pyplot as plt
 
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
 nl = build_netlist(c)
 g = build_signal_graph(c, nl)
 
@@ -193,7 +193,6 @@ for node in topo:
 max_l = max(layer.values()) if layer else 0
 for i in out_idxs: layer[i] = max_l + 1
 
-# Hide isolated nodes (Testcase, unused tunnels) 
 keep = [n for n in g.nodes() if g.degree(n) > 0]
 gs = g.subgraph(keep).copy()
 for n in gs.nodes(): gs.nodes[n]['subset'] = layer.get(n, 0)
@@ -220,10 +219,10 @@ nx.draw(gs, pos, labels=labels, node_color=colors, node_size=2200,
         font_size=9, font_weight='bold', arrows=True, arrowsize=18,
         edge_color='#555555', width=1.3,
         connectionstyle='arc3,rad=0.08')
-plt.title('tier3_calculator.dig — signal-flow graph', fontsize=15)    # Feel free to modify here
-plt.axis('off')             
+plt.title('tier3_calculator.dig — signal-flow graph', fontsize=15)
+plt.axis('off')
 plt.tight_layout()
-plt.savefig('graph.png', dpi=200, bbox_inches='tight', facecolor='white')  # Feel free to modify here
+plt.savefig('graph.png', dpi=200, bbox_inches='tight', facecolor='white')
 print('Saved to graph.png')
 "
 ```
@@ -241,7 +240,7 @@ uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.netlist import build_netlist
 from dlc.facts.net_width import infer_net_widths
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')  # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
 nl = build_netlist(c)
 per_net, conflicts = infer_net_widths(c, nl)
 for nid, info in per_net.items():
@@ -256,7 +255,7 @@ Fact extractor:
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.facts.extractor import extract_facts
-c = parse_dig_file('data/sample_circuits/tier1_bug/unused_top_output.dig') # your .dig
+c = parse_dig_file('data/sample_circuits/tier1_bug/unused_top_output.dig')
 f = extract_facts(c)
 print(f.header); print()
 print('I/O:'); [print(f'  {io.direction.upper()} {io.label} {io.bit_width}-bit @ {io.position}') for io in f.inputs + f.outputs]
@@ -274,7 +273,7 @@ Json Bundle:
 uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.facts.extractor import extract_facts
-c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')  # your .dig
+c = parse_dig_file('data/sample_circuits/tier3_realistic/tier3_calculator.dig')
 print(extract_facts(c).to_json(indent=2))
 " | less
 ```
@@ -301,7 +300,7 @@ uv run python -c "
 from dlc.testing.config import (
     set_digital_jar_path, get_configured_jar, prompt_for_jar_path,
 )
-TARGET_JAR = r'"C:/Users/.../Digital.jar"'  # your jar
+TARGET_JAR = r'"C:/Users/.../Digital.jar"'
 set_digital_jar_path(TARGET_JAR)
 print(f'Saved: {get_configured_jar()}')
 "
@@ -314,7 +313,7 @@ uv run python -c "
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs, match_variables_to_io
 
-TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_latched_display.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_latched_display.dig'
 
 circuit = parse_dig_file(TARGET_DIG)
 for spec in extract_test_specs(circuit):
@@ -357,7 +356,7 @@ from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs
 from dlc.testing.runner import per_file_run_fast, find_digital_jar
 
-TARGET_DIG = 'data/sample_circuits/30_bug_benchmark/bug4_missing_pipeline/Missing_pipeline.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/30_bug_benchmark/bug4_missing_pipeline/Missing_pipeline.dig'
 
 circuit = parse_dig_file(TARGET_DIG)
 specs = [s for s in extract_test_specs(circuit) if s.rows]
@@ -389,7 +388,7 @@ uv run python -c "
 from dlc.testing.runner import find_digital_jar, run_digital_cli
 from dlc.testing.results import parse_cli_output
 
-TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_calculator.dig'
 
 jar = find_digital_jar()
 code, out = run_digital_cli(TARGET_DIG, jar)
@@ -416,7 +415,7 @@ from dlc.parser.dig_parser import parse_dig_file
 from dlc.testing.spec import extract_test_specs
 from dlc.testing.runner import per_row_run, find_digital_jar
 
-TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_latched_display.dig'  # your .dig
+TARGET_DIG = 'data/sample_circuits/tier3_realistic/tier3_latched_display.dig'
 
 circuit = parse_dig_file(TARGET_DIG)
 spec = extract_test_specs(circuit)[0]
@@ -457,7 +456,7 @@ Mode C (per-spec fallback to Mode B happens automatically).
 | Test | If it fails… | File |
 |---|---|---|
 | `test_subfolder_reference_resolves` | Recursive subcircuit search broke; references in `subs/` folders won't load. | `tests/test_parser.py` |
-| `test_ambiguous_subcircuit_flagged_but_resolved` | Two files with the same name no longer flagged; parent parse may silently pick the wrong one. | `tests/test_parser.py` |
+| `test_ambiguous_subcircuit_flagged_but_resolved` | Two files with the same name no longer flagged;parent parse may silently pick the wrong one. | `tests/test_parser.py` |
 | `test_missing_subcircuit_recorded_not_crashed` | A missing subcircuit file now crashes the parser instead of attaching a `resolution_error`. | `tests/test_parser.py` |
 | `test_testcase_dataString_extracted_into_attribute` | F4 will break — we're back to capturing whitespace instead of the real test rows. | `tests/test_parser.py` |
 | `test_testcase_with_clock_token_captured` | Clock pulse `C` token is being eaten somewhere on the way from XML to attribute. | `tests/test_parser.py` |
@@ -467,18 +466,18 @@ Mode C (per-spec fallback to Mode B happens automatically).
 
 | Test | If it fails… | File |
 |---|---|---|
-| `test_tokenize_*` (decimal / hex / binary / parens-negative / clock / highZ / dontcare / loop_expr) | One of Digital's testdata cell forms no longer parses. | `tests/test_testing_spec.py` |
-| `test_parse_data_string_expands_loop_blocks` | `loop(N, 30) … end loop` no longer expands; register-file's 93 rows collapse. | `tests/test_testing_spec.py` |
+| `test_tokenize_*` (decimal / hex / binary / parens-negative / clock / highZ / dontcare / loop_expr) |One of Digital's testdata cell forms no longer parses. | `tests/test_testing_spec.py` |
+| `test_parse_data_string_expands_loop_blocks` | `loop(N, 30) … end loop` no longer expands;register-file's 93 rows collapse. | `tests/test_testing_spec.py` |
 | `test_loop_expansion_wraps_negative_results_in_parens` | Negative loop-expansion outputs back to bare `-60`; Digital rejects them and per-row hits "saw: \<none\>". | `tests/test_testing_spec.py` |
 | `test_parse_handles_java_log_noise_around_result` | Autograder Java logger noise around `cpu: passed` is no longer tolerated. | `tests/test_testing_results.py` |
-| `test_lines_with_colons_but_not_results_are_ignored` | `INFO: Created user preferences directory.` gets misread as a testcase result. | `tests/test_testing_results.py` |
+| `test_lines_with_colons_but_not_results_are_ignored` | `INFO: Created user preferences directory.`gets misread as a testcase result. | `tests/test_testing_results.py` |
 | `test_join_with_matching_cli_result` | TestSpec × TestRunResults join broken — L3 can't get its single-shape input. | `tests/test_testing_run.py` |
 | `test_failing_rows_returns_rows_marked_failed_by_per_row_runner` | `TestRun.failing_rows()` can't surface the actual failing rows. | `tests/test_testing_run.py` |
 | `test_per_row_run_cumulative_all_pass` | Cumulative runner regressed on the all-pass path. | `tests/test_testing_runner.py` |
 | `test_per_row_run_cumulative_isolates_failing_row` | Middle-row failure no longer pinpointed via the percentage-delta inference. | `tests/test_testing_runner.py` |
 | `test_per_row_run_cumulative_detects_multiple_failures` | Multi-failure case (bug1's two FAIL rows) no longer attributed correctly. | `tests/test_testing_runner.py` |
 | `test_verbose_parse_*` (failed table / passed / two testcases / spaced name / tc error / log noise) | `CLI test -verbose` value-table parsing broke; the fast per-row path loses its source. | `tests/test_testing_fast_runner.py` |
-| `test_map_section_*` | Table-line → spec-row 1:1 mapping (or its refuse-and-fallback guard) regressed. | `tests/test_testing_fast_runner.py` |
+| `test_map_section_*` | Table-line → spec-row 1:1 mapping (or its refuse-and-fallback guard)regressed. | `tests/test_testing_fast_runner.py` |
 | `test_fast_equals_cumulative_on_30_bug_circuit` | Fast results no longer match the cumulative reference (issue #11 acceptance; needs `DIGITAL_JAR`). | `tests/test_testing_fast_runner.py` |
 | `test_prompt_for_jar_path_saves_when_user_picks_file` | First-run tkinter dialog → config-save flow broken; students would re-prompt every run. | `tests/test_testing_config.py` |
 | `test_set_digital_jar_path_writes_config` | The "set once via Python" path doesn't persist. | `tests/test_testing_config.py` |
@@ -491,7 +490,7 @@ Mode C (per-spec fallback to Mode B happens automatically).
 | `test_injection_targets_named_testcase_only` | Multi-testcase targeting broke; injecting into one testcase corrupts another. | `tests/test_l3_oracle.py` |
 | `test_validate_rejects_*` | Bad coach/student rows reach the temp file instead of being rejected up front. | `tests/test_l3_oracle.py` |
 | `test_rerun_flags_wrong_added_row_and_keeps_originals_green` | The Mode-B accept-flow's core signal (added-row pass/fail + expected-vs-found) regressed. | `tests/test_l3_oracle.py` |
-| `test_rerun_all_added_pass_sets_mode_b_lock_signal` | `added_all_passed` (Mode B's "you're all set" / daily-lock signal) or temp-file cleanup regressed. | `tests/test_l3_oracle.py` |
+| `test_rerun_all_added_pass_sets_mode_b_lock_signal` | `added_all_passed` (Mode B's "you're all set" /daily-lock signal) or temp-file cleanup regressed. | `tests/test_l3_oracle.py` |
 
 #### Telemetry sink + session GC
 
@@ -501,8 +500,8 @@ Mode C (per-spec fallback to Mode B happens automatically).
 | `test_log_events_skips_malformed_entries_without_failing_the_batch` | One bad frontend event can now kill a whole telemetry batch. | `tests/test_telemetry_sink.py` |
 | `test_telemetry_endpoint_stores_batch` | `/api/telemetry` broke; `window.dlcEventLog` flushes go nowhere. | `tests/test_telemetry_sink.py` |
 | `test_gc_sessions_removes_idle_sessions_and_their_tmp_dirs` | Idle sessions / upload temp dirs accumulate forever (pre-cohort leak). | `tests/test_telemetry_sink.py` |
-| `test_activity_defers_the_session_ttl` | Active students can lose their session mid-lab to the GC. | `tests/test_telemetry_sink.py` |
-| `test_upload_runs_the_gc_sweep` | The GC no longer rides on uploads; nothing ever gets collected. | `tests/test_telemetry_sink.py` |
+| `test_activity_defers_the_session_ttl` | Active students can lose their session mid-lab to the GC. |`tests/test_telemetry_sink.py` |
+| `test_upload_runs_the_gc_sweep` | The GC no longer rides on uploads; nothing ever gets collected. |`tests/test_telemetry_sink.py` |
 
 ## When you add a new test
 

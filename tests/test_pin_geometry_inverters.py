@@ -1,7 +1,6 @@
-"""Inverter-bubble (`inverterConfig`) support: negated gate inputs are exposed
-as an explicit `inverted` flag on PinSpec and via inverted_input_names() — not
-just the implicit -20 x-shift — so the Layer-1 UI and the future simulator can
-render the bubble and apply the negation."""
+"""
+Inverter-bubble (`inverterConfig`) test
+"""
 
 from dlc.parser.models import Component, Position
 from dlc.parser.pin_geometry import absolute_pin_positions, inverted_input_names
@@ -28,17 +27,17 @@ def test_inverted_input_names_only_for_gates():
 
 
 def test_pinspec_marks_inverted_input_wide_even():
-    g = _gate(wideShape=True, inverterConfig=["In_1"])   # top input negated
+    g = _gate(wideShape=True, inverterConfig=["In_1"])
     by_name = {s.name: s for _p, s in absolute_pin_positions(g)}
     assert by_name["in0"].inverted is True
     assert by_name["in1"].inverted is False
     assert by_name["Y"].inverted is False
     pos = {s.name: (p.x, p.y) for p, s in absolute_pin_positions(g)}
-    assert pos["in0"][0] == 180   # bubble still shifts x by -20 (200 - 20)
+    assert pos["in0"][0] == 180
 
 
 def test_pinspec_marks_inverted_input_non_wide():
-    g = _gate(element="NAnd", Inputs=3, inverterConfig=["In_2"])   # middle negated
+    g = _gate(element="NAnd", Inputs=3, inverterConfig=["In_2"])
     by_name = {s.name: s for _p, s in absolute_pin_positions(g)}
     assert by_name["in1"].inverted is True
     assert by_name["in0"].inverted is False

@@ -1143,19 +1143,104 @@ def subcircuit_row(req: SubcircuitRequest) -> dict:
         "depth": len(req.path),
     }
 
+_last_ship_attempt = 0.0
+
+
+def _ship_soon() -> None:
+    """Fire-and-forget: push the local spool to the course proxy when
+    one is configured. Throttled and threaded — telemetry must never
+    slow or break the app; offline just leaves events in the spool."""
+    global _last_ship_attempt
+    now = time.time()
+    if now - _last_ship_attempt < 20:
+        return
+    _last_ship_attempt = now
+
+    def _run():
+        try:
+            from dlc.telemetry.ship import ship_all
+            ship_all()
+        except Exception:
+            pass
+    import threading
+    threading.Thread(target=_run, daemon=True).start()
+
+
 @app.post("/api/telemetry")
 def telemetry(req: TelemetryRequest) -> dict:
     """Batch-store frontend events (window.dlcEventLog) into the local
     SQLite sink (~/.dlc/telemetry.db). Telemetry must never break the app:
     malformed events are skipped, and storage failures return ok=False
-    instead of raising."""
+    instead of raising. When a course proxy is configured, the spool
+    ships onward in the background (machine-keyed, resumable)."""
     try:
         stored = log_events(req.session_id, req.events)
     except Exception as exc:
         return {"ok": False, "stored": 0,
                 "warning": f"{type(exc).__name__}: {exc}"}
+    _ship_soon()
     return {"ok": True, "stored": stored}
 
+
+@app.get("/api/machine")
+def machine_info() -> dict:
+    """The anonymous machine identity telemetry and limits key on —
+    derived from the OS machine id, so a re-download on the same
+    machine continues the same record."""
+    from dlc.llm.client import _proxy_config
+    from dlc.telemetry.machine import machine_identity
+    ident = machine_identity()
+    url, _tok = _proxy_config()
+    return {**ident, "proxy_configured": bool(url)}
+
+
+@app.on_event("startup")
+def _telemetry_boot() -> None:
+    try:
+        from dlc.telemetry.machine import machine_identity
+        ident = machine_identity()
+        log_events(None, [{
+            "kind": "app_start",
+            "install_id": ident["install_id"],
+            "issued": ident["issued"],
+            "id_source": ident["source"],
+            "version": os.environ.get("DLC_VERSION", "0.1.0"),
+        }])
+    except Exception:
+        pass
+    _ship_soon()
+
+
+
+class ProxyConfigRequest(BaseModel):
+    url: str | None = None
+    token: str | None = None
+
+
+@app.get("/api/config/proxy")
+def get_proxy_config() -> dict:
+    from dlc.llm.client import _proxy_config
+    url, token = _proxy_config()
+    return {"configured": bool(url), "url": url,
+            "token_set": bool(token)}
+
+
+@app.post("/api/config/proxy")
+def set_proxy_config(req: ProxyConfigRequest) -> dict:
+    """Point this install at the course proxy (or clear it with an
+    empty url). Stored in ~/.dlc/config.json next to the api keys."""
+    from dlc.llm.client import _load_config, _save_config
+    cfg = _load_config()
+    url = (req.url or "").strip()
+    if url:
+        cfg["proxy_url"] = url.rstrip("/")
+        if req.token is not None:
+            cfg["proxy_token"] = req.token.strip()
+    else:
+        cfg.pop("proxy_url", None)
+        cfg.pop("proxy_token", None)
+    _save_config(cfg)
+    return {"ok": True, "configured": bool(url)}
 
 
 _PROVIDERS = ["anthropic", "openai"]

@@ -1,10 +1,5 @@
-"""Purple advisory cards: top-level I/O pins the tests never touch.
-
-The check must name exactly the In/Out components no test column binds
-(redundant pin OR incomplete test — student decides), stay silent
-without usable specs, and never join the blocking severities: the
-tests/Mode A/Mode B gates count errors only, and this card is a
-warning by design.
+"""
+Purple advisory cards: top-level I/O pins the tests never touch.
 """
 
 from pathlib import Path
@@ -66,9 +61,9 @@ def _cards(dig_path: str):
 
 _PARTIAL = (
     _ve("In", 0, 0, _label("a"))
-    + _ve("In", 0, 80, _label("b"))          # wired nowhere, tested nowhere
+    + _ve("In", 0, 80, _label("b"))
     + _ve("Out", 100, 0, _label("f"))
-    + _ve("Out", 300, 300)                    # unlabeled — can never bind
+    + _ve("Out", 300, 300)
     + _testcase("a f\n0 0\n1 1")
 )
 
@@ -79,7 +74,7 @@ def test_untested_pins_earn_one_purple_warning(tmp_path):
     assert len(cards) == 1
     card = cards[0]
     assert card.kind == KIND
-    assert card.severity.value == "warning"       # never a blocking error
+    assert card.severity.value == "warning"
     assert "b" in card.message
     assert "(unlabeled Out at (300, 300))" in card.message
     assert "redundant" in card.message and "incomplete" in card.message
@@ -103,8 +98,6 @@ def test_no_testcase_means_no_card(tmp_path):
 
 
 def test_fully_unbound_testcase_defers_to_rename_guidance(tmp_path):
-    # headers that match NOTHING are a naming mismatch, not a coverage
-    # gap — listing every pin here would shout over the rename story
     xml = _xml_circuit(
         _ve("In", 0, 0, _label("a"))
         + _ve("Out", 100, 0, _label("f"))

@@ -13,9 +13,9 @@ Last updated: 2026/7/03
 
 ```bash
 uv run pytest tests/test_L1_clean_sweep.py
-uv run pytest tests/test_analyzer_wire_completeness.py  
-uv run pytest tests/test_analyzer_bit_widths.py        
-uv run pytest tests/test_analyzer_combinational_loops.py                        
+uv run pytest tests/test_analyzer_wire_completeness.py
+uv run pytest tests/test_analyzer_bit_widths.py
+uv run pytest tests/test_analyzer_combinational_loops.py
 ```
 
 ---
@@ -25,7 +25,7 @@ uv run pytest tests/test_analyzer_combinational_loops.py
 
 `check_all_l1` runs the L1 checkers only on the top circuit.
 `check_all_l1_deep` recurses into every resolved subcircuit child and
-prefixes each issue's title with the file breadcrumb. Use deep when you 
+prefixes each issue's title with the file breadcrumb. Use deep when you
 want a single report covering the entire .dig hierarchy.
 
 Nested issues additionally carry:
@@ -51,7 +51,7 @@ for i in check_all_l1_deep(parse_dig_file(TARGET)).issues:
 "
 ```
 
-This runs F5 + F6 + F7 + F8 + F9 bug collectors in one pass for a single .dig file 
+This runs F5 + F6 + F7 + F8 + F9 bug collectors in one pass for a single .dig file
 with netlist/facts built once. Useful as a single-shot health check.
 
 
@@ -98,7 +98,7 @@ An `IssueCollection` of `Issue` records. Each `Issue` carries:
 
 | Severity | When to use | Examples |
 |---|---|---|
-| `error` | Circuit will not work | dangling_input, multi_driver, missing_subcircuit, unused_top_output |
+| `error` | Circuit will not work | dangling_input, multi_driver, missing_subcircuit,unused_top_output |
 | `warning` | Probably wrong; rest of circuit may still work | isolated_component, empty_tunnel |
 | `info` | Stylistic / didactic | reserved for F10 simplification hints |
 
@@ -144,7 +144,7 @@ print(check_wire_completeness(parse_dig_file(
 ### What it produces
 
 Two Issue kinds:
-- `width_conflict` 
+- `width_conflict`
 - `width_mismatch`
 
 ### Expected output
