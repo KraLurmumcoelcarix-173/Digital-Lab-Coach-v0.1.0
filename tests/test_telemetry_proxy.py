@@ -341,3 +341,40 @@ def test_proxy_401_maps_to_settings_guidance(tele_env, monkeypatch):
     assert r["ok"] is False
     assert "re-paste" in r["error"]
     assert "Settings" in r["error"]
+
+
+def test_saving_course_server_verifies_token(tele_env, monkeypatch):
+    from fastapi.testclient import TestClient
+    from dlc.web.server import app as webapp
+    monkeypatch.setattr(mach, "_raw_machine_identifier", lambda: "G-4")
+    wc = TestClient(webapp)
+
+    class _R:
+        def __init__(self, code):
+            self.status_code = code
+        def json(self):
+            return {}
+
+    import httpx
+    replies = {"code": 200}
+    monkeypatch.setattr(
+        httpx, "post", lambda *a, **kw: _R(replies["code"]))
+
+    body = {"url": "http://course.example", "token": "tok"}
+    assert wc.post("/api/config/proxy",
+                   json=body).json()["verify"] == "accepted"
+    replies["code"] = 401
+    assert wc.post("/api/config/proxy",
+                   json=body).json()["verify"] == "bad_token"
+
+    def boom(*a, **kw):
+        raise OSError("down")
+    monkeypatch.setattr(httpx, "post", boom)
+    assert wc.post("/api/config/proxy",
+                   json=body).json()["verify"] == "unreachable"
+
+    g = wc.get("/api/config/proxy", params={"verify": 1}).json()
+    assert g["configured"] is True and g["verify"] == "unreachable"
+
+    out = wc.post("/api/config/proxy", json={"url": ""}).json()
+    assert out == {"ok": True, "configured": False}

@@ -398,15 +398,15 @@
               it here again.</p>
             <div class="settings-row">
               <span id="set-proxy-state" class="settings-code">checking…</span>
+              <button id="proxy-clear-btn" class="btn-ghost hidden">Disconnect</button>
             </div>
-            <div class="settings-add">
+            <div class="settings-add" id="proxy-form">
               <input id="proxy-url-input" class="text-input" type="text"
                      placeholder="course server URL, e.g. https://dlc.example.edu:8321"/>
               <input id="proxy-token-input" class="text-input" type="password"
                      placeholder="course token from your instructor"/>
               <div class="settings-row">
-                <button id="proxy-save-btn" class="btn">Save</button>
-                <button id="proxy-clear-btn" class="btn-ghost">Disconnect</button>
+                <button id="proxy-save-btn" class="btn">Save &amp; verify</button>
                 <span id="proxy-msg" class="modal-msg"></span>
               </div>
             </div>

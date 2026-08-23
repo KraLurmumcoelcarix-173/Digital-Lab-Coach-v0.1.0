@@ -31,21 +31,38 @@ async function renderSettings() {
   await renderOfficialTests();
 }
 
+const PROXY_VERIFY_TEXT = {
+  accepted: ["connected — token accepted ✓", false],
+  bad_token: ["server reachable but the token was REJECTED — press " +
+              "Disconnect and re-enter the exact string from your " +
+              "instructor", true],
+  unreachable: ["saved, but the course server can't be reached right " +
+                "now — check the URL or that the server is running", true],
+};
+
+function renderProxyWidgets(connected) {
+  const form = document.getElementById("proxy-form");
+  const disc = document.getElementById("proxy-clear-btn");
+  if (form) form.classList.toggle("hidden", connected);
+  if (disc) disc.classList.toggle("hidden", !connected);
+}
+
 async function renderProxyState() {
   const el = document.getElementById("set-proxy-state");
   if (!el) return;
   try {
-    const r = await fetch("/api/config/proxy");
+    const r = await fetch("/api/config/proxy?verify=1");
     const b = await r.json();
     if (b.configured) {
-      el.textContent = `connected ✓  ${b.url}` +
-        (b.token_set ? "" : "  (no token saved!)");
-      el.classList.remove("settings-bad");
-      const u = document.getElementById("proxy-url-input");
-      if (u && !u.value) u.value = b.url || "";
+      const [text, bad] = PROXY_VERIFY_TEXT[b.verify]||
+        ["connected (unverified)", false];
+      el.textContent = `${b.url}  —  ${text}`;
+      el.classList.toggle("settings-bad", !!bad);
+      renderProxyWidgets(true);
     } else {
       el.textContent = "not connected";
       el.classList.add("settings-bad");
+      renderProxyWidgets(false);
     }
   } catch {
     el.textContent = "could not read course-server state";
@@ -151,8 +168,9 @@ async function otSave(filename, content) {
         const b = await r.json();
         if (!r.ok || !b.ok) { proxyMsg("Save failed.", true); return; }
         document.getElementById("proxy-token-input").value = "";
-        proxyMsg("Course server saved ✓");
-        logEvent("settings_proxy_saved", {});
+        const [text, bad] = PROXY_VERIFY_TEXT[b.verify] || ["Saved.", false];
+        proxyMsg(text, bad);
+        logEvent("settings_proxy_saved", { verify: b.verify || "n/a" });
         renderProxyState();
         if (typeof refreshKeyChip === "function") refreshKeyChip();
       } catch (err) {

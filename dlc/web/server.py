@@ -1130,12 +1130,31 @@ class ProxyConfigRequest(BaseModel):
     token: str | None = None
 
 
+def _verify_course_server(url: str, token: str | None) -> str:
+    """Ping the proxy with the saved token: an empty events batch is a
+    free authenticated request. Returns accepted / bad_token / unreachable."""
+    try:
+        import httpx
+        from dlc.telemetry.machine import install_id
+        r = httpx.post(f"{url}/v1/events",
+                       json={"install_id": install_id(), "events": []},
+                       headers={"X-DLC-Token": token or ""}, timeout=5.0)
+        if r.status_code == 401:
+            return "bad_token"
+        return "accepted" if r.status_code // 100 == 2 else "unreachable"
+    except Exception:
+        return "unreachable"
+
+
 @app.get("/api/config/proxy")
-def get_proxy_config() -> dict:
+def get_proxy_config(verify: bool = False) -> dict:
     from dlc.llm.client import _proxy_config
     url, token = _proxy_config()
-    return {"configured": bool(url), "url": url,
-            "token_set": bool(token)}
+    out = {"configured": bool(url), "url": url,
+           "token_set": bool(token)}
+    if verify and url:
+        out["verify"] = _verify_course_server(url, token)
+    return out
 
 
 @app.post("/api/config/proxy")
@@ -1151,7 +1170,11 @@ def set_proxy_config(req: ProxyConfigRequest) -> dict:
         cfg.pop("proxy_url", None)
         cfg.pop("proxy_token", None)
     _save_config(cfg)
-    return {"ok": True, "configured": bool(url)}
+    out = {"ok": True, "configured": bool(url)}
+    if url:
+        out["verify"] = _verify_course_server(
+            cfg.get("proxy_url", ""), cfg.get("proxy_token"))
+    return out
 
 
 _PROVIDERS = ["anthropic", "openai"]
