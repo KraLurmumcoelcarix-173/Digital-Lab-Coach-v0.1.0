@@ -20,10 +20,7 @@ Three pieces, in this order:
 3. **Two secrets**: the *course token* students paste once, and the
    *admin token* only you hold (it opens the dashboard).
 
-Prerequisites: your fork is pushed and green (`uv run pytest -q`), the
-four README screenshots are in `docs/screenshots/`, and you have ~30
-minutes. The personal step-by-step checklist for the v0.1.0 launch:
-[RELEASE_TODO.md](RELEASE_TODO.md).
+Prerequisites: All tests in your fork is green (`uv run pytest -q`)
 
 ## 1. Build the zip and cut the GitHub release
 
