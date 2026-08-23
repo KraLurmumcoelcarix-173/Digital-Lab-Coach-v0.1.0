@@ -22,7 +22,7 @@ app = FastAPI(title="DLC course proxy")
 
 os.environ["DLC_PROXY_SELF"] = "1"
 
-CALL_BUDGETS = {"modeA": 8, "modeB": 10, "grade": 20, "explain": 20}
+CALL_BUDGETS = {"modeA": 8, "modeB": 10, "grade": 2, "explain": 2}
 _DEFAULT_BUDGET = 12
 
 
