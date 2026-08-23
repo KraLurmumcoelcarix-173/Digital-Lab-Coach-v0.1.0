@@ -616,6 +616,7 @@ _ADMIN_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DLC course dashboard</title>
+<link rel="icon" href="data:,">
 <style>
  body{font:14px/1.45 system-ui,sans-serif;margin:0;background:#f6f7f9;color:#111827}
  header{background:#111827;color:#f9fafb;padding:12px 20px;display:flex;
@@ -827,13 +828,18 @@ function renderAiText(feature,text){
       const why=o.hint&&o.hint.why?o.hint.why:"";
       return `<div class="aihead">Mode A hypothesis — confidence `+
         `${esc(o.confidence??"?")}, ${ops} op(s)</div>`+
-        `<div class="aitext"><b>why:</b> ${esc(why)}\n\n`+
+        `<div class="aitext"><b>why:</b> ${esc(why)}
+
+`+
         `<b>student explanation:</b> ${esc(o.fix.explanation_for_student)}`+
-        `\n\n<b>ops:</b> ${esc(JSON.stringify(o.fix.ops))}</div>`;
+        `
+
+<b>ops:</b> ${esc(JSON.stringify(o.fix.ops))}</div>`;
     }
     if(o&&Array.isArray(o.proposals)){
       const t=o.proposals.map((pr,i)=>`#${i+1} `+
-        esc(JSON.stringify(pr)).slice(0,300)).join("\n");
+        esc(JSON.stringify(pr)).slice(0,300)).join(`
+`);
       return `<div class="aihead">Mode B — ${o.proposals.length} `+
         `proposal(s)</div><div class="aitext">${t}</div>`;
     }
