@@ -108,12 +108,12 @@ def _check_admin(token: str | None, header_token: str | None = None) -> None:
 
 def _est_usd(conn, day: str | None = None) -> float:
     q = ("SELECT model, COALESCE(SUM(in_tokens),0),"
-         "COALESCE(SUM(out_tokens),0) FROM llm_calls")
+         " COALESCE(SUM(out_tokens),0) FROM llm_calls")
     args: tuple = ()
     if day:
-        q += "WHERE day = ?"
+        q += " WHERE day = ?"
         args = (day,)
-    q += "GROUP BY model"
+    q += " GROUP BY model"
     spend = 0.0
     for model, i, o in conn.execute(q, args):
         pin, pout = _PRICES.get(model, (5.0, 25.0))
@@ -125,10 +125,10 @@ def _touch_machine(conn, install_id: str, issued=None, source=None,
                    version=None) -> None:
     with conn:
         conn.execute(
-            "INSERT INTO machines (install_id, first_seen, issued_client, "
-            "id_source, app_version, last_seen) VALUES (?,?,?,?,?,?) "
-            "ON CONFLICT(install_id) DO UPDATE SET last_seen = ?, "
-            "app_version = COALESCE(excluded.app_version, app_version)",
+            "INSERT INTO machines (install_id, first_seen, issued_client,"
+            " id_source, app_version, last_seen) VALUES (?,?,?,?,?,?)"
+            " ON CONFLICT(install_id) DO UPDATE SET last_seen = ?,"
+            " app_version = COALESCE(excluded.app_version, app_version)",
             (install_id, date.today().isoformat(), issued, source,
              version, time.time(), time.time()))
 
@@ -159,10 +159,10 @@ def ingest(req: EventsIn,
             try:
                 with conn:
                     conn.execute(
-                        "INSERT OR IGNORE INTO events (install_id, "
-                        "client_row_id, session_id, kind, client_ts, "
-                        "stored_at, received_at, props) "
-                        "VALUES (?,?,?,?,?,?,?,?)",
+                        "INSERT OR IGNORE INTO events (install_id,"
+                        " client_row_id, session_id, kind, client_ts,"
+                        " stored_at, received_at, props)"
+                        " VALUES (?,?,?,?,?,?,?,?)",
                         (req.install_id,
                          int(ev.get("client_row_id") or 0),
                          ev.get("session_id"),
@@ -207,24 +207,24 @@ def relay(req: LlmIn,
             conn.execute("ROLLBACK")
             return {"ok": False, "text": None,
                     "error": ("The course server has reached its daily"
-                              "capacity — please try again tomorrow. All"
-                              "deterministic checks still work."),
+                              " capacity — please try again tomorrow. All"
+                              " deterministic checks still work."),
                     "limit_hit": True, "capacity_hit": True,
                     "usage": None, "model": req.model}
         (used,) = conn.execute(
             "SELECT COUNT(*) FROM llm_calls WHERE install_id = ?"
-            "AND feature = ? AND day = ?",
+            " AND feature = ? AND day = ?",
             (req.install_id, req.feature, day)).fetchone()
         if used >= budget:
             conn.execute("ROLLBACK")
             return {"ok": False, "text": None,
                     "error": (f"Daily limit reached for {req.feature} on"
-                              f"this machine — it resets tomorrow."),
+                              f" this machine — it resets tomorrow."),
                     "limit_hit": True, "usage": None, "model": req.model}
         cur = conn.execute(
-            "INSERT INTO llm_calls (install_id, day, ts, feature, "
-            "model, ok, in_tokens, out_tokens, ms, error) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO llm_calls (install_id, day, ts, feature,"
+            " model, ok, in_tokens, out_tokens, ms, error)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (req.install_id, day, time.time(), req.feature, req.model,
              0, None, None, None, "pending"))
         row_id = cur.lastrowid
@@ -238,8 +238,8 @@ def relay(req: LlmIn,
         u = r.get("usage") or {}
         with conn:
             conn.execute(
-                "UPDATE llm_calls SET ts = ?, ok = ?, in_tokens = ?, "
-                "out_tokens = ?, ms = ?, error = ? WHERE id = ?",
+                "UPDATE llm_calls SET ts = ?, ok = ?, in_tokens = ?,"
+                " out_tokens = ?, ms = ?, error = ? WHERE id = ?",
                 (time.time(), 1 if r.get("ok") else 0,
                  u.get("input_tokens"), u.get("output_tokens"), ms,
                  (r.get("error") or "")[:300] or None, row_id))
@@ -255,11 +255,11 @@ def _startup_sanity() -> None:
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if key and not key.startswith("sk-"):
         print("WARNING: ANTHROPIC_API_KEY does not look like a real key"
-              "(expected it to start with 'sk-'). LLM relays will fail"
-              "with 401 until it is fixed.")
+              " (expected it to start with 'sk-'). LLM relays will fail"
+              " with 401 until it is fixed.")
     if not os.environ.get("DLC_COURSE_TOKEN"):
         print("WARNING: DLC_COURSE_TOKEN is not set — the proxy will"
-              "accept requests from ANYONE who finds the URL.")
+              " accept requests from ANYONE who finds the URL.")
 
 
 @app.get("/v1/health")
@@ -295,9 +295,9 @@ def summary(token: str | None = Query(default=None),
             ("install_id", "first_seen", "issued_client", "id_source",
              "app_version", "last_seen"), row))
             for row in conn.execute(
-                "SELECT install_id, first_seen, issued_client, id_source, "
-                "app_version, last_seen FROM machines "
-                "ORDER BY first_seen")]
+                "SELECT install_id, first_seen, issued_client, id_source,"
+                " app_version, last_seen FROM machines"
+                " ORDER BY first_seen")]
         for m in machines:
             if m["last_seen"]:
                 m["last_seen"] = datetime.fromtimestamp(
@@ -309,13 +309,13 @@ def summary(token: str | None = Query(default=None),
                 "SELECT COUNT(*) FROM llm_calls WHERE install_id = ?",
                 (m["install_id"],)).fetchone()
         kinds = conn.execute(
-            "SELECT kind, COUNT(*) FROM events GROUP BY kind "
-            "ORDER BY COUNT(*) DESC LIMIT 30").fetchall()
+            "SELECT kind, COUNT(*) FROM events GROUP BY kind"
+            " ORDER BY COUNT(*) DESC LIMIT 30").fetchall()
         spend = 0.0
         for model, i, o in conn.execute(
-                "SELECT model, COALESCE(SUM(in_tokens),0), "
-                "COALESCE(SUM(out_tokens),0) FROM llm_calls "
-                "GROUP BY model"):
+                "SELECT model, COALESCE(SUM(in_tokens),0),"
+                " COALESCE(SUM(out_tokens),0) FROM llm_calls"
+                " GROUP BY model"):
             pin, pout = _PRICES.get(model, (5.0, 25.0))
             spend += (i * pin + o * pout) / 1e6
         return {"machines": machines,
@@ -335,23 +335,23 @@ def daily(token: str | None = Query(default=None),
                          "ok_calls", "in_tokens", "out_tokens"), row))
                for row in conn.execute(
                    "SELECT day, install_id, feature, COUNT(*),"
-                   "COALESCE(SUM(ok),0), COALESCE(SUM(in_tokens),0),"
-                   "COALESCE(SUM(out_tokens),0) FROM llm_calls"
-                   "GROUP BY day, install_id, feature"
-                   "ORDER BY day DESC, install_id")]
+                   " COALESCE(SUM(ok),0), COALESCE(SUM(in_tokens),0),"
+                   " COALESCE(SUM(out_tokens),0) FROM llm_calls"
+                   " GROUP BY day, install_id, feature"
+                   " ORDER BY day DESC, install_id")]
         spend = {}
         for d, model, i, o in conn.execute(
                 "SELECT day, model, COALESCE(SUM(in_tokens),0),"
-                "COALESCE(SUM(out_tokens),0) FROM llm_calls"
-                "GROUP BY day, model"):
+                " COALESCE(SUM(out_tokens),0) FROM llm_calls"
+                " GROUP BY day, model"):
             pin, pout = _PRICES.get(model, (5.0, 25.0))
             spend[d] = spend.get(d, 0.0) + (i * pin + o * pout) / 1e6
         activity = [dict(zip(("day", "install_id", "events"), row))
                     for row in conn.execute(
                         "SELECT date(received_at, 'unixepoch'), install_id,"
-                        "COUNT(*) FROM events"
-                        "GROUP BY date(received_at, 'unixepoch'), install_id"
-                        "ORDER BY 1 DESC, install_id")]
+                        " COUNT(*) FROM events"
+                        " GROUP BY date(received_at, 'unixepoch'), install_id"
+                        " ORDER BY 1 DESC, install_id")]
         return {"llm": llm,
                 "spend_by_day": [{"day": d, "est_usd": round(v, 2)}
                                  for d, v in sorted(spend.items(),
