@@ -27,7 +27,37 @@ async function renderSettings() {
         : (b.configured ? "configured ✓" : "not configured");
     }
   } catch {}
+  await renderProxyState();
   await renderOfficialTests();
+}
+
+async function renderProxyState() {
+  const el = document.getElementById("set-proxy-state");
+  if (!el) return;
+  try {
+    const r = await fetch("/api/config/proxy");
+    const b = await r.json();
+    if (b.configured) {
+      el.textContent = `connected ✓  ${b.url}` +
+        (b.token_set ? "" : "  (no token saved!)");
+      el.classList.remove("settings-bad");
+      const u = document.getElementById("proxy-url-input");
+      if (u && !u.value) u.value = b.url || "";
+    } else {
+      el.textContent = "not connected — AI features need a personal API key";
+      el.classList.add("settings-bad");
+    }
+  } catch {
+    el.textContent = "could not read course-server state";
+  }
+}
+
+function proxyMsg(text, bad) {
+  const el = document.getElementById("proxy-msg");
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = bad ? "#991b1b" : "#166534";
+  setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 4000);
 }
 
 async function renderOfficialTests() {
@@ -106,6 +136,47 @@ async function otSave(filename, content) {
 }
 
 (function wireSettings() {
+  const proxySave = document.getElementById("proxy-save-btn");
+  if (proxySave) {
+    proxySave.addEventListener("click", async () => {
+      const url = (document.getElementById("proxy-url-input").value || "").trim();
+      const token = (document.getElementById("proxy-token-input").value || "").trim();
+      if (!url) { proxyMsg("The course server URL is required.", true); return; }
+      try {
+        const r = await fetch("/api/config/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, token }),
+        });
+        const b = await r.json();
+        if (!r.ok || !b.ok) { proxyMsg("Save failed.", true); return; }
+        document.getElementById("proxy-token-input").value = "";
+        proxyMsg("Course server saved ✓");
+        logEvent("settings_proxy_saved", {});
+        renderProxyState();
+        if (typeof refreshKeyChip === "function") refreshKeyChip();
+      } catch (err) {
+        proxyMsg(`Network error: ${err}`, true);
+      }
+    });
+  }
+  const proxyClear = document.getElementById("proxy-clear-btn");
+  if (proxyClear) {
+    proxyClear.addEventListener("click", async () => {
+      if (!confirm("Disconnect from the course server?")) return;
+      try {
+        await fetch("/api/config/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: "" }),
+        });
+        logEvent("settings_proxy_cleared", {});
+      } catch {}
+      document.getElementById("proxy-url-input").value = "";
+      renderProxyState();
+      if (typeof refreshKeyChip === "function") refreshKeyChip();
+    });
+  }
   const addBtn = document.getElementById("ot-add-btn");
   if (addBtn) {
     addBtn.addEventListener("click", async () => {

@@ -1,39 +1,23 @@
-/* Layer 3 coach tab — everything the L3 tab renders and stores.
-   Loaded AFTER app.js (classic script): it reads app.js top-level globals
-   (loaded, currentIdx, sessionId, testState, CY_STYLE, GRAPH_LIBS_OK,
-   escapeHtml, logEvent, fileL1Errors) at call time, and app.js calls back
-   into the functions defined here (l3ExpireAll, l3ConfirmNav,
-   l3PageVisible, renderL3Tab, renderL3Boards, l3ResetDom) only at runtime,
-   never during load — so the split is order-safe.
-*/
-
-// --- Layer 3 coach tab  --------------------------------------
-// Read-only mirror of the selected circuit + two boards (Mode A upper /
-// Mode B lower). This round builds the chrome, the L1 lock, the per-circuit
-// sticky result store (cards expire on re-upload, l3.debug) and the
-// circuit-switch guard; 
-
+//Layer 3 coach tab
 const l3ARunBtn  = document.getElementById("l3-a-run");
 const l3BRunBtn  = document.getElementById("l3-b-run");
 
 let l3Cy = null;
-let l3GraphFilename = null;    // which file the mirror currently shows
-let l3Store = {};              // filename -> { modeA, modeB, cards: [] }
-const l3RunState = { a: false, b: false };   // set while an analysis runs (P2/P3)
+let l3GraphFilename = null;
+let l3Store = {};
+const l3RunState = { a: false, b: false };
 
 function l3Slot(filename) {
   if (!l3Store[filename]) l3Store[filename] = { modeA: null, modeB: null, cards: [] };
   return l3Store[filename];
 }
 
-// Every /api/circuit POST re-uploads the whole set into a fresh session, so
-// stored L3 results (incl. hypothesis cards) are stale the moment it succeeds.
 function l3ExpireAll(reason) {
   const had = Object.values(l3Store).some(
     (s) => s && (s.modeA || s.modeB || (s.cards || []).length),
   );
   l3Store = {};
-  l3GraphFilename = null;      // circuit content may have changed: rebuild mirror
+  l3GraphFilename = null;
   if (had && reason === "re-upload") logEvent("l3_circuit_re_uploaded", {});
 }
 
@@ -41,9 +25,6 @@ function l3Busy() {
   return !!(l3RunState.a || l3RunState.b);
 }
 
-// Guard used by every circuit-switch path (file picker, dropdown, prev/next,
-// clear, Test-all row). No-op while nothing runs; once Mode A/B jobs exist,
-// switching circuits mid-run costs the run — make that explicit.
 function l3ConfirmNav() {
   if (!l3Busy()) return true;
   return confirm(
@@ -58,9 +39,6 @@ function l3PageVisible() {
 }
 
 function l3ResetDom() {
-  // Clear-all must not leave walkthrough leftovers behind (diagnosis
-  // board, retest box, yellow marks, badges, pointer): no mirror rebuild
-  // happens on the way back to the dashboard, so scrub them here.
   try { if (typeof _l3ClearFixMarks === "function") _l3ClearFixMarks(); } catch {}
   for (const id of ["l3-diag-board", "l3-retest-box",
                     "l3-anim-pointer", "l3-anim-shield"]) {
@@ -88,9 +66,6 @@ function renderL3Tab() {
   renderL3Boards(file);
 }
 
-// The mirror is its own Cytoscape instance over a DEEP COPY of the exported
-// graph (two instances must never share mutable element data), view-only:
-// no dragging or selecting. Later phases draw animations and fix badges here.
 function renderL3Graph(file) {
   const box = document.getElementById("l3-cy");
   const ph = document.getElementById("l3-placeholder");
@@ -128,16 +103,13 @@ function renderL3Graph(file) {
     return;
   }
 
-  l3HideDrillBar();          // returning to the selected file ends any drill view
+  l3HideDrillBar();
   l3BuildMirror(file);
 }
 
-// Build the mirror for ANY loaded entry (the selected file normally; during a
-// auto-drill descent, each parent level and finally the child as own top).
 function l3BuildMirror(file) {
   const box = document.getElementById("l3-cy");
   if (!box || !file || file.error || !file.graph) return;
-  // a fresh mirror never inherits a previous run's walkthrough leftovers
   if (typeof _l3ClearFixMarks === "function") _l3ClearFixMarks();
   const diag = document.getElementById("l3-diag-board");
   if (diag) diag.remove();
@@ -164,22 +136,13 @@ function l3BuildMirror(file) {
   inst.once("layoutstop", () => {
     setTimeout(() => { try { inst.resize(); inst.fit(undefined, 40); } catch {} }, 0);
   });
-  // revealed fixes stay marked across rebuilds (top view or the
-  // fix-review descent) — the locked panel keeps its yellow story.
-  // NOT hooked on layoutstop: dagre with animate:false finishes inside
-  // the constructor, before a listener could attach; the badge/tag
-  // overlays self-correct on pan/zoom, so a plain delay is safe.
+
   setTimeout(() => { try { l3ApplyFixMarks(file); } catch {} }, 300);
   l3WireMirrorInteractions(inst);
-  l3ApplyNetIds();               // keep the net-id toggle across rebuilds
+  l3ApplyNetIds();
   l3GraphFilename = file.filename;
 }
 
-// the mirror interacts like the Layer-1 board — grabbable
-// nodes, hover fade/highlight, and the same node/edge detail popups (the
-// L3 pane has its own popup element; app.js's lives inside the hidden
-// Dashboard page). Row-driven extras (clock ticking, sub-hint drill) stay
-// L1-only; Mode A will lock interaction during its animations.
 function l3WireMirrorInteractions(inst) {
   inst.on("mouseover", "node", (evt) => {
     const node = evt.target;
@@ -275,8 +238,6 @@ function l3HidePopup() {
   if (p.el) p.el.classList.add("hidden");
 }
 
-// Mode A analyzes the per-row failures of the selected file, so its readiness
-// needs a finished per-row run (general mode has no row detail).
 function l3FailingRowCount(filename) {
   const st = testState[filename];
   if (!st || st.status !== "done" || !st.payload || st.mode !== "per_row") return null;
@@ -310,7 +271,6 @@ function renderL3Boards(file) {
     ? `<div class="l3-note-card">${escapeHtml(slotVal.note)}</div>`
     : "";
 
-  // shared no-go states
   if (!file) {
     _l3PaintBoard("a", { status: "No file loaded.", cls: "muted" });
     _l3PaintBoard("b", { status: "No file loaded.", cls: "muted" });
@@ -336,9 +296,6 @@ function renderL3Boards(file) {
     return;
   }
 
-  // Mode A (upper): needs failing rows from a finished per-row run. When
-  // Mode B's accepted rows fail on the temp circuit, the run targets the
-  // registered coach temp.
   const failing = l3FailingRowCount(file.filename);
   const mbA = saved.modeB;
   const coachHint = (mbA && mbA.injectFailing > 0)
@@ -363,9 +320,6 @@ function renderL3Boards(file) {
     _l3PaintBoard("a", {
       status: st.status + coachHint,
       cls: st.cls,
-      // a DELIVERED analysis grays the button (it cost a use and the
-      // answer can't change); a zero-card analysis keeps it live — the
-      // re-run only counts if it delivers. Re-uploading resets anyway.
       enabled: ma.result.mode === "analysis"
         && !(ma.result.cards || []).length
         && !((ma.levels || {})["u"] >= 2),
@@ -414,8 +368,6 @@ function renderL3Boards(file) {
     });
   }
 
-  // Mode B (lower): L1-clean is the only gate (runs whether or not the
-  // current tests pass); scope is tree-wide incl. subcircuit testcases.
   if (l3RunState.b) {
     _l3PaintBoard("b", {
       status: "Scanning this file and every subcircuit's testcases…",
@@ -448,9 +400,6 @@ function renderL3Boards(file) {
     _l3PaintBoard("b", {
       status,
       cls,
-      // a finished scan grays the button — every click costs a daily
-      // use, and rescanning the same upload cannot change the answer.
-      // Re-uploading (which resets the store) re-enables it.
       enabled: false,
       bodyHtml: l3ModeBBodyHtml(mb) + _l3SelectGateHtml(mb) +
         l3ProposalsHtml(mb) + l3InjectHtml(mb),
@@ -466,12 +415,6 @@ function renderL3Boards(file) {
     });
   }
 }
-
-// --- Mode A: analysis render -------------------------------------------------
-// The board body for a finished /api/llm/debug run. Cards follow the ladder
-// (l3.debug.v1.1 §6): hint_level 1 shows only the hint; "Show me more"
-// reveals the verified fix + explanation. Falls back to the legacy stub
-// note shape for cards stored by older builds.
 
 function l3ModeAStatus(res) {
   if (res.mode === "clear") {
@@ -504,7 +447,6 @@ function _l3OpDesc(op) {
     case "swap_pins":
       return `swap wires on [${op.component_index}] pins ${op.pin_a} ↔ ${op.pin_b}`;
     case "rewire_pin":
-      // arrow = signal direction: the pin RECEIVES from its new source
       return `rewire [${op.component_index}].${op.pin} ← ` +
         `[${op.to && op.to.component_index}].${op.to && op.to.pin}`;
     case "add_wire":
@@ -602,9 +544,6 @@ function l3ModeABodyHtml(ma) {
       `<span class="l3-chip">Debug analysis today: ${used}/${lim.caps.modeA} used</span>` +
       (res.consumed_use === false && res.mode !== "clear"
         ? `<span class="l3-chip l3-chip-warn">this run was free</span>` : "") +
-      (lim.enforced
-        ? ""
-        : `<span class="l3-chip l3-chip-warn" title="DLC_ENFORCE_LIMITS is off — counters tick but nothing blocks. Release flips this on.">dev mode — limit not enforced</span>`) +
       `</div>`;
   }
   if (res.on_coach_temp) {
@@ -651,9 +590,6 @@ function l3ModeABodyHtml(ma) {
       `</details>`;
   }
   if ((res.notes || []).length) html += _l3NotesHtml(res.notes);
-  // The failing rows themselves, wordless, so the student can stare at
-  // them next to the hint. Gone once any fix is revealed — from there the
-  // fix (and, next round, its animation) carries the attention.
   const revealed = Object.values(ma.levels || {}).some((v) => v >= 2);
   if (!revealed && !res.on_coach_temp) {
     html += _l3FailingRowsTable(res);
@@ -695,7 +631,6 @@ function _l3FailingRowsTable(res) {
   return html + `</table></div>`;
 }
 
-// "Show me more" — reveal a card's fix level (per-card, sticky in the slot).
 (function wireL3BoardA() {
   const body = document.getElementById("l3-a-body");
   if (!body) return;
@@ -703,7 +638,7 @@ function _l3FailingRowsTable(res) {
     const rr = evt.target.closest("[data-l3a-rerun]");
     if (rr) {
       const file = loaded.length > 0 ? loaded[currentIdx] : null;
-      if (file) l3Slot(file.filename).modeA = null;   // fresh run
+      if (file) l3Slot(file.filename).modeA = null;
       logEvent("l3_modeA_rerun_clicked", {});
       l3RunModeA();
       return;
@@ -714,7 +649,6 @@ function _l3FailingRowsTable(res) {
     if (tr) { l3SimTempRow(tr); return; }
     const af = evt.target.closest("[data-l3a-acceptfix]");
     if (af) {
-      // double-confirm: first click arms, second applies
       if (af.dataset.armed !== "1") {
         af.dataset.armed = "1";
         af.textContent = "Click again to confirm — TEMP copy only";
@@ -748,8 +682,6 @@ function _l3FailingRowsTable(res) {
     ma.levels[btn.dataset.l3aMore] = 2;
     logEvent("l3_hint_level", { rank: Number(btn.dataset.l3aMore), level: 2 });
     renderL3Boards(file);
-    // Case-1 route: the reveal plays the fix walkthrough once. The
-    // coach-temp rerun and the best-unverified card never auto-play.
     const rank = btn.dataset.l3aMore;
     if (rank !== "u" && ma.result && !ma.result.on_coach_temp) {
       const card = ((ma.result || {}).cards || []).find(
@@ -761,11 +693,6 @@ function _l3FailingRowsTable(res) {
     }
   });
 })();
-
-// --- Mode B: coverage scan render -------------------------------------------
-// The board body for a finished /api/l3/coverage run: one section per circuit
-// in the tree (root first), disagreement cards on top, then the coverage
-// notes ("good report"). Falls back to the legacy stub note shape.
 
 function l3ModeBBodyHtml(savedB) {
   if (!savedB) return "";
@@ -781,9 +708,6 @@ function l3ModeBBodyHtml(savedB) {
     const used = (lim.used && lim.used.modeB) || 0;
     html += `<div class="l3-lim-bar">` +
       `<span class="l3-chip">Coverage Coach today: ${used}/${lim.caps.modeB} used</span>` +
-      (lim.enforced
-        ? ""
-        : `<span class="l3-chip l3-chip-warn" title="DLC_ENFORCE_LIMITS is off — counters tick but nothing blocks. Release flips this on.">dev mode — limit not enforced</span>`) +
       `</div>`;
   }
   for (const c of rep.circuits || []) {
@@ -826,7 +750,6 @@ function _l3CircuitChips(c) {
   const unresolved = (c.specs || [])
     .reduce((n, s) => n + (s.unresolved_cells || 0), 0);
   if (unresolved) {
-    // honesty guard visibility: these cells were counted, never accused
     chips.push(`<span class="l3-chip l3-chip-warn" title="The evaluator could not resolve these output cells, so they were never accused.">${unresolved} unchecked</span>`);
   }
   return chips.join("");
@@ -854,10 +777,6 @@ function _l3NotesHtml(notes) {
     notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") + `</ul>`;
 }
 
-// Case 3.B gate card: an input-driven mux select value no test row ever
-// exercises. The coach refuses to propose there — nothing anchors what
-// that op SHOULD do, so a proposed row would be a guess that can lock in
-// the very bug it should catch. The student writes those rows first.
 function _l3SelectGateHtml(mb) {
   const gate = (mb.report && mb.report.select_gate) || [];
   if (!gate.length || mb.locked) return "";
@@ -877,10 +796,6 @@ function _l3SelectGateHtml(mb) {
     `The coach refuses to guess an op your tests never define — a wrong ` +
     `guess could lock in the exact bug it is meant to catch.</div></div>`;
 }
-
-// --- Mode B: proposals + accept-flow --------------------------
-// State lives in slot.modeB: { report, proposing, proposals, accepting,
-// inject: {file: outcomeBody}, injectFailing, tempName, locked }.
 
 function l3ProposalsHtml(mb) {
   if (!mb.report || mb.report.total_flags > 0 || mb.locked
@@ -935,8 +850,6 @@ function l3ProposalsHtml(mb) {
          word(s); the rows run right AFTER your official rows on the coach's
          temp copy — your own file is never edited.</div>`
       : "";
-    // Deterministic decode truth: say WHICH lab instruction each
-    // ROM word is — from the manifest decode, never the model's claim.
     const words = (g.word_info || []).map((w) =>
       `<div class="l3-prop-wordinfo">${escapeHtml(w.word)} = <b>${escapeHtml(w.category)}</b>${
         w.closes_gap ? ` <span class="l3-chip l3-chip-good">closes a missing category</span>` : ""}${
@@ -955,7 +868,7 @@ function l3ProposalsHtml(mb) {
   });
   const anyDisputed = p.proposals.some((g) => (g.disputed_rows || []).length);
   const noteList = (p.notes || []).filter(
-    (n) => !(anyDisputed && /DISPUTED/.test(n)));   // the card already says it
+    (n) => !(anyDisputed && /DISPUTED/.test(n)));
   if (noteList.length) {
     html += `<div class="l3-prop-hint">${escapeHtml(noteList.join(" "))}</div>`;
   }
@@ -969,8 +882,6 @@ function l3ProposalsHtml(mb) {
       format: "not a legal row for that testcase",
     };
     const items = p.rejected.map((r) => {
-      // when the gate paired each dropped row with ITS mismatch,
-      // show one line per row instead of a wall of semicolons
       const raw = (r.details && r.details.length)
         ? r.details.map((d) =>
             `<div class="l3-rej-pair"><code>${escapeHtml(d.row)}</code>
@@ -1014,11 +925,7 @@ function l3InjectHtml(mb) {
     const head = `<tr><td class="l3-idx">idx</td>` +
       headers.map((h) => `<td>${escapeHtml(h)}</td>`).join("") +
       `<td>status</td></tr>`;
-    const drillable = !clickable && !!out.temp_filename;   // auto-drill
-    // Collapsible bulk: legacy _second warm-ups (origin "replay", nothing
-    // asserted) and — append mode — the official rows re-running ahead
-    // of the new ones (fully asserted; a FAILED official row is a
-    // regression and always stays visible).
+    const drillable = !clickable && !!out.temp_filename;
     const isAppend = !!out._append;
     const isBulk = (r) => r.origin === "replay" ||
       (isAppend && !r.added && r.status === "passed");
@@ -1142,7 +1049,6 @@ async function l3ProposeClick() {
     ? body
     : { proposals: [], notes: body.notes || [], model: body.model,
         error: body.error };
-  // an empty run refunds the day's use — refresh the limits bar
   if (body.limits && slot.modeB.report) {
     slot.modeB.report.limits = body.limits;
   }
@@ -1171,7 +1077,7 @@ async function l3AcceptClick() {
   if (!picked.length) return;
 
   mb.accepting = true;
-  l3RunState.b = true;                       // circuit-switch guard is live
+  l3RunState.b = true;
   logEvent("l3_modeB_accept_started", {
     filename: file.filename,
     n_rows: picked.reduce((n, g) => n + g.rows.length, 0),
@@ -1181,12 +1087,9 @@ async function l3AcceptClick() {
   mb.inject = {};
   mb.injectFailing = 0;
   let allSet = true;
-  for (const g of picked) {                  // one inject per target file
+  for (const g of picked) {
     let out;
     try {
-      // program extensions APPEND to the official testcase on the
-      // temp copy (state carries over) — as_second stays server-side for
-      // genuinely isolated cases only.
       const res = await fetch("/api/l3/inject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1202,15 +1105,13 @@ async function l3AcceptClick() {
       out = { ok: false, warning: `Network error: ${err}` };
     }
     if (out.ok) {
-      // spec index inside that file (temp preserves testcase order); for a
-      // second testcase the server says where it appended it
       const cov = (mb.report.circuits || []).find((c) => c.file === g.file);
       const sp = cov && (cov.specs || []).find((s) => s.name === g.spec_name);
       out._spec_index = (out.spec_index != null)
         ? out.spec_index : (sp ? sp.spec_index : 0);
       out._rom_words = (g.program_words && g.program_words.length)
         ? g.program_words : null;
-      out._append = !!out._rom_words;      // append-mode rendering
+      out._append = !!out._rom_words
       const failedAdded = (out.rows || [])
         .filter((r) => r.added && r.status === "failed").length;
       mb.injectFailing += failedAdded;
@@ -1227,7 +1128,7 @@ async function l3AcceptClick() {
   mb.accepting = false;
   l3RunState.b = false;
   if (allSet && mb.injectFailing === 0) {
-    mb.locked = true;                        // "you're all set" — done today
+    mb.locked = true;
     logEvent("l3_modeB_all_set", { filename: file.filename });
     l3ShowAdoptPopup(file.filename);
   } else if (mb.injectFailing > 0) {
@@ -1261,19 +1162,11 @@ async function l3SimTempRow(tr) {
   document.querySelectorAll("#l3-boards tr.l3-row-sel")
     .forEach((t) => t.classList.remove("l3-row-sel"));
   tr.classList.add("l3-row-sel");
-  applySignalFlow(sim, l3Cy);               // same painter Layer 1 uses
+  applySignalFlow(sim, l3Cy);
   logEvent(tr.closest("#l3-a-body") ? "l3_modeA_row_viewed"
                                     : "l3_modeB_temp_row_viewed",
            { filename, row: rowIdx });
 }
-
-// --- AUTO-DRILL: subcircuit-testcase rows play their own descent -------
-// Clicking a coach row that belongs to a SUBCIRCUIT auto-plays the drill-in
-// descent (any depth, no rectangle-touching): each parent level flashes the
-// instance being entered, then the child renders as its OWN top with the
-// row's inner signal flow, and a bar offers the way back + a re-run-Mode-A
-// hint. Pure client work: graphs come from `loaded`, values come from
-// /api/simulate on the child's registered coach temp.
 
 let l3DrillBusy = false;
 
@@ -1285,9 +1178,6 @@ function l3LoadedByName() {
   return byName;
 }
 
-// BFS across the loaded graphs: the chain of subcircuit instances leading
-// from `fromFile` down to `targetFile`. Steps: [{file, nodeId, child}].
-// Multiple instances of the same child: the first found is played.
 function l3FindDescent(fromFile, targetFile) {
   const byName = l3LoadedByName();
   const queue = [[fromFile, []]];
@@ -1342,12 +1232,8 @@ function l3RenderDrillBar(crumb, rowIdx, targetFile) {
     `${escapeHtml(targetFile)}</span>` +
     `<button class="btn-ghost" data-l3-drillback>&#9666; back to ${escapeHtml(top)}</button>`;
   el.classList.remove("hidden");
-  // the netid button sits at the pane's top-right — under the drill bar it
-  // would overlap the return bar, so the pane class shifts it below
   const pane = document.getElementById("l3-graph-pane");
   if (pane) pane.classList.add("l3-drilling");
-  // the "coaching <file>" chip names the SELECTED file — misleading (and
-  // overlapping) while a drilled child owns the mirror, so hide it
   const chip = document.getElementById("l3-file-chip");
   if (chip) chip.classList.add("hidden");
 }
@@ -1355,7 +1241,7 @@ function l3RenderDrillBar(crumb, rowIdx, targetFile) {
 function l3HideDrillBar() {
   const el = document.getElementById("l3-drill-bar");
   if (el) el.classList.add("hidden");
-  l3FixPath = [];                // any bar exit ends the fix review
+  l3FixPath = [];
   const pane = document.getElementById("l3-graph-pane");
   if (pane) pane.classList.remove("l3-drilling");
   const chip = document.getElementById("l3-file-chip");
@@ -1370,14 +1256,13 @@ async function l3AutoDrillRow(tr) {
   const cur = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!cur || cur.error || !sessionId || l3DrillBusy || Number.isNaN(rowIdx)) return;
   const byName = l3LoadedByName();
-  if (!byName[targetFile]) return;          // child never uploaded: keep note
+  if (!byName[targetFile]) return;
   l3DrillBusy = true;
   try {
     document.querySelectorAll("#l3-b-body tr.l3-row-sel")
       .forEach((t) => t.classList.remove("l3-row-sel"));
     tr.classList.add("l3-row-sel");
 
-    // The descent: flash + zoom each instance on the way down.
     const steps = l3FindDescent(cur.filename, targetFile) || [];
     for (const step of steps) {
       l3BuildMirror(byName[step.file]);
@@ -1393,7 +1278,6 @@ async function l3AutoDrillRow(tr) {
       }
     }
 
-    // Land: the child as its OWN top, painted with its own row's flow.
     l3BuildMirror(byName[targetFile]);
     await l3Wait(300);
     let sim = null;
@@ -1421,8 +1305,6 @@ async function l3AutoDrillRow(tr) {
   }
 }
 
-// the coach rows never touch the student's file — give them a
-// one-click way to carry the rows into Digital themselves.
 async function l3CopyRows(file, btn) {
   const cur = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!cur) return;
@@ -1449,9 +1331,6 @@ async function l3CopyRows(file, btn) {
   logEvent("l3_modeB_rows_copied", { file, n: lines.length });
 }
 
-// merge the verified coach rows into this lab's LOCAL official test.
-// Double-confirm, then the server reads the temp circuit itself — the
-// content saved is the machine-verified spec, never client text.
 async function l3AdoptOfficial(file) {
   const cur = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!cur || !sessionId) return;
@@ -1511,16 +1390,12 @@ function l3ToggleWarm(file) {
   renderL3Boards(cur);
 }
 
-// Drop the failing coach rows for one file and re-verify the survivors on
-// a fresh temp copy; with no survivors the section just clears.
 async function l3DiscardFail(file) {
   const cur = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!cur || !sessionId) return;
   const mb = l3Slot(cur.filename).modeB;
   const out = mb && mb.inject && mb.inject[file];
   if (!out || !out.ok || mb.accepting) return;
-  // A program extension is atomic (later instructions read earlier
-  // results), so discarding drops the WHOLE extension — keep nothing.
   const keep = out._rom_words ? [] : (out.rows || [])
     .filter((r) => r.added && r.status === "passed")
     .map((r) => r.raw);
@@ -1560,7 +1435,6 @@ async function l3DiscardFail(file) {
     mb.accepting = false;
     l3RunState.b = false;
   }
-  // recompute the fail count + the all-set lock from what remains
   mb.injectFailing = 0;
   let allSet = mb.inject ? true : false;
   for (const o of Object.values(mb.inject || {})) {
@@ -1579,7 +1453,6 @@ async function l3DiscardFail(file) {
   }
 }
 
-// One delegated listener serves every dynamically rendered control.
 (function wireL3BoardB() {
   const body = document.getElementById("l3-b-body");
   if (!body) return;
@@ -1603,16 +1476,10 @@ async function l3DiscardFail(file) {
   });
 })();
 
-// Mode A run: the real /api/llm/debug coordinator (per-row verdict →
-// cluster → one sub-agent per cluster → machine-verified fix cards). The
-// result is stored per circuit (sticky; expires on re-upload) under the
-// filename the run STARTED on, so a mid-run circuit switch can't misfile it.
 async function l3RunModeA() {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!file || file.error || !sessionId || l3RunState.a) return;
   const filename = file.filename;
-  // "" = the server-side default (l3_debug_model config); the picker's
-  // non-empty value overrides for THIS run only — the benchmark's A/B seam
   const modelPick = document.getElementById("l3-a-model");
   const model = (modelPick && modelPick.value) || null;
   logEvent("l3_modeA_started", { filename, model: model || "default" });
@@ -1658,7 +1525,6 @@ async function l3RunModeA() {
       return;
     }
   }
-  // re-render only if the user is still looking at the file the run was for
   if (l3PageVisible() && loaded[currentIdx]
       && loaded[currentIdx].filename === filename) {
     renderL3Boards(loaded[currentIdx]);
@@ -1667,9 +1533,6 @@ async function l3RunModeA() {
 
 l3ARunBtn.addEventListener("click", l3RunModeA);
 
-// Mode B run: synchronous scan (sub-second even on a full CPU tree). The
-// result is stored per circuit (sticky; expires on re-upload) under the
-// filename the run STARTED on, so a mid-run circuit switch can't misfile it.
 l3BRunBtn.addEventListener("click", async () => {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!file || file.error || !sessionId || l3RunState.b) return;
@@ -1715,18 +1578,11 @@ l3BRunBtn.addEventListener("click", async () => {
       return;
     }
   }
-  // re-render only if the user is still looking at the file the run was for
   if (l3PageVisible() && loaded[currentIdx]
       && loaded[currentIdx].filename === filename) {
     renderL3Boards(loaded[currentIdx]);
   }
 });
-/* --- Net-id overlay + adopt popup ---------------------------------------
-   The net-id toggle labels every wire with the net id it belongs to (the
-   same ids the hint evidence and hover popups speak), on both the L1 and
-   the L3 graph. The adopt popup is the proactive Accept follow-up: every
-   accepted row passes, so offer to save the merged testcase as the lab's
-   official test right away. */
 
 let l3NetIdsOn = false;
 
@@ -1747,7 +1603,7 @@ function l3ApplyNetIds() {
   });
 })();
 
-let _l3AdoptPending = null;    // selected filename at all-set time
+let _l3AdoptPending = null;
 
 function l3ShowAdoptPopup(filename) {
   const modal = document.getElementById("adopt-modal");
@@ -1757,8 +1613,6 @@ function l3ShowAdoptPopup(filename) {
   if (msg) { msg.textContent = ""; msg.className = "modal-msg"; }
   modal.classList.remove("hidden");
   logEvent("l3_adopt_popup_shown", { filename });
-  // Two flavors: RAISING an existing official standard vs CREATING the
-  // lab's first official test set — same endpoint, different words.
   fetch("/api/config/official_tests").then((r) => r.json()).then((b) => {
     const have = new Set((b.tests || []).map((t) => t.filename));
     const mb = l3Slot(filename).modeB;
@@ -1767,7 +1621,7 @@ function l3ShowAdoptPopup(filename) {
     const title = document.getElementById("adopt-modal-title");
     const text = document.getElementById("adopt-modal-text");
     const yes = document.getElementById("adopt-yes-btn");
-    if (anyExisting) return;          // default merge wording already set
+    if (anyExisting) return;
     if (title) title.innerHTML = "New lab detected &#10003;";
     if (text) {
       text.innerHTML = "This lab has <b>no official test</b> registered " +
@@ -1833,10 +1687,6 @@ function l3ShowAdoptPopup(filename) {
   });
 })();
 
-
-// Net-id mentions inside Mode A text ("net 7") become interactive: click
-// turns the net-id overlay ON (if off) and flashes that net blue on the
-// mirror. Board A only — the handler lives in wireL3BoardA.
 function _l3Netify(escapedHtml) {
   return String(escapedHtml).replace(/\bnet[\s_]*#?(\d+)\b/gi, (m, id) =>
     `<span class="l3-netref" data-l3-net="${id}" ` +
@@ -1868,10 +1718,6 @@ function l3FlashNet(id) {
   logEvent("l3_netref_flashed", { net: Number(id) });
 }
 
-// Accept produced FAILING coach rows: ask before keeping them. Yes keeps
-// the temp and restarts Mode A from the fresh failing-rows state (Accept
-// never touches the official tests — only Adopt after all-set does);
-// No discards the injected rows and removes the temp copies.
 let _l3AcceptFailPending = null;
 
 function l3ShowAcceptFailPopup(filename) {
@@ -1891,7 +1737,7 @@ function l3ShowAcceptFailPopup(filename) {
     modal.classList.add("hidden");
     const cur = loaded.length > 0 ? loaded[currentIdx] : null;
     if (!cur || cur.filename !== _l3AcceptFailPending) return;
-    l3Slot(cur.filename).modeA = null;   // fresh analysis on the temp
+    l3Slot(cur.filename).modeA = null;
     logEvent("l3_acceptfail_kept", { filename: cur.filename });
     renderL3Boards(cur);
   });
@@ -1915,9 +1761,6 @@ function l3ShowAcceptFailPopup(filename) {
   });
 })();
 
-// Best-unverified survivor: when nothing passed the verifier, the top-
-// ranked idea still ships — amber, honest about which rows it failed to
-// fix, behind the same Show-me-more ladder (levels key "u").
 function _l3UnverifiedCardHtml(ma, b) {
   const lvl = (ma.levels && ma.levels["u"]) || 1;
   const hint = b.hint || {};
@@ -1975,17 +1818,6 @@ function _l3UnverifiedCardHtml(ma, b) {
   return html + `</div>`;
 }
 
-// --- 3.6: the fix walkthrough player ----------------------------------------
-// Plays a CONFIRMED card's validated animation_script on the L3 mirror in
-// three phases: (1) Diagnose — the script's diagnose_line texts type onto
-// a red board over the canvas; (2) Localize + fix — the magical pointer
-// glides to each target, fixes render as yellow marks, and a target inside
-// a subcircuit pins a persistent 🔧 badge on the enclosing block (the
-// drill-in hint); (3) Retest — a green Retest box is drawn, "clicked",
-// and /api/l3/fix_retest REALLY re-runs the fixed temp; the per-row green
-// result then sits under the card. Interaction is shielded while playing;
-// Replay runs it again. Case-1 route only: coach-temp analyses and the
-// best-unverified card never auto-play (their boards carry their own story).
 let l3AnimBusy = false;
 
 function _l3Sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -2038,9 +1870,6 @@ async function _l3PointerToNode(idx) {
 }
 
 function _l3FixBadge(node, label, onClick) {
-  // a subcircuit-internal fix pins a persistent wrench badge on the
-  // enclosing block; clicking it opens the fix-review drill (mirror swaps
-  // to the child with the inner fix marked yellow, recursive)
   const pane = document.getElementById("l3-graph-pane");
   const box = document.getElementById("l3-cy");
   if (!pane || !box || !l3Cy) return;
@@ -2210,9 +2039,6 @@ async function l3PlayScript(card) {
         await _l3PointerToNode((act.path || []).length ? act.path[0]
                                                        : act.component_index);
       } else if (act.act === "drill") {
-        // playback stays on the top mirror: the pointer visits the
-        // enclosing block; the fix badge (mark_fix) invites the real
-        // drill-in afterwards
         if ((act.path || []).length) await _l3PointerToNode(act.path[0]);
       } else if (act.act === "mark_fix") {
         const t = act.target || {};
@@ -2250,11 +2076,6 @@ function _l3RetestHtml(body) {
     `<div class="l3-retest-rows">${chips}</div></div>`;
 }
 
-// --- Accept Fix + fix-review drill --------------------------------
-// Accept Fix (ratified): a CONFIRMED fix may be applied to a TEMP copy
-// only — never the student's file. The temp registers as the session
-// coach temp, so Mode A re-runs show the rows passing and Mode B
-// continues on the fixed circuit. The button double-confirms.
 async function l3AcceptFix(rank) {
   const file = loaded.length > 0 ? loaded[currentIdx] : null;
   if (!file || !sessionId) return;
@@ -2304,10 +2125,6 @@ function _l3AcceptedFixHtml(body) {
     `Apply the same change in Digital, then re-upload your file to make it real.</div></div>`;
 }
 
-// the re-openable fix review. l3FixPath is the descent (component
-// indices from the top); marks re-apply from the REVEALED cards' validated
-// scripts on every mirror build, so the story survives tab switches and
-// the back button.
 let l3FixPath = [];
 
 function _l3RevealedMarkActs(ma) {
@@ -2332,8 +2149,6 @@ function l3ApplyFixMarks(viewFile) {
   const acts = _l3RevealedMarkActs(ma);
   if (!acts.length) return;
   const d = l3FixPath.length;
-  // top-level marks belong on the top mirror only (a row-drill view of a
-  // child must not inherit the parent's indices)
   if (d === 0 && viewFile.filename !== top.filename) return;
   for (const a of acts) {
     const tgt = a.target || {};
@@ -2363,7 +2178,7 @@ function l3FixDrillInto(hostIdx) {
     return;
   }
   l3FixPath = l3FixPath.concat([Number(hostIdx)]);
-  const keep = l3FixPath.slice();          // survive the hide-reset
+  const keep = l3FixPath.slice();
   l3BuildMirror(child);
   l3FixPath = keep;
   l3RenderFixBar(ref);

@@ -143,6 +143,12 @@ def _call_proxy(prompt, model, max_tokens, system, effort, feature,
             out = resp.json()
             if isinstance(out, dict):
                 return out
+        if resp.status_code == 401:
+            return {"ok": False, "text": None,
+                    "error": ("Course token missing or expired — open "
+                              "Settings and re-paste the course server "
+                              "URL + token from your instructor."),
+                    "usage": None, "model": model}
         return {"ok": False, "text": None,
                 "error": f"course server error (HTTP {resp.status_code})",
                 "usage": None, "model": model}

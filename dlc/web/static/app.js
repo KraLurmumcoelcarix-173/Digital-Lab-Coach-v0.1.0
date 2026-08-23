@@ -1866,14 +1866,25 @@ function _setKeyRowStatus(provider, configured) {
 
 async function refreshKeyChip() {
   try {
+    let proxied = false;
+    try {
+      const pr = await fetch("/api/config/proxy");
+      proxied = !!(await pr.json()).configured;
+    } catch {}
     const r = await fetch("/api/config/api_key");
     const info = await r.json();
     const per = info.providers || {};
     for (const p of KEY_PROVIDERS) _setKeyRowStatus(p, per[p]);
     const set = KEY_PROVIDERS.filter((p) => per[p]);
-    if (set.length === 0) {
+    if (proxied) {
+      keyStateEl.innerHTML = `<span class="jar-state-good">course ✓</span>`;
+      keyChipBtn.title = "Connected to the course server — no personal " +
+        "API key needed. (A personal key, if set, is only used when the " +
+        "course server is unreachable.)";
+    } else if (set.length === 0) {
       keyStateEl.innerHTML = `<span class="jar-state-missing">missing</span>`;
-      keyChipBtn.title = "No LLM API keys configured. Click to add.";
+      keyChipBtn.title = "No LLM API keys configured. Click to add — or " +
+        "paste your course server URL + token under Settings.";
     } else if (set.length === KEY_PROVIDERS.length) {
       keyStateEl.innerHTML = `<span class="jar-state-good">${set.length}/${KEY_PROVIDERS.length}</span>`;
       keyChipBtn.title = "All providers configured.";

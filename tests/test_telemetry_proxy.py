@@ -25,6 +25,8 @@ def tele_env(tmp_path, monkeypatch):
     monkeypatch.delenv("DLC_PROXY_URL", raising=False)
     monkeypatch.delenv("DLC_COURSE_TOKEN", raising=False)
     monkeypatch.delenv("DLC_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("DLC_GLOBAL_DAILY_CALLS", raising=False)
+    monkeypatch.delenv("DLC_GLOBAL_DAILY_USD", raising=False)
     return tmp_path
 
 
@@ -271,3 +273,71 @@ def test_debugger_tags_modeA_feature(tele_env):
                   "Wrong_cin.dig", call=call, use_manifest=False,
                   failing_indices=[0, 1])
     assert seen.get("feature") == "modeA"
+
+def test_global_capacity_breaker_across_machines(tele_env, monkeypatch):
+    monkeypatch.setenv("DLC_GLOBAL_DAILY_CALLS", "2")
+    pc = _proxy_client(monkeypatch)
+    a = {"install_id": "mach-A", "feature": "modeA",
+         "model": "claude-opus-5", "prompt": "hi"}
+    assert pc.post("/v1/llm", json=a).json()["ok"] is True
+    assert pc.post("/v1/llm", json=a).json()["ok"] is True
+    b = dict(a, install_id="mach-B")
+    out = pc.post("/v1/llm", json=b).json()
+    assert out["ok"] is False
+    assert out.get("capacity_hit") is True
+    assert "daily capacity" in out["error"]
+    h = pc.get("/v1/health").json()
+    assert h["today_calls"] == 2 and h["global_daily_calls"] == 2
+
+
+def test_limit_message_dropped_redownload_sentence(tele_env, monkeypatch):
+    from proxy import dlc_proxy
+    monkeypatch.setattr(dlc_proxy, "CALL_BUDGETS", {"modeA": 1})
+    pc = _proxy_client(monkeypatch)
+    body = {"install_id": "m-msg", "feature": "modeA",
+            "model": "claude-opus-5", "prompt": "hi"}
+    assert pc.post("/v1/llm", json=body).json()["ok"] is True
+    out = pc.post("/v1/llm", json=body).json()
+    assert out["limit_hit"] is True
+    assert "resets tomorrow" in out["error"]
+    assert "Re-downloading" not in out["error"]
+
+
+def test_admin_header_auth_daily_and_dashboard(tele_env, monkeypatch):
+    monkeypatch.setenv("DLC_ADMIN_TOKEN", "adm")
+    pc = _proxy_client(monkeypatch)
+    body = {"install_id": "m-dash", "feature": "modeA",
+            "model": "claude-opus-5", "prompt": "hi"}
+    assert pc.post("/v1/llm", json=body).json()["ok"] is True
+
+    assert pc.get("/admin/summary").status_code == 401
+    s = pc.get("/admin/summary", headers={"X-DLC-Admin-Token": "adm"})
+    assert s.status_code == 200
+
+    d = pc.get("/admin/daily", headers={"X-DLC-Admin-Token": "adm"}).json()
+    assert d["llm"][0]["install_id"] == "m-dash"
+    assert d["llm"][0]["calls"] == 1
+    assert d["spend_by_day"] and "est_usd" in d["spend_by_day"][0]
+
+    page = pc.get("/admin/view")
+    assert page.status_code == 200
+    assert "dashboard" in page.text.lower()
+    assert "X-DLC-Admin-Token" in page.text
+
+
+def test_proxy_401_maps_to_settings_guidance(tele_env, monkeypatch):
+    monkeypatch.delenv("DLC_PROXY_SELF", raising=False)
+    monkeypatch.setattr(mach, "_raw_machine_identifier", lambda: "G-3")
+    monkeypatch.setenv("DLC_PROXY_URL", "http://course.example")
+
+    class _R401:
+        status_code = 401
+        def json(self):
+            return {"detail": "bad course token"}
+
+    import httpx
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: _R401())
+    r = lc.call_llm("hello", model="claude-opus-5", feature="modeA")
+    assert r["ok"] is False
+    assert "re-paste" in r["error"]
+    assert "Settings" in r["error"]

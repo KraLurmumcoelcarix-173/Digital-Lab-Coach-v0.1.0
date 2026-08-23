@@ -41,7 +41,7 @@
           API keys: <span id="key-state">checking...</span>
         </button>
         <button id="settings-gear" class="tab-gear"
-                title="Settings — Digital.jar, API keys, official tests, language">
+                title="Settings — Digital.jar, API keys, course server, official tests, language">
           &#9881;
         </button>
       </div>
@@ -398,6 +398,29 @@
             <div class="settings-row">
               <span id="set-key-state" class="settings-code">checking…</span>
               <button id="set-key-btn" class="btn-ghost">Configure…</button>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <h3>Course server</h3>
+            <p class="muted">Students in a course paste the server URL and
+              course token handed out by the instructor — AI features then
+              run through the course server and <b>no personal API key is
+              needed</b>. If your instructor announces a new token, paste
+              it here again.</p>
+            <div class="settings-row">
+              <span id="set-proxy-state" class="settings-code">checking…</span>
+            </div>
+            <div class="settings-add">
+              <input id="proxy-url-input" class="text-input" type="text"
+                     placeholder="course server URL, e.g. https://dlc.example.edu:8321"/>
+              <input id="proxy-token-input" class="text-input" type="password"
+                     placeholder="course token from your instructor"/>
+              <div class="settings-row">
+                <button id="proxy-save-btn" class="btn">Save</button>
+                <button id="proxy-clear-btn" class="btn-ghost">Disconnect</button>
+                <span id="proxy-msg" class="modal-msg"></span>
+              </div>
             </div>
           </section>
 

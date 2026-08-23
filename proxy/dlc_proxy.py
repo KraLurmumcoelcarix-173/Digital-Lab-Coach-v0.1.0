@@ -25,6 +25,20 @@ os.environ["DLC_PROXY_SELF"] = "1"
 CALL_BUDGETS = {"modeA": 8, "modeB": 10, "grade": 20, "explain": 20}
 _DEFAULT_BUDGET = 12
 
+
+def _global_daily_calls() -> int:
+    try:
+        return int(os.environ.get("DLC_GLOBAL_DAILY_CALLS", "") or 600)
+    except ValueError:
+        return 600
+
+
+def _global_daily_usd() -> float:
+    try:
+        return float(os.environ.get("DLC_GLOBAL_DAILY_USD", "") or 20.0)
+    except ValueError:
+        return 20.0
+
 _PRICES = {
     "claude-sonnet-4-6": (3.0, 15.0), "claude-opus-5": (5.0, 25.0),
     "claude-sonnet-5": (2.0, 10.0),
@@ -85,10 +99,26 @@ def _check_course_token(tok: str | None) -> None:
         raise HTTPException(status_code=401, detail="bad course token")
 
 
-def _check_admin(token: str | None) -> None:
+def _check_admin(token: str | None, header_token: str | None = None) -> None:
     want = os.environ.get("DLC_ADMIN_TOKEN")
-    if not want or (token or "") != want:
+    got = header_token or token or ""
+    if not want or got != want:
         raise HTTPException(status_code=401, detail="bad admin token")
+
+
+def _est_usd(conn, day: str | None = None) -> float:
+    q = ("SELECT model, COALESCE(SUM(in_tokens),0),"
+         "COALESCE(SUM(out_tokens),0) FROM llm_calls")
+    args: tuple = ()
+    if day:
+        q += "WHERE day = ?"
+        args = (day,)
+    q += "GROUP BY model"
+    spend = 0.0
+    for model, i, o in conn.execute(q, args):
+        pin, pout = _PRICES.get(model, (5.0, 25.0))
+        spend += (i * pin + o * pout) / 1e6
+    return spend
 
 
 def _touch_machine(conn, install_id: str, issued=None, source=None,
@@ -169,17 +199,27 @@ def relay(req: LlmIn,
     try:
         _touch_machine(conn, req.install_id)
         conn.execute("BEGIN IMMEDIATE")
+        (day_calls,) = conn.execute(
+            "SELECT COUNT(*) FROM llm_calls WHERE day = ?",
+            (day,)).fetchone()
+        if (day_calls >= _global_daily_calls()
+                or _est_usd(conn, day) >= _global_daily_usd()):
+            conn.execute("ROLLBACK")
+            return {"ok": False, "text": None,
+                    "error": ("The course server has reached its daily"
+                              "capacity — please try again tomorrow. All"
+                              "deterministic checks still work."),
+                    "limit_hit": True, "capacity_hit": True,
+                    "usage": None, "model": req.model}
         (used,) = conn.execute(
-            "SELECT COUNT(*) FROM llm_calls WHERE install_id = ? "
+            "SELECT COUNT(*) FROM llm_calls WHERE install_id = ?"
             "AND feature = ? AND day = ?",
             (req.install_id, req.feature, day)).fetchone()
         if used >= budget:
             conn.execute("ROLLBACK")
             return {"ok": False, "text": None,
-                    "error": (f"Daily limit reached for {req.feature} on "
-                              f"this machine — it resets tomorrow. "
-                              f"(Re-downloading the tool does not reset "
-                              f"it.)"),
+                    "error": (f"Daily limit reached for {req.feature} on"
+                              f"this machine — it resets tomorrow."),
                     "limit_hit": True, "usage": None, "model": req.model}
         cur = conn.execute(
             "INSERT INTO llm_calls (install_id, day, ts, feature, "
@@ -210,22 +250,45 @@ def relay(req: LlmIn,
         conn.close()
 
 
+@app.on_event("startup")
+def _startup_sanity() -> None:
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if key and not key.startswith("sk-"):
+        print("WARNING: ANTHROPIC_API_KEY does not look like a real key"
+              "(expected it to start with 'sk-'). LLM relays will fail"
+              "with 401 until it is fixed.")
+    if not os.environ.get("DLC_COURSE_TOKEN"):
+        print("WARNING: DLC_COURSE_TOKEN is not set — the proxy will"
+              "accept requests from ANYONE who finds the URL.")
+
+
 @app.get("/v1/health")
 def health() -> dict:
     conn = _db()
     try:
         (m,) = conn.execute("SELECT COUNT(*) FROM machines").fetchone()
         (e,) = conn.execute("SELECT COUNT(*) FROM events").fetchone()
+        day = date.today().isoformat()
+        (day_calls,) = conn.execute(
+            "SELECT COUNT(*) FROM llm_calls WHERE day = ?",
+            (day,)).fetchone()
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
         return {"ok": True, "machines": m, "events": e,
-                "key_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
-                "course_token_set": bool(os.environ.get("DLC_COURSE_TOKEN"))}
+                "key_configured": bool(key),
+                "key_format_ok": key.startswith("sk-") if key else False,
+                "course_token_set": bool(os.environ.get("DLC_COURSE_TOKEN")),
+                "today_calls": day_calls,
+                "today_est_usd": round(_est_usd(conn, day), 2),
+                "global_daily_calls": _global_daily_calls(),
+                "global_daily_usd": _global_daily_usd()}
     finally:
         conn.close()
 
 
 @app.get("/admin/summary")
-def summary(token: str | None = Query(default=None)) -> dict:
-    _check_admin(token)
+def summary(token: str | None = Query(default=None),
+            x_dlc_admin_token: str | None = Header(default=None)) -> dict:
+    _check_admin(token, x_dlc_admin_token)
     conn = _db()
     try:
         machines = [dict(zip(
@@ -262,10 +325,47 @@ def summary(token: str | None = Query(default=None)) -> dict:
         conn.close()
 
 
+@app.get("/admin/daily")
+def daily(token: str | None = Query(default=None),
+          x_dlc_admin_token: str | None = Header(default=None)) -> dict:
+    _check_admin(token, x_dlc_admin_token)
+    conn = _db()
+    try:
+        llm = [dict(zip(("day", "install_id", "feature", "calls",
+                         "ok_calls", "in_tokens", "out_tokens"), row))
+               for row in conn.execute(
+                   "SELECT day, install_id, feature, COUNT(*),"
+                   "COALESCE(SUM(ok),0), COALESCE(SUM(in_tokens),0),"
+                   "COALESCE(SUM(out_tokens),0) FROM llm_calls"
+                   "GROUP BY day, install_id, feature"
+                   "ORDER BY day DESC, install_id")]
+        spend = {}
+        for d, model, i, o in conn.execute(
+                "SELECT day, model, COALESCE(SUM(in_tokens),0),"
+                "COALESCE(SUM(out_tokens),0) FROM llm_calls"
+                "GROUP BY day, model"):
+            pin, pout = _PRICES.get(model, (5.0, 25.0))
+            spend[d] = spend.get(d, 0.0) + (i * pin + o * pout) / 1e6
+        activity = [dict(zip(("day", "install_id", "events"), row))
+                    for row in conn.execute(
+                        "SELECT date(received_at, 'unixepoch'), install_id,"
+                        "COUNT(*) FROM events"
+                        "GROUP BY date(received_at, 'unixepoch'), install_id"
+                        "ORDER BY 1 DESC, install_id")]
+        return {"llm": llm,
+                "spend_by_day": [{"day": d, "est_usd": round(v, 2)}
+                                 for d, v in sorted(spend.items(),
+                                                    reverse=True)],
+                "activity": activity}
+    finally:
+        conn.close()
+
+
 @app.get("/admin/export.csv", response_class=PlainTextResponse)
 def export_csv(token: str | None = Query(default=None),
+               x_dlc_admin_token: str | None = Header(default=None),
                table: str = Query(default="events")) -> str:
-    _check_admin(token)
+    _check_admin(token, x_dlc_admin_token)
     if table not in ("events", "machines", "llm_calls"):
         raise HTTPException(status_code=400, detail="unknown table")
     conn = _db()
@@ -284,3 +384,113 @@ def export_csv(token: str | None = Query(default=None),
         return "\n".join(lines) + "\n"
     finally:
         conn.close()
+
+
+_ADMIN_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DLC course dashboard</title>
+<style>
+ body{font:14px/1.45 system-ui,sans-serif;margin:0;background:#f6f7f9;color:#111827}
+ header{background:#111827;color:#f9fafb;padding:14px 20px;display:flex;
+        justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+ header h1{font-size:16px;margin:0}
+ main{max-width:1100px;margin:0 auto;padding:18px}
+ .tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+ .tile{background:#fff;border:1px solid #e5e7eb;border-radius:8px;
+       padding:10px 16px;min-width:120px}
+ .tile b{display:block;font-size:20px}
+ .tile span{color:#6b7280;font-size:12px}
+ .warn{color:#b45309}
+ h2{font-size:15px;margin:22px 0 8px}
+ table{border-collapse:collapse;width:100%;background:#fff;
+       border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+ th,td{padding:6px 10px;border-bottom:1px solid #eef0f3;text-align:left;
+       font-size:13px;white-space:nowrap}
+ th{background:#f3f4f6;color:#374151}
+ tr:last-child td{border-bottom:none}
+ #gate{max-width:420px;margin:80px auto;background:#fff;padding:24px;
+       border:1px solid #e5e7eb;border-radius:10px}
+ #gate input{width:100%;padding:8px;margin:10px 0;box-sizing:border-box}
+ #gate button{padding:8px 16px}
+ .err{color:#b91c1c}
+ .muted{color:#6b7280}
+ button.ghost{background:none;border:1px solid #6b7280;color:#f9fafb;
+              border-radius:6px;padding:4px 10px;cursor:pointer}
+</style></head><body>
+<header><h1>Digital Lab Coach — course dashboard</h1>
+<button class="ghost" id="logout" style="display:none">forget token</button>
+</header>
+<main>
+ <div id="gate">
+   <h2 style="margin-top:0">Admin token</h2>
+   <p class="muted">Stored only in this browser. Only the instructor
+      holding DLC_ADMIN_TOKEN can load data.</p>
+   <input id="tok" type="password" placeholder="admin token">
+   <button id="go">Open dashboard</button>
+   <p id="gate-err" class="err"></p>
+ </div>
+ <div id="dash" style="display:none">
+   <div class="tiles" id="tiles"></div>
+   <h2>Machines</h2><div id="machines"></div>
+   <h2>Per-day activity</h2><div id="daily"></div>
+   <h2>Per-day LLM usage</h2><div id="llm"></div>
+ </div>
+</main>
+<script>
+const $=(id)=>document.getElementById(id);
+function tok(){try{return localStorage.getItem("dlc_admin_token")||""}catch(e){return ""}}
+function setTok(v){try{localStorage.setItem("dlc_admin_token",v)}catch(e){}}
+async function api(path){
+  const r=await fetch(path,{headers:{"X-DLC-Admin-Token":tok()}});
+  if(r.status===401)throw new Error("bad token");
+  return r.json();
+}
+function table(rows,cols){
+  if(!rows||!rows.length)return '<p class="muted">nothing yet</p>';
+  const h=cols.map(c=>`<th>${c}</th>`).join("");
+  const b=rows.map(r=>"<tr>"+cols.map(c=>`<td>${r[c]??""}</td>`)
+    .join("")+"</tr>").join("");
+  return `<table><tr>${h}</tr>${b}</table>`;
+}
+async function load(){
+  const health=await fetch("/v1/health").then(r=>r.json());
+  const s=await api("/admin/summary");
+  const d=await api("/admin/daily");
+  $("gate").style.display="none";$("dash").style.display="block";
+  $("logout").style.display="inline-block";
+  const cap=health.today_calls>=health.global_daily_calls||
+            health.today_est_usd>=health.global_daily_usd;
+  $("tiles").innerHTML=[
+   [s.machines.length,"machines"],[health.events,"events"],
+   [health.today_calls+" / "+health.global_daily_calls,"LLM calls today"],
+   ["$"+health.today_est_usd+" / $"+health.global_daily_usd,"spend today (est)"],
+   ["$"+s.llm_spend_est_usd,"spend all-time (est)"],
+   [cap?"TRIPPED":"ok","capacity breaker",cap],
+   [health.key_format_ok?"ok":"CHECK KEY","API key",!health.key_format_ok],
+  ].map(([v,l,warn])=>`<div class="tile"><b class="${warn?"warn":""}">${v}</b><span>${l}</span></div>`).join("");
+  $("machines").innerHTML=table(s.machines,
+   ["install_id","first_seen","last_seen","id_source","app_version",
+    "events","llm_calls"]);
+  const act={};
+  for(const a of d.activity){(act[a.day]=act[a.day]||[]).push(a)}
+  $("daily").innerHTML=table(d.activity,["day","install_id","events"]);
+  const spend={};for(const s2 of d.spend_by_day)spend[s2.day]=s2.est_usd;
+  const llmRows=d.llm.map(r=>({...r,
+    est_day_usd:spend[r.day]!==undefined?("$"+spend[r.day]):""}));
+  $("llm").innerHTML=table(llmRows,
+   ["day","install_id","feature","calls","ok_calls","in_tokens",
+    "out_tokens","est_day_usd"]);
+}
+$("go").onclick=async()=>{setTok($("tok").value.trim());
+  try{await load()}catch(e){$("gate-err").textContent=
+    "That token was rejected — check it and try again."}};
+$("logout").onclick=()=>{setTok("");location.reload()};
+if(tok()){load().catch(()=>{$("gate").style.display="block"})}
+</script></body></html>"""
+
+
+@app.get("/admin/view")
+def admin_view():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_ADMIN_PAGE)
