@@ -44,7 +44,7 @@ async function renderProxyState() {
       const u = document.getElementById("proxy-url-input");
       if (u && !u.value) u.value = b.url || "";
     } else {
-      el.textContent = "not connected — AI features need a personal API key";
+      el.textContent = "not connected";
       el.classList.add("settings-bad");
     }
   } catch {

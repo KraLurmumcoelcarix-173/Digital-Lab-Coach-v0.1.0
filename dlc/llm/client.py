@@ -294,9 +294,10 @@ def call_llm(prompt, *, api_key=None, model=DEFAULT_MODEL,
     key = api_key or get_api_key(provider)
     if not key:
         return {"ok": False, "text": None,
-                "error": (f"No {provider} API key configured. Open the "
-                          f"API keys chip in the toolbar and paste your "
-                          f"{PROVIDER_ENV_VARS[provider]}."),
+                "error": ("No AI connection — open Settings and paste the "
+                          "course server URL + token from your instructor. "
+                          f"(Advanced: set {PROVIDER_ENV_VARS[provider]} "
+                          "to use a personal key instead.)"),
                 "usage": None, "model": model}
     if provider == "anthropic":
         return _call_anthropic(prompt, model, key, max_tokens, system, effort)

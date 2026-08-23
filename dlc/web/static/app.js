@@ -1865,6 +1865,10 @@ function _setKeyRowStatus(provider, configured) {
 }
 
 async function refreshKeyChip() {
+  if (!keyChipBtn || !keyStateEl) {
+    await refreshModelCatalog();
+    return;
+  }
   try {
     let proxied = false;
     try {
@@ -1976,7 +1980,7 @@ if (graderSelect) {
 
 refreshKeyChip();
 
-keyChipBtn.addEventListener("click", () => {
+if (keyChipBtn) keyChipBtn.addEventListener("click", () => {
   for (const p of KEY_PROVIDERS) {
     keyEls[p].input.value = "";
     keyEls[p].msg.textContent = "";
@@ -2356,7 +2360,7 @@ l2LlmBtn.addEventListener("click", async () => {
   const selectedInfo = modelCatalog.find((m) => m.id === selectedModel);
   if (selectedInfo && !selectedInfo.key_configured) {
     l2LlmStatus.textContent =
-      `No ${selectedInfo.provider} API key configured. Open the API keys chip in the toolbar.`;
+      `No AI connection for ${selectedInfo.provider} — open Settings and connect to your course server.`;
     l2LlmStatus.className = "l2-llm-status error";
     return;
   }
