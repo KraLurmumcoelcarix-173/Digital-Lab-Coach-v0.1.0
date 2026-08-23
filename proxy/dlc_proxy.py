@@ -20,6 +20,8 @@ from pydantic import BaseModel
 
 app = FastAPI(title="DLC course proxy")
 
+os.environ["DLC_PROXY_SELF"] = "1"
+
 CALL_BUDGETS = {"modeA": 8, "modeB": 10, "grade": 20, "explain": 20}
 _DEFAULT_BUDGET = 12
 
@@ -166,17 +168,27 @@ def relay(req: LlmIn,
     conn = _db()
     try:
         _touch_machine(conn, req.install_id)
+        conn.execute("BEGIN IMMEDIATE")
         (used,) = conn.execute(
             "SELECT COUNT(*) FROM llm_calls WHERE install_id = ? "
             "AND feature = ? AND day = ?",
             (req.install_id, req.feature, day)).fetchone()
         if used >= budget:
+            conn.execute("ROLLBACK")
             return {"ok": False, "text": None,
                     "error": (f"Daily limit reached for {req.feature} on "
                               f"this machine — it resets tomorrow. "
                               f"(Re-downloading the tool does not reset "
                               f"it.)"),
                     "limit_hit": True, "usage": None, "model": req.model}
+        cur = conn.execute(
+            "INSERT INTO llm_calls (install_id, day, ts, feature, "
+            "model, ok, in_tokens, out_tokens, ms, error) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (req.install_id, day, time.time(), req.feature, req.model,
+             0, None, None, None, "pending"))
+        row_id = cur.lastrowid
+        conn.execute("COMMIT")
         t0 = time.monotonic()
         from dlc.llm.client import call_llm
         r = call_llm(req.prompt, model=req.model,
@@ -186,13 +198,11 @@ def relay(req: LlmIn,
         u = r.get("usage") or {}
         with conn:
             conn.execute(
-                "INSERT INTO llm_calls (install_id, day, ts, feature, "
-                "model, ok, in_tokens, out_tokens, ms, error) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (req.install_id, day, time.time(), req.feature, req.model,
-                 1 if r.get("ok") else 0, u.get("input_tokens"),
-                 u.get("output_tokens"), ms,
-                 (r.get("error") or "")[:300] or None))
+                "UPDATE llm_calls SET ts = ?, ok = ?, in_tokens = ?, "
+                "out_tokens = ?, ms = ?, error = ? WHERE id = ?",
+                (time.time(), 1 if r.get("ok") else 0,
+                 u.get("input_tokens"), u.get("output_tokens"), ms,
+                 (r.get("error") or "")[:300] or None, row_id))
         r["limit"] = {"feature": req.feature, "used": used + 1,
                       "budget": budget}
         return r

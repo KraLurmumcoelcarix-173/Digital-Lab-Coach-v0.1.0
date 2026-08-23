@@ -4,8 +4,10 @@ course proxy (limits, ingest, dedup) -> client relay routing.
 """
 
 import json
+import os
 import sqlite3
 import time
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -158,6 +160,7 @@ def test_ship_moves_spool_to_proxy_and_survives_offline(tele_env,
 
 def test_call_llm_routes_through_proxy_when_configured(tele_env,
                                                        monkeypatch):
+    monkeypatch.delenv("DLC_PROXY_SELF", raising=False)
     monkeypatch.setattr(mach, "_raw_machine_identifier", lambda: "G-2")
     monkeypatch.setenv("DLC_PROXY_URL", "http://course.example")
     seen = {}
@@ -183,6 +186,68 @@ def test_call_llm_routes_through_proxy_when_configured(tele_env,
     assert seen["feature"] == "modeA"
     assert len(seen["install_id"]) == 16
     assert seen["model"] == "claude-opus-5"
+
+
+def test_call_llm_goes_direct_inside_the_proxy_process(tele_env,
+                                                       monkeypatch):
+    import proxy.dlc_proxy
+    assert os.environ.get("DLC_PROXY_SELF") == "1"
+    monkeypatch.setenv("DLC_PROXY_URL", "http://course.example")
+
+    import httpx
+
+    def explode(*a, **kw):
+        raise AssertionError("proxy process tried to relay to a proxy")
+    monkeypatch.setattr(httpx, "post", explode)
+
+    class _SDK:
+        def __init__(self, *a, **kw):
+            pass
+
+        @property
+        def messages(self):
+            return self
+
+        def create(self, **kw):
+            class _B:
+                type = "text"
+                text = "{}"
+
+            class _U:
+                input_tokens = 1
+                output_tokens = 1
+
+            class _R:
+                content = [_B()]
+                usage = _U()
+                stop_reason = "end_turn"
+            return _R()
+
+    monkeypatch.setattr(lc, "Anthropic", _SDK, raising=False)
+    monkeypatch.setattr(lc, "get_api_key", lambda p=None: "sk-test")
+    r = lc.call_llm("hi", model="claude-opus-5", feature="modeA")
+    assert r["ok"] is True
+    assert "limit" not in r
+
+
+def test_budget_counts_inflight_reservations(tele_env, monkeypatch):
+    from proxy import dlc_proxy
+    monkeypatch.setattr(dlc_proxy, "CALL_BUDGETS", {"modeA": 2})
+    pc = _proxy_client(monkeypatch)
+    body = {"install_id": "m-rsv", "feature": "modeA",
+            "model": "claude-opus-5", "prompt": "hi"}
+    assert pc.post("/v1/llm", json=body).json()["ok"] is True
+    conn = sqlite3.connect(os.environ["DLC_PROXY_DB"])
+    with conn:
+        conn.execute(
+            "INSERT INTO llm_calls (install_id, day, ts, feature, model, "
+            "ok, in_tokens, out_tokens, ms, error) "
+            "VALUES (?,?,?,?,?,0,NULL,NULL,NULL,'pending')",
+            ("m-rsv", date.today().isoformat(), 0.0, "modeA",
+             "claude-opus-5"))
+    conn.close()
+    out = pc.post("/v1/llm", json=body).json()
+    assert out["ok"] is False and out["limit_hit"] is True
 
 
 def test_debugger_tags_modeA_feature(tele_env):

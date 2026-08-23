@@ -279,7 +279,7 @@ def call_llm(prompt, *, api_key=None, model=DEFAULT_MODEL,
                 "usage": None, "model": model}
     provider = info["provider"]
     proxy_url, proxy_token = _proxy_config()
-    if proxy_url:
+    if proxy_url and not os.environ.get("DLC_PROXY_SELF"):
         r = _call_proxy(prompt, model, max_tokens, system, effort,
                         feature, proxy_url, proxy_token)
         if not (r.pop("proxy_unreachable", False)
