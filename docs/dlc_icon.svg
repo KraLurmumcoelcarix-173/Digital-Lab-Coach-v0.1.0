@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16346c"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <mask id="jaw">
+      <rect x="0" y="0" width="256" height="256" fill="#ffffff"/>
+      <!-- notch cut for the open-end jaw, along the wrench axis -->
+      <rect x="217" y="52" width="14" height="50" rx="4"
+            transform="rotate(45 224 98)" fill="#000000"/>
+    </mask>
+  </defs>
+  <!-- rounded-square badge -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="none"
+        stroke="#0b1f45" stroke-width="4" opacity="0.6"/>
+  <!-- input wires -->
+  <line x1="30" y1="102" x2="66" y2="102" stroke="#ffffff"
+        stroke-width="13" stroke-linecap="round"/>
+  <line x1="30" y1="154" x2="66" y2="154" stroke="#ffffff"
+        stroke-width="13" stroke-linecap="round"/>
+  <!-- AND gate: straight back, semicircular nose (Digital style) -->
+  <path d="M 66 80 H 126 A 48 48 0 0 1 126 176 H 66 Z"
+        fill="none" stroke="#ffffff" stroke-width="13"
+        stroke-linejoin="round"/>
+  <!-- output wire -->
+  <line x1="174" y1="128" x2="184" y2="128" stroke="#ffffff"
+        stroke-width="13" stroke-linecap="round"/>
+  <!-- ...which becomes the green wrench (open-end head up-right) -->
+  <g fill="#4ade80" mask="url(#jaw)">
+    <circle cx="224" cy="98" r="19"/>
+    <rect x="215" y="98" width="18" height="64" rx="9"
+          transform="rotate(45 224 98)"/>
+  </g>
+</svg>
