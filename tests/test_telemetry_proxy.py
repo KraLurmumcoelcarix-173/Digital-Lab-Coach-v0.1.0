@@ -378,3 +378,53 @@ def test_saving_course_server_verifies_token(tele_env, monkeypatch):
 
     out = wc.post("/api/config/proxy", json={"url": ""}).json()
     assert out == {"ok": True, "configured": False}
+
+
+def test_admin_events_feed_filters_and_pagination(tele_env, monkeypatch):
+    monkeypatch.setenv("DLC_ADMIN_TOKEN", "adm")
+    pc = _proxy_client(monkeypatch)
+    for mach_id, rows in (("m-one", 4), ("m-two", 2)):
+        pc.post("/v1/events", json={
+            "install_id": mach_id,
+            "events": [{"client_row_id": i,
+                        "kind": "upload" if i % 2 else "tests_run_started",
+                        "props": {"count": i, "filename": f"f{i}.dig"}}
+                       for i in range(1, rows + 1)]})
+
+    assert pc.get("/admin/events").status_code == 401
+    hdr = {"X-DLC-Admin-Token": "adm"}
+
+    d = pc.get("/admin/events", headers=hdr).json()
+    assert d["total"] == 6
+    assert set(d["machines"]) == {"m-one", "m-two"}
+    assert set(d["kinds"]) == {"upload", "tests_run_started"}
+    assert d["days"] and d["rows"][0]["id"] > d["rows"][-1]["id"]
+    assert isinstance(d["rows"][0]["props"], dict)
+    assert d["rows"][0]["time"]
+
+    d = pc.get("/admin/events", headers=hdr,
+               params={"kind": "upload"}).json()
+    assert d["total"] == 3
+    assert all(r["kind"] == "upload" for r in d["rows"])
+
+    d = pc.get("/admin/events", headers=hdr,
+               params={"install_id": "m-two"}).json()
+    assert d["total"] == 2
+
+    d = pc.get("/admin/events", headers=hdr,
+               params={"per_page": 2, "page": 3}).json()
+    assert d["total"] == 6 and len(d["rows"]) == 2
+
+    d = pc.get("/admin/events", headers=hdr,
+               params={"day": "1999-01-01"}).json()
+    assert d["total"] == 0 and d["rows"] == []
+
+
+def test_health_reports_effective_key_not_just_env(tele_env, monkeypatch):
+    import dlc.llm.client as real
+    monkeypatch.setattr(real, "get_api_key",
+                        lambda p="anthropic": "sk-from-config")
+    pc = _proxy_client(monkeypatch)
+    h = pc.get("/v1/health").json()
+    assert h["key_configured"] is True
+    assert h["key_format_ok"] is True

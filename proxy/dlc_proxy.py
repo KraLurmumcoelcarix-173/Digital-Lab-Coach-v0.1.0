@@ -250,9 +250,14 @@ def relay(req: LlmIn,
         conn.close()
 
 
+def _effective_key() -> str:
+    from dlc.llm.client import get_api_key
+    return get_api_key("anthropic") or ""
+
+
 @app.on_event("startup")
 def _startup_sanity() -> None:
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    key = _effective_key()
     if key and not key.startswith("sk-"):
         print("WARNING: ANTHROPIC_API_KEY does not look like a real key"
               " (expected it to start with 'sk-'). LLM relays will fail"
@@ -272,7 +277,7 @@ def health() -> dict:
         (day_calls,) = conn.execute(
             "SELECT COUNT(*) FROM llm_calls WHERE day = ?",
             (day,)).fetchone()
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        key = _effective_key()
         return {"ok": True, "machines": m, "events": e,
                 "key_configured": bool(key),
                 "key_format_ok": key.startswith("sk-") if key else False,
@@ -361,6 +366,59 @@ def daily(token: str | None = Query(default=None),
         conn.close()
 
 
+@app.get("/admin/events")
+def admin_events(token: str | None = Query(default=None),
+                 x_dlc_admin_token: str | None = Header(default=None),
+                 day: str | None = Query(default=None),
+                 install_id: str | None = Query(default=None),
+                 kind: str | None = Query(default=None),
+                 page: int = Query(default=1, ge=1),
+                 per_page: int = Query(default=50, ge=1, le=200)) -> dict:
+    _check_admin(token, x_dlc_admin_token)
+    conn = _db()
+    try:
+        where, args = [], []
+        if day:
+            where.append("date(received_at, 'unixepoch') = ?")
+            args.append(day)
+        if install_id:
+            where.append("install_id = ?")
+            args.append(install_id)
+        if kind:
+            where.append("kind = ?")
+            args.append(kind)
+        w = (" WHERE " + " AND ".join(where)) if where else ""
+        (total,) = conn.execute(
+            "SELECT COUNT(*) FROM events" + w, args).fetchone()
+        rows = [dict(zip(("id", "install_id", "kind", "ts",
+                          "session_id", "props"), r))
+                for r in conn.execute(
+                    "SELECT id, install_id, kind,"
+                    " COALESCE(client_ts, received_at), session_id, props"
+                    " FROM events" + w +
+                    " ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (*args, per_page, (page - 1) * per_page))]
+        for r in rows:
+            try:
+                r["props"] = json.loads(r["props"])
+            except (TypeError, ValueError):
+                r["props"] = {}
+            r["time"] = datetime.fromtimestamp(
+                r.pop("ts")).isoformat(sep=" ", timespec="seconds")
+        days = [d for (d,) in conn.execute(
+            "SELECT DISTINCT date(received_at, 'unixepoch') FROM events"
+            " ORDER BY 1 DESC LIMIT 120")]
+        kinds = [k for (k,) in conn.execute(
+            "SELECT DISTINCT kind FROM events ORDER BY kind LIMIT 100")]
+        machines = [m for (m,) in conn.execute(
+            "SELECT DISTINCT install_id FROM events ORDER BY 1 LIMIT 200")]
+        return {"total": total, "page": page, "per_page": per_page,
+                "rows": rows, "days": days, "kinds": kinds,
+                "machines": machines}
+    finally:
+        conn.close()
+
+
 @app.get("/admin/export.csv", response_class=PlainTextResponse)
 def export_csv(token: str | None = Query(default=None),
                x_dlc_admin_token: str | None = Header(default=None),
@@ -395,7 +453,7 @@ _ADMIN_PAGE = """<!doctype html>
  header{background:#111827;color:#f9fafb;padding:14px 20px;display:flex;
         justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
  header h1{font-size:16px;margin:0}
- main{max-width:1100px;margin:0 auto;padding:18px}
+ main{max-width:1200px;margin:0 auto;padding:18px}
  .tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
  .tile{background:#fff;border:1px solid #e5e7eb;border-radius:8px;
        padding:10px 16px;min-width:120px}
@@ -406,9 +464,10 @@ _ADMIN_PAGE = """<!doctype html>
  table{border-collapse:collapse;width:100%;background:#fff;
        border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
  th,td{padding:6px 10px;border-bottom:1px solid #eef0f3;text-align:left;
-       font-size:13px;white-space:nowrap}
- th{background:#f3f4f6;color:#374151}
+       font-size:13px;vertical-align:top}
+ th{background:#f3f4f6;color:#374151;white-space:nowrap}
  tr:last-child td{border-bottom:none}
+ td.nw,th.nw{white-space:nowrap}
  #gate{max-width:420px;margin:80px auto;background:#fff;padding:24px;
        border:1px solid #e5e7eb;border-radius:10px}
  #gate input{width:100%;padding:8px;margin:10px 0;box-sizing:border-box}
@@ -417,6 +476,25 @@ _ADMIN_PAGE = """<!doctype html>
  .muted{color:#6b7280}
  button.ghost{background:none;border:1px solid #6b7280;color:#f9fafb;
               border-radius:6px;padding:4px 10px;cursor:pointer}
+ .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+          background:#fff;border:1px solid #e5e7eb;border-radius:8px;
+          padding:10px 12px;margin:6px 0 10px}
+ .filters select{padding:5px 8px;border:1px solid #d1d5db;border-radius:6px}
+ .filters label{font-size:12px;color:#6b7280}
+ .filters .push{margin-left:auto}
+ .filters button{padding:5px 12px;border:1px solid #d1d5db;background:#f9fafb;
+                 border-radius:6px;cursor:pointer}
+ .pager{display:flex;gap:6px;align-items:center;margin:10px 0;flex-wrap:wrap}
+ .pager button{min-width:32px;padding:4px 8px;border:1px solid #d1d5db;
+               background:#fff;border-radius:6px;cursor:pointer}
+ .pager button.cur{background:#111827;color:#fff;border-color:#111827}
+ .pager button:disabled{opacity:.4;cursor:default}
+ details.props{display:inline}
+ details.props summary{cursor:pointer;color:#2563eb;font-size:12px;
+                       display:inline;margin-left:6px}
+ details.props pre{background:#f3f4f6;border-radius:6px;padding:8px;
+                   font-size:11.5px;white-space:pre-wrap;margin:6px 0 0}
+ code.mid{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:12px}
 </style></head><body>
 <header><h1>Digital Lab Coach — course dashboard</h1>
 <button class="ghost" id="logout" style="display:none">forget token</button>
@@ -432,9 +510,22 @@ _ADMIN_PAGE = """<!doctype html>
  </div>
  <div id="dash" style="display:none">
    <div class="tiles" id="tiles"></div>
+   <div class="filters">
+     <label>Day <select id="f-day"><option value="">all</option></select></label>
+     <label>Machine <select id="f-mach"><option value="">all</option></select></label>
+     <label>Event <select id="f-kind"><option value="">all</option></select></label>
+     <label>Rows <select id="f-pp">
+       <option>25</option><option selected>50</option>
+       <option>100</option><option>200</option></select></label>
+     <span class="push"></span>
+     <button id="refresh">Refresh</button>
+   </div>
+   <h2>Activity <span id="act-count" class="muted"></span></h2>
+   <div id="activity"></div>
+   <div class="pager" id="pager"></div>
+   <h2>Per-day LLM usage <span class="muted">(filtered by Day / Machine)</span></h2>
+   <div id="llm"></div>
    <h2>Machines</h2><div id="machines"></div>
-   <h2>Per-day activity</h2><div id="daily"></div>
-   <h2>Per-day LLM usage</h2><div id="llm"></div>
  </div>
 </main>
 <script>
@@ -446,19 +537,111 @@ async function api(path){
   if(r.status===401)throw new Error("bad token");
   return r.json();
 }
-function table(rows,cols){
+function esc(s){const d=document.createElement("div");
+  d.textContent=String(s??"");return d.innerHTML}
+function table(rows,cols,heads){
   if(!rows||!rows.length)return '<p class="muted">nothing yet</p>';
-  const h=cols.map(c=>`<th>${c}</th>`).join("");
+  const h=(heads||cols).map(c=>`<th>${esc(c)}</th>`).join("");
   const b=rows.map(r=>"<tr>"+cols.map(c=>`<td>${r[c]??""}</td>`)
     .join("")+"</tr>").join("");
   return `<table><tr>${h}</tr>${b}</table>`;
 }
-async function load(){
+const SKIP=new Set(["session_id","install_id","issued","id_source"]);
+function kv(props){
+  const parts=[];
+  for(const [k,v] of Object.entries(props||{})){
+    if(SKIP.has(k))continue;
+    parts.push(`${k}=${typeof v==="object"?JSON.stringify(v):v}`);
+  }
+  return parts.join(", ");
+}
+function describe(kind,p){
+  p=p||{};
+  const f=p.filename?`<code class="mid">${esc(p.filename)}</code>`:"";
+  switch(kind){
+    case "app_start": return `app started (v${esc(p.version||"?")})`;
+    case "upload": return `uploaded ${p.count??"?"} file(s)`;
+    case "tests_run_started": return `running tests on ${f} (${esc(p.mode||"")})`;
+    case "tests_run_all_started": return "running ALL files' tests";
+    case "tests_run_complete":
+    case "tests_run_all_complete": return `tests finished ${kv(p)?"— "+esc(kv(p)):""}`;
+    case "l2_llm_started": return "L2 summary requested";
+    case "l2_llm_complete": return `L2 summary done ${p.model?"("+esc(p.model)+")":""}`;
+    case "l3_modeA_started": return `Mode A started on ${f}`;
+    case "l3_modeA_result_server":
+      return `Mode A on ${f}: ${p.cards??0} card(s)`+
+        `${p.confirmed?", confirmed &#10003;":""}, `+
+        `${p.llm_calls??0} LLM call(s)${p.model?", "+esc(p.model):""}`;
+    case "l3_modeB_result_server":
+      return `Coverage Coach on ${f}: ${kv(p)?esc(kv(p)):"done"}`;
+    case "l3_accept_fix_server":
+    case "l3_fix_accepted": return `student ACCEPTED a fix ${f?("on "+f):""}`;
+    case "l3_fix_animation_played": return "fix walkthrough animation played";
+    case "l3_modeA_row_viewed": return "viewed a failing-row analysis";
+    case "settings_proxy_saved": return "connected to the course server";
+    case "settings_proxy_cleared": return "disconnected from the course server";
+    case "settings_official_test_saved": return `official test saved ${f}`;
+    default: {
+      const t=kv(p);
+      return esc(kind)+(t?` — ${esc(t.length>150?t.slice(0,150)+"…":t)}`:"");
+    }
+  }
+}
+const state={page:1};
+function filters(){
+  return {day:$("f-day").value, mach:$("f-mach").value,
+          kind:$("f-kind").value, pp:parseInt($("f-pp").value,10)};
+}
+function fill(sel,values,keep){
+  const cur=keep?sel.value:"";
+  sel.innerHTML='<option value="">all</option>'+
+    values.map(v=>`<option${v===cur?" selected":""}>${esc(v)}</option>`).join("");
+}
+async function loadActivity(){
+  const f=filters();
+  const q=new URLSearchParams();
+  if(f.day)q.set("day",f.day);
+  if(f.mach)q.set("install_id",f.mach);
+  if(f.kind)q.set("kind",f.kind);
+  q.set("page",state.page);q.set("per_page",f.pp);
+  const d=await api("/admin/events?"+q.toString());
+  fill($("f-day"),d.days,true);fill($("f-mach"),d.machines,true);
+  fill($("f-kind"),d.kinds,true);
+  $("act-count").textContent=`${d.total} event(s)`;
+  $("activity").innerHTML=d.rows.length?`<table>
+    <tr><th class="nw">time</th><th class="nw">machine</th><th>what happened</th></tr>`+
+    d.rows.map(r=>`<tr><td class="nw">${esc(r.time)}</td>
+      <td class="nw" title="${esc(r.install_id)}"><code class="mid">${esc(r.install_id.slice(0,8))}</code></td>
+      <td>${describe(r.kind,r.props)}
+        <details class="props"><summary>raw</summary>
+        <pre>${esc(JSON.stringify({kind:r.kind,...r.props},null,1))}</pre>
+        </details></td></tr>`).join("")+"</table>"
+    :'<p class="muted">no events match these filters</p>';
+  renderPager(d.total,d.page,d.per_page);
+}
+function renderPager(total,page,pp){
+  const n=Math.max(1,Math.ceil(total/pp));
+  const el=$("pager");
+  const btn=(p,label,cur,dis)=>`<button data-p="${p}"
+    ${dis?"disabled":""} class="${cur?"cur":""}">${label}</button>`;
+  const parts=[btn(page-1,"&laquo;",false,page<=1)];
+  const win=new Set([1,2,n-1,n,page-1,page,page+1]);
+  let last=0;
+  for(let p=1;p<=n;p++){
+    if(!win.has(p))continue;
+    if(p-last>1)parts.push('<span class="muted">…</span>');
+    parts.push(btn(p,p,p===page,false));last=p;
+  }
+  parts.push(btn(page+1,"&raquo;",false,page>=n));
+  el.innerHTML=parts.join("");
+  el.querySelectorAll("button[data-p]").forEach(b=>b.onclick=()=>{
+    state.page=parseInt(b.dataset.p,10);loadActivity();});
+}
+async function loadAggregates(){
+  const f=filters();
   const health=await fetch("/v1/health").then(r=>r.json());
   const s=await api("/admin/summary");
   const d=await api("/admin/daily");
-  $("gate").style.display="none";$("dash").style.display="block";
-  $("logout").style.display="inline-block";
   const cap=health.today_calls>=health.global_daily_calls||
             health.today_est_usd>=health.global_daily_usd;
   $("tiles").innerHTML=[
@@ -469,19 +652,29 @@ async function load(){
    [cap?"TRIPPED":"ok","capacity breaker",cap],
    [health.key_format_ok?"ok":"CHECK KEY","API key",!health.key_format_ok],
   ].map(([v,l,warn])=>`<div class="tile"><b class="${warn?"warn":""}">${v}</b><span>${l}</span></div>`).join("");
-  $("machines").innerHTML=table(s.machines,
-   ["install_id","first_seen","last_seen","id_source","app_version",
-    "events","llm_calls"]);
-  const act={};
-  for(const a of d.activity){(act[a.day]=act[a.day]||[]).push(a)}
-  $("daily").innerHTML=table(d.activity,["day","install_id","events"]);
   const spend={};for(const s2 of d.spend_by_day)spend[s2.day]=s2.est_usd;
-  const llmRows=d.llm.map(r=>({...r,
-    est_day_usd:spend[r.day]!==undefined?("$"+spend[r.day]):""}));
+  const llmRows=d.llm
+    .filter(r=>(!f.day||r.day===f.day)&&(!f.mach||r.install_id===f.mach))
+    .map(r=>({...r,install_id:`<code class="mid">${esc(r.install_id.slice(0,8))}</code>`,
+      est_day_usd:spend[r.day]!==undefined?("$"+spend[r.day]):""}));
   $("llm").innerHTML=table(llmRows,
    ["day","install_id","feature","calls","ok_calls","in_tokens",
     "out_tokens","est_day_usd"]);
+  $("machines").innerHTML=table(s.machines,
+   ["install_id","first_seen","last_seen","id_source","app_version",
+    "events","llm_calls"]);
 }
+async function load(){
+  await loadAggregates();
+  await loadActivity();
+  $("gate").style.display="none";$("dash").style.display="block";
+  $("logout").style.display="inline-block";
+}
+["f-day","f-mach","f-kind","f-pp"].forEach(id=>{
+  $(id).addEventListener("change",()=>{state.page=1;
+    loadActivity();loadAggregates();});
+});
+$("refresh").onclick=()=>{loadActivity();loadAggregates();};
 $("go").onclick=async()=>{setTok($("tok").value.trim());
   try{await load()}catch(e){$("gate-err").textContent=
     "That token was rejected — check it and try again."}};
