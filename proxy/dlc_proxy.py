@@ -90,6 +90,10 @@ def _db() -> sqlite3.Connection:
     p.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(p))
     conn.executescript(_SCHEMA)
+    try:
+        conn.execute("ALTER TABLE llm_calls ADD COLUMN response TEXT")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
@@ -239,10 +243,12 @@ def relay(req: LlmIn,
         with conn:
             conn.execute(
                 "UPDATE llm_calls SET ts = ?, ok = ?, in_tokens = ?,"
-                " out_tokens = ?, ms = ?, error = ? WHERE id = ?",
+                " out_tokens = ?, ms = ?, error = ?, response = ?"
+                " WHERE id = ?",
                 (time.time(), 1 if r.get("ok") else 0,
                  u.get("input_tokens"), u.get("output_tokens"), ms,
-                 (r.get("error") or "")[:300] or None, row_id))
+                 (r.get("error") or "")[:300] or None,
+                 (r.get("text") or "")[:20000] or None, row_id))
         r["limit"] = {"feature": req.feature, "used": used + 1,
                       "budget": budget}
         return r
@@ -419,6 +425,58 @@ def admin_events(token: str | None = Query(default=None),
         conn.close()
 
 
+@app.get("/admin/llm_texts")
+def admin_llm_texts(token: str | None = Query(default=None),
+                    x_dlc_admin_token: str | None = Header(default=None),
+                    day: str | None = Query(default=None),
+                    install_id: str | None = Query(default=None),
+                    feature: str | None = Query(default=None),
+                    page: int = Query(default=1, ge=1),
+                    per_page: int = Query(default=20, ge=1,
+                                          le=100)) -> dict:
+    _check_admin(token, x_dlc_admin_token)
+    conn = _db()
+    try:
+        where, args = ["response IS NOT NULL"], []
+        if day:
+            where.append("day = ?")
+            args.append(day)
+        if install_id:
+            where.append("install_id = ?")
+            args.append(install_id)
+        if feature:
+            where.append("feature = ?")
+            args.append(feature)
+        w = " WHERE " + " AND ".join(where)
+        (total,) = conn.execute(
+            "SELECT COUNT(*) FROM llm_calls" + w, args).fetchone()
+        rows = [dict(zip(("id", "install_id", "feature", "model", "ok",
+                          "in_tokens", "out_tokens", "ms", "ts",
+                          "response"), r))
+                for r in conn.execute(
+                    "SELECT id, install_id, feature, model, ok,"
+                    " in_tokens, out_tokens, ms, ts, response"
+                    " FROM llm_calls" + w +
+                    " ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (*args, per_page, (page - 1) * per_page))]
+        for r in rows:
+            r["time"] = datetime.fromtimestamp(
+                r.pop("ts")).isoformat(sep=" ", timespec="seconds")
+        days = [d for (d,) in conn.execute(
+            "SELECT DISTINCT day FROM llm_calls ORDER BY 1 DESC"
+            " LIMIT 120")]
+        features = [f for (f,) in conn.execute(
+            "SELECT DISTINCT feature FROM llm_calls ORDER BY 1")]
+        machines = [m for (m,) in conn.execute(
+            "SELECT DISTINCT install_id FROM llm_calls ORDER BY 1"
+            " LIMIT 200")]
+        return {"total": total, "page": page, "per_page": per_page,
+                "rows": rows, "days": days, "features": features,
+                "machines": machines}
+    finally:
+        conn.close()
+
+
 @app.get("/admin/export.csv", response_class=PlainTextResponse)
 def export_csv(token: str | None = Query(default=None),
                x_dlc_admin_token: str | None = Header(default=None),
@@ -450,17 +508,17 @@ _ADMIN_PAGE = """<!doctype html>
 <title>DLC course dashboard</title>
 <style>
  body{font:14px/1.45 system-ui,sans-serif;margin:0;background:#f6f7f9;color:#111827}
- header{background:#111827;color:#f9fafb;padding:14px 20px;display:flex;
+ header{background:#111827;color:#f9fafb;padding:12px 20px;display:flex;
         justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
  header h1{font-size:16px;margin:0}
  main{max-width:1200px;margin:0 auto;padding:18px}
- .tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+ .tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
  .tile{background:#fff;border:1px solid #e5e7eb;border-radius:8px;
        padding:10px 16px;min-width:120px}
  .tile b{display:block;font-size:20px}
  .tile span{color:#6b7280;font-size:12px}
  .warn{color:#b45309}
- h2{font-size:15px;margin:22px 0 8px}
+ h2{font-size:15px;margin:18px 0 8px}
  table{border-collapse:collapse;width:100%;background:#fff;
        border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
  th,td{padding:6px 10px;border-bottom:1px solid #eef0f3;text-align:left;
@@ -476,12 +534,16 @@ _ADMIN_PAGE = """<!doctype html>
  .muted{color:#6b7280}
  button.ghost{background:none;border:1px solid #6b7280;color:#f9fafb;
               border-radius:6px;padding:4px 10px;cursor:pointer}
+ .tabs{display:flex;gap:6px;margin:4px 0 12px}
+ .tabs button{padding:7px 16px;border:1px solid #d1d5db;background:#fff;
+              border-radius:8px;cursor:pointer;font-weight:600;color:#374151}
+ .tabs button.on{background:#111827;color:#fff;border-color:#111827}
  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;
           background:#fff;border:1px solid #e5e7eb;border-radius:8px;
           padding:10px 12px;margin:6px 0 10px}
  .filters select{padding:5px 8px;border:1px solid #d1d5db;border-radius:6px}
  .filters label{font-size:12px;color:#6b7280}
- .filters .push{margin-left:auto}
+ .filters .push{margin-left:auto;display:flex;gap:10px;align-items:center}
  .filters button{padding:5px 12px;border:1px solid #d1d5db;background:#f9fafb;
                  border-radius:6px;cursor:pointer}
  .pager{display:flex;gap:6px;align-items:center;margin:10px 0;flex-wrap:wrap}
@@ -495,6 +557,12 @@ _ADMIN_PAGE = """<!doctype html>
  details.props pre{background:#f3f4f6;border-radius:6px;padding:8px;
                    font-size:11.5px;white-space:pre-wrap;margin:6px 0 0}
  code.mid{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:12px}
+ .aitext{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;
+         padding:8px 10px;margin-top:6px;white-space:pre-wrap;
+         font-size:12.5px;max-height:340px;overflow:auto}
+ .aihead{font-size:12px;color:#6b7280;margin-bottom:2px}
+ .pill{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:10px;
+       padding:1px 8px;font-size:11.5px;margin-right:6px}
 </style></head><body>
 <header><h1>Digital Lab Coach — course dashboard</h1>
 <button class="ghost" id="logout" style="display:none">forget token</button>
@@ -510,22 +578,41 @@ _ADMIN_PAGE = """<!doctype html>
  </div>
  <div id="dash" style="display:none">
    <div class="tiles" id="tiles"></div>
+   <div class="tabs">
+     <button id="tab-overview" class="on">Overview</button>
+     <button id="tab-activity">Activity</button>
+     <button id="tab-ai">AI outputs</button>
+   </div>
    <div class="filters">
      <label>Day <select id="f-day"><option value="">all</option></select></label>
      <label>Machine <select id="f-mach"><option value="">all</option></select></label>
-     <label>Event <select id="f-kind"><option value="">all</option></select></label>
+     <label id="l-kind">Event <select id="f-kind"><option value="">all</option></select></label>
+     <label id="l-feat" style="display:none">Feature <select id="f-feat"><option value="">all</option></select></label>
      <label>Rows <select id="f-pp">
-       <option>25</option><option selected>50</option>
-       <option>100</option><option>200</option></select></label>
-     <span class="push"></span>
-     <button id="refresh">Refresh</button>
+       <option>10</option><option selected>25</option>
+       <option>50</option><option>100</option></select></label>
+     <span class="push">
+       <label><input type="checkbox" id="auto"> auto-refresh 60s</label>
+       <button id="refresh">Refresh</button>
+     </span>
    </div>
-   <h2>Activity <span id="act-count" class="muted"></span></h2>
-   <div id="activity"></div>
-   <div class="pager" id="pager"></div>
-   <h2>Per-day LLM usage <span class="muted">(filtered by Day / Machine)</span></h2>
-   <div id="llm"></div>
-   <h2>Machines</h2><div id="machines"></div>
+   <section id="sec-overview">
+     <h2>Per-day LLM usage <span class="muted">(Day / Machine filters apply)</span></h2>
+     <div id="llm"></div>
+     <h2>Machines</h2><div id="machines"></div>
+   </section>
+   <section id="sec-activity" style="display:none">
+     <h2>Activity <span id="act-count" class="muted"></span></h2>
+     <div id="activity"></div>
+     <div class="pager" id="act-pager"></div>
+   </section>
+   <section id="sec-ai" style="display:none">
+     <h2>AI outputs <span id="ai-count" class="muted"></span>
+       <span class="muted" style="font-weight:normal">— every LLM reply the
+       course server relayed (L2 summaries &amp; grades, Mode A, Mode B)</span></h2>
+     <div id="ai"></div>
+     <div class="pager" id="ai-pager"></div>
+   </section>
  </div>
 </main>
 <script>
@@ -539,9 +626,9 @@ async function api(path){
 }
 function esc(s){const d=document.createElement("div");
   d.textContent=String(s??"");return d.innerHTML}
-function table(rows,cols,heads){
+function table(rows,cols){
   if(!rows||!rows.length)return '<p class="muted">nothing yet</p>';
-  const h=(heads||cols).map(c=>`<th>${esc(c)}</th>`).join("");
+  const h=cols.map(c=>`<th>${esc(c)}</th>`).join("");
   const b=rows.map(r=>"<tr>"+cols.map(c=>`<td>${r[c]??""}</td>`)
     .join("")+"</tr>").join("");
   return `<table><tr>${h}</tr>${b}</table>`;
@@ -587,41 +674,36 @@ function describe(kind,p){
     }
   }
 }
-const state={page:1};
+function renderAiText(feature,text){
+  try{
+    const o=JSON.parse(text);
+    if(o&&o.fix&&o.fix.explanation_for_student){
+      const ops=(o.fix.ops||[]).length;
+      const why=o.hint&&o.hint.why?o.hint.why:"";
+      return `<div class="aihead">Mode A hypothesis — confidence `+
+        `${esc(o.confidence??"?")}, ${ops} op(s)</div>`+
+        `<div class="aitext"><b>why:</b> ${esc(why)}\n\n`+
+        `<b>student explanation:</b> ${esc(o.fix.explanation_for_student)}`+
+        `\n\n<b>ops:</b> ${esc(JSON.stringify(o.fix.ops))}</div>`;
+    }
+    if(o&&typeof o==="object")
+      return `<div class="aitext">${esc(JSON.stringify(o,null,1))}</div>`;
+  }catch(e){}
+  return `<div class="aitext">${esc(text)}</div>`;
+}
+const state={tab:"overview",actPage:1,aiPage:1};
 function filters(){
   return {day:$("f-day").value, mach:$("f-mach").value,
-          kind:$("f-kind").value, pp:parseInt($("f-pp").value,10)};
+          kind:$("f-kind").value, feat:$("f-feat").value,
+          pp:parseInt($("f-pp").value,10)};
 }
-function fill(sel,values,keep){
-  const cur=keep?sel.value:"";
+function fill(sel,values){
+  const cur=sel.value;
   sel.innerHTML='<option value="">all</option>'+
     values.map(v=>`<option${v===cur?" selected":""}>${esc(v)}</option>`).join("");
 }
-async function loadActivity(){
-  const f=filters();
-  const q=new URLSearchParams();
-  if(f.day)q.set("day",f.day);
-  if(f.mach)q.set("install_id",f.mach);
-  if(f.kind)q.set("kind",f.kind);
-  q.set("page",state.page);q.set("per_page",f.pp);
-  const d=await api("/admin/events?"+q.toString());
-  fill($("f-day"),d.days,true);fill($("f-mach"),d.machines,true);
-  fill($("f-kind"),d.kinds,true);
-  $("act-count").textContent=`${d.total} event(s)`;
-  $("activity").innerHTML=d.rows.length?`<table>
-    <tr><th class="nw">time</th><th class="nw">machine</th><th>what happened</th></tr>`+
-    d.rows.map(r=>`<tr><td class="nw">${esc(r.time)}</td>
-      <td class="nw" title="${esc(r.install_id)}"><code class="mid">${esc(r.install_id.slice(0,8))}</code></td>
-      <td>${describe(r.kind,r.props)}
-        <details class="props"><summary>raw</summary>
-        <pre>${esc(JSON.stringify({kind:r.kind,...r.props},null,1))}</pre>
-        </details></td></tr>`).join("")+"</table>"
-    :'<p class="muted">no events match these filters</p>';
-  renderPager(d.total,d.page,d.per_page);
-}
-function renderPager(total,page,pp){
+function pager(el,total,page,pp,go){
   const n=Math.max(1,Math.ceil(total/pp));
-  const el=$("pager");
   const btn=(p,label,cur,dis)=>`<button data-p="${p}"
     ${dis?"disabled":""} class="${cur?"cur":""}">${label}</button>`;
   const parts=[btn(page-1,"&laquo;",false,page<=1)];
@@ -635,7 +717,53 @@ function renderPager(total,page,pp){
   parts.push(btn(page+1,"&raquo;",false,page>=n));
   el.innerHTML=parts.join("");
   el.querySelectorAll("button[data-p]").forEach(b=>b.onclick=()=>{
-    state.page=parseInt(b.dataset.p,10);loadActivity();});
+    go(parseInt(b.dataset.p,10));});
+}
+async function loadActivity(){
+  const f=filters();
+  const q=new URLSearchParams();
+  if(f.day)q.set("day",f.day);
+  if(f.mach)q.set("install_id",f.mach);
+  if(f.kind)q.set("kind",f.kind);
+  q.set("page",state.actPage);q.set("per_page",f.pp);
+  const d=await api("/admin/events?"+q.toString());
+  fill($("f-day"),d.days);fill($("f-mach"),d.machines);
+  fill($("f-kind"),d.kinds);
+  $("act-count").textContent=`${d.total} event(s)`;
+  $("activity").innerHTML=d.rows.length?`<table>
+    <tr><th class="nw">time</th><th class="nw">machine</th><th>what happened</th></tr>`+
+    d.rows.map(r=>`<tr><td class="nw">${esc(r.time)}</td>
+      <td class="nw" title="${esc(r.install_id)}"><code class="mid">${esc(r.install_id.slice(0,8))}</code></td>
+      <td>${describe(r.kind,r.props)}
+        <details class="props"><summary>raw</summary>
+        <pre>${esc(JSON.stringify({kind:r.kind,...r.props},null,1))}</pre>
+        </details></td></tr>`).join("")+"</table>"
+    :'<p class="muted">no events match these filters</p>';
+  pager($("act-pager"),d.total,d.page,d.per_page,
+        p=>{state.actPage=p;loadActivity();});
+}
+async function loadAi(){
+  const f=filters();
+  const q=new URLSearchParams();
+  if(f.day)q.set("day",f.day);
+  if(f.mach)q.set("install_id",f.mach);
+  if(f.feat)q.set("feature",f.feat);
+  q.set("page",state.aiPage);q.set("per_page",f.pp);
+  const d=await api("/admin/llm_texts?"+q.toString());
+  fill($("f-day"),d.days);fill($("f-mach"),d.machines);
+  fill($("f-feat"),d.features);
+  $("ai-count").textContent=`${d.total} repl${d.total===1?"y":"ies"}`;
+  $("ai").innerHTML=d.rows.length?`<table>
+    <tr><th class="nw">time</th><th class="nw">machine</th><th>reply</th></tr>`+
+    d.rows.map(r=>`<tr><td class="nw">${esc(r.time)}</td>
+      <td class="nw" title="${esc(r.install_id)}"><code class="mid">${esc(r.install_id.slice(0,8))}</code></td>
+      <td><span class="pill">${esc(r.feature)}</span>`+
+      `<span class="muted">${esc(r.model||"")}, ${r.in_tokens??0}&rarr;${r.out_tokens??0} tok, ${Math.round((r.ms||0)/1000)}s</span>`+
+      renderAiText(r.feature,r.response||"")+
+      `</td></tr>`).join("")+"</table>"
+    :'<p class="muted">no AI replies match these filters</p>';
+  pager($("ai-pager"),d.total,d.page,d.per_page,
+        p=>{state.aiPage=p;loadAi();});
 }
 async function loadAggregates(){
   const f=filters();
@@ -664,17 +792,42 @@ async function loadAggregates(){
    ["install_id","first_seen","last_seen","id_source","app_version",
     "events","llm_calls"]);
 }
+function showTab(t){
+  state.tab=t;
+  for(const x of ["overview","activity","ai"]){
+    $("sec-"+x).style.display=x===t?"":"none";
+    $("tab-"+x).classList.toggle("on",x===t);
+  }
+  $("l-kind").style.display=t==="activity"?"":"none";
+  $("l-feat").style.display=t==="ai"?"":"none";
+  reloadTab();
+}
+function reloadTab(){
+  if(state.tab==="overview")loadAggregates();
+  else if(state.tab==="activity")loadActivity();
+  else loadAi();
+}
 async function load(){
   await loadAggregates();
   await loadActivity();
+  await loadAi();
   $("gate").style.display="none";$("dash").style.display="block";
   $("logout").style.display="inline-block";
+  showTab("overview");
 }
-["f-day","f-mach","f-kind","f-pp"].forEach(id=>{
-  $(id).addEventListener("change",()=>{state.page=1;
-    loadActivity();loadAggregates();});
+["f-day","f-mach","f-kind","f-feat","f-pp"].forEach(id=>{
+  $(id).addEventListener("change",()=>{state.actPage=1;state.aiPage=1;
+    reloadTab();});
 });
-$("refresh").onclick=()=>{loadActivity();loadAggregates();};
+$("refresh").onclick=()=>reloadTab();
+let autoTimer=null;
+$("auto").addEventListener("change",()=>{
+  if($("auto").checked)autoTimer=setInterval(reloadTab,60000);
+  else{clearInterval(autoTimer);autoTimer=null;}
+});
+$("tab-overview").onclick=()=>showTab("overview");
+$("tab-activity").onclick=()=>showTab("activity");
+$("tab-ai").onclick=()=>showTab("ai");
 $("go").onclick=async()=>{setTok($("tok").value.trim());
   try{await load()}catch(e){$("gate-err").textContent=
     "That token was rejected — check it and try again."}};

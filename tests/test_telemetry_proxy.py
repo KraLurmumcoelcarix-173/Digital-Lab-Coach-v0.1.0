@@ -428,3 +428,60 @@ def test_health_reports_effective_key_not_just_env(tele_env, monkeypatch):
     h = pc.get("/v1/health").json()
     assert h["key_configured"] is True
     assert h["key_format_ok"] is True
+
+
+def test_llm_texts_feed_stores_and_filters_responses(tele_env,
+                                                     monkeypatch):
+    monkeypatch.setenv("DLC_ADMIN_TOKEN", "adm")
+
+    def upstream(prompt, **kw):
+        return {"ok": True,
+                "text": json.dumps({
+                    "contract": "l3.debug.v1.1", "confidence": 0.8,
+                    "hint": {"why": "carry-in stuck"},
+                    "fix": {"ops": [{"op": "change_attribute"}],
+                            "explanation_for_student": "flip the const"}}),
+                "error": None,
+                "usage": {"input_tokens": 9, "output_tokens": 4},
+                "stop_reason": "end_turn", "model": kw.get("model")}
+    pc = _proxy_client(monkeypatch, upstream=upstream)
+    for feat in ("modeA", "explain", "explain"):
+        pc.post("/v1/llm", json={"install_id": "m-txt", "feature": feat,
+                                 "model": "claude-opus-5", "prompt": "p"})
+
+    assert pc.get("/admin/llm_texts").status_code == 401
+    hdr = {"X-DLC-Admin-Token": "adm"}
+    d = pc.get("/admin/llm_texts", headers=hdr).json()
+    assert d["total"] == 3
+    assert set(d["features"]) == {"modeA", "explain"}
+    assert "explanation_for_student" in d["rows"][0]["response"]
+    assert d["rows"][0]["time"]
+
+    d = pc.get("/admin/llm_texts", headers=hdr,
+               params={"feature": "explain"}).json()
+    assert d["total"] == 2
+    d = pc.get("/admin/llm_texts", headers=hdr,
+               params={"per_page": 2, "page": 2}).json()
+    assert d["total"] == 3 and len(d["rows"]) == 1
+
+
+def test_llm_response_column_migrates_old_db(tele_env, monkeypatch):
+    import os as _os
+    db = _os.environ["DLC_PROXY_DB"]
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "CREATE TABLE llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " install_id TEXT NOT NULL, day TEXT NOT NULL, ts REAL NOT"
+            " NULL, feature TEXT NOT NULL, model TEXT, ok INTEGER,"
+            " in_tokens INTEGER, out_tokens INTEGER, ms INTEGER,"
+            " error TEXT)")
+    conn.close()
+    pc = _proxy_client(monkeypatch)
+    body = {"install_id": "m-old", "feature": "modeA",
+            "model": "claude-opus-5", "prompt": "hi"}
+    assert pc.post("/v1/llm", json=body).json()["ok"] is True
+    monkeypatch.setenv("DLC_ADMIN_TOKEN", "adm")
+    d = pc.get("/admin/llm_texts",
+               headers={"X-DLC-Admin-Token": "adm"}).json()
+    assert d["total"] == 1 and d["rows"][0]["response"] == "{}"
