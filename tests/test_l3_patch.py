@@ -398,3 +398,134 @@ def test_deletes_apply_last_so_indices_stay_original(tmp_path):
         assert consts[0].attributes["Value"] == 7
     finally:
         os.unlink(temp)
+
+def _bubble_fixture(tmp_path, gate: str, rotation: int | None = None,
+                    name: str = "bubble.dig") -> tuple[str, int]:
+    """Two-pass build: derive every pin coordinate from the parser, so the
+    fixture stays valid whatever the geometry tables say."""
+    rot = ("<entry><string>rotation</string>"
+           f"<rotation rotation=\"{rotation}\"/></entry>") if rotation else ""
+    def gate_ve():
+        return (f"    <visualElement><elementName>{gate}</elementName>"
+                f"<elementAttributes><entry><string>wideShape</string>"
+                f"<boolean>true</boolean></entry>{rot}</elementAttributes>"
+                f"<pos x=\"240\" y=\"0\"/></visualElement>\n")
+    bare = (
+        '<?xml version="1.0" encoding="utf-8"?>\n<circuit>\n'
+        "  <version>2</version>\n  <attributes/>\n  <visualElements>\n"
+        + gate_ve()
+        + "  </visualElements>\n  <wires>\n  </wires>\n</circuit>\n")
+    probe = tmp_path / ("probe_" + name)
+    probe.write_text(bare, encoding="utf-8")
+    from dlc.l3.patch import _PinIndex
+    pins = {p.pin_name: (p.x, p.y)
+            for net in _PinIndex(str(probe)).netlist.nets
+            for p in net.pins if p.component_index == 0}
+    (ax, ay), (bx, by), (ox, oy) = pins["in0"], pins["in1"], pins["Y"]
+    ves = (
+        gate_ve()
+        + f"    <visualElement><elementName>In</elementName>"
+          f"<elementAttributes><entry><string>Label</string><string>a"
+          f"</string></entry></elementAttributes>"
+          f"<pos x=\"{ax-40}\" y=\"{ay}\"/></visualElement>\n"
+        + f"    <visualElement><elementName>In</elementName>"
+          f"<elementAttributes><entry><string>Label</string><string>b"
+          f"</string></entry></elementAttributes>"
+          f"<pos x=\"{bx-40}\" y=\"{by}\"/></visualElement>\n"
+        + f"    <visualElement><elementName>Out</elementName>"
+          f"<elementAttributes><entry><string>Label</string><string>f"
+          f"</string></entry></elementAttributes>"
+          f"<pos x=\"{ox+100}\" y=\"{oy}\"/></visualElement>\n"
+        + "    <visualElement><elementName>Testcase</elementName>"
+          "<elementAttributes><entry><string>Label</string><string>t"
+          "</string></entry><entry><string>Testdata</string><testData>"
+          "<dataString>a b f\n0 0 0\n1 1 1</dataString></testData></entry>"
+          "</elementAttributes><pos x=\"0\" y=\"200\"/></visualElement>\n")
+    wires = (
+        f"    <wire><p1 x=\"{ax-40}\" y=\"{ay}\"/>"
+        f"<p2 x=\"{ax}\" y=\"{ay}\"/></wire>\n"
+        f"    <wire><p1 x=\"{bx-40}\" y=\"{by}\"/>"
+        f"<p2 x=\"{bx}\" y=\"{by}\"/></wire>\n"
+        f"    <wire><p1 x=\"{ox}\" y=\"{oy}\"/>"
+        f"<p2 x=\"{ox+100}\" y=\"{oy}\"/></wire>\n")
+    xml = ('<?xml version="1.0" encoding="utf-8"?>\n<circuit>\n'
+           "  <version>2</version>\n  <attributes/>\n  <visualElements>\n"
+           + ves + "  </visualElements>\n  <wires>\n" + wires
+           + "  </wires>\n</circuit>\n")
+    p = tmp_path / name
+    p.write_text(xml, encoding="utf-8")
+    return str(p), 0
+
+
+def _net_connects_gate_to_out(dig_path: str, gate_idx: int) -> bool:
+    nl = build_netlist(parse_dig_file(dig_path))
+    for net in nl.nets:
+        names = {(p.component_index, p.pin_name) for p in net.pins}
+        if (gate_idx, "Y") in names and any(
+                pn == "in" for ci, pn in names if ci != gate_idx):
+            return True
+    return False
+
+
+def test_replace_inverted_gate_with_plain_keeps_output_wired(tmp_path):
+    path, gi = _bubble_fixture(tmp_path, "NAnd")
+    temp, report = apply_patch(path, [
+        {"op": "replace_element", "component_index": gi,
+         "new_element": "And"}])
+    assert report.ok, report.warning
+    assert "stub wire" in " ".join(report.applied)
+    try:
+        assert _net_connects_gate_to_out(temp, gi)
+    finally:
+        os.unlink(temp)
+
+
+def test_replace_plain_gate_with_inverted_keeps_output_wired(tmp_path):
+    path, gi = _bubble_fixture(tmp_path, "And", name="plain.dig")
+    temp, report = apply_patch(path, [
+        {"op": "replace_element", "component_index": gi,
+         "new_element": "NAnd"}])
+    assert report.ok, report.warning
+    try:
+        assert _net_connects_gate_to_out(temp, gi)
+    finally:
+        os.unlink(temp)
+
+
+def test_replace_within_plain_family_adds_no_stub(tmp_path):
+    path, gi = _bubble_fixture(tmp_path, "And", name="plain2.dig")
+    n_wires = len(parse_dig_file(path).wires)
+    temp, report = apply_patch(path, [
+        {"op": "replace_element", "component_index": gi,
+         "new_element": "Or"}])
+    assert report.ok, report.warning
+    try:
+        assert len(parse_dig_file(temp).wires) == n_wires
+    finally:
+        os.unlink(temp)
+
+
+def test_rotated_inverted_swap_keeps_output_wired(tmp_path):
+    path, gi = _bubble_fixture(tmp_path, "NAnd", rotation=2,
+                               name="rot.dig")
+    temp, report = apply_patch(path, [
+        {"op": "replace_element", "component_index": gi,
+         "new_element": "And"}])
+    assert report.ok, report.warning
+    try:
+        assert _net_connects_gate_to_out(temp, gi)
+    finally:
+        os.unlink(temp)
+
+
+def test_confirmed_fix_after_inverted_swap_end_to_end(tmp_path):
+    from dlc.l3.debugger import verify_ops
+    path, gi = _bubble_fixture(tmp_path, "NAnd", name="e2e.dig")
+    verdict = verify_ops(path, "t", [
+        {"op": "replace_element", "component_index": gi,
+         "new_element": "And"}],
+        cluster_rows=[0, 1], original_failing=[0, 1])
+    assert verdict["apply_ok"], verdict["warning"]
+    assert verdict["confirmed"] is True
+    assert verdict["still_failing"] == []
+    assert verdict["regressions"] == []

@@ -152,13 +152,51 @@ def _apply_change_attribute(root, op) -> str:
     _append_entry(attrs, name, value)
     return f"change_attribute[{op['component_index']}].{name} -> {value!r} (new entry)"
 
+_OUTPUT_BUBBLE_GATES = {"NAnd", "NOr", "XNOr"}
 
-def _apply_replace_element(root, op) -> str:
+
+def _element_rotation(ve) -> int:
+    attrs = ve.find("elementAttributes")
+    if attrs is not None:
+        for entry in attrs.findall("entry"):
+            children = list(entry)
+            if len(children) >= 2 and children[0].text == "rotation":
+                try:
+                    return int(children[1].get("rotation") or 0)
+                except (TypeError, ValueError):
+                    return 0
+    return 0
+
+
+def _facing_vector(rotation: int, dist: int) -> tuple[int, int]:
+    return [(dist, 0), (0, -dist), (-dist, 0), (0, dist)][rotation % 4]
+
+
+def _apply_replace_element(root, op, pins: "_PinIndex | None" = None) -> str:
     ve = _ve_for_index(root, op["component_index"])
     name_el = ve.find("elementName")
     old = name_el.text
-    name_el.text = str(op["new_element"])
-    return f"replace_element[{op['component_index']}]: {old} -> {op['new_element']}"
+    new = str(op["new_element"])
+    name_el.text = new
+    note = ""
+    delta = ((20 if new in _OUTPUT_BUBBLE_GATES else 0)
+             - (20 if old in _OUTPUT_BUBBLE_GATES else 0))
+    if pins is not None and delta:
+        try:
+            old_out = pins.pin_coord(op["component_index"], "Y")
+            dx, dy = _facing_vector(_element_rotation(ve), delta)
+            new_out = (old_out[0] + dx, old_out[1] + dy)
+            wires = _wires_block(root)
+            wire = etree.SubElement(wires, "wire")
+            for tag, (x, y) in (("p1", new_out), ("p2", old_out)):
+                p = etree.SubElement(wire, tag)
+                p.set("x", str(x))
+                p.set("y", str(y))
+            note = f" (+stub wire {new_out}-{old_out} for output bubble)"
+        except (ValueError, KeyError, AttributeError):
+            note = " (output-bubble stub skipped: pin not found)"
+    return (f"replace_element[{op['component_index']}]: {old} -> "
+            f"{op['new_element']}{note}")
 
 
 def _wires_block(root):
@@ -372,7 +410,7 @@ def apply_patch(dig_path: str, ops: list[dict]) -> tuple[str | None, PatchReport
             if kind == "change_attribute":
                 report.applied.append(_apply_change_attribute(root, op))
             elif kind == "replace_element":
-                report.applied.append(_apply_replace_element(root, op))
+                report.applied.append(_apply_replace_element(root, op, pins))
             elif kind == "swap_pins":
                 report.applied.append(_apply_swap_pins(root, op, pins))
             elif kind == "rewire_pin":
