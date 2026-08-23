@@ -485,3 +485,58 @@ def test_llm_response_column_migrates_old_db(tele_env, monkeypatch):
     d = pc.get("/admin/llm_texts",
                headers={"X-DLC-Admin-Token": "adm"}).json()
     assert d["total"] == 1 and d["rows"][0]["response"] == "{}"
+
+
+def test_admin_stats_windows_and_l3_outcomes(tele_env, monkeypatch):
+    monkeypatch.setenv("DLC_ADMIN_TOKEN", "adm")
+    pc = _proxy_client(monkeypatch)
+    pc.post("/v1/events", json={
+        "install_id": "m-st", "events": [
+            {"client_row_id": 1, "kind": "upload", "props": {"count": 1}},
+            {"client_row_id": 2, "kind": "l3_modeA_result_server",
+             "props": {"filename": "a.dig", "cards": 2,
+                       "confirmed": True, "llm_calls": 1}},
+            {"client_row_id": 3, "kind": "l3_modeA_result_server",
+             "props": {"filename": "b.dig", "cards": 0,
+                       "confirmed": False, "llm_calls": 1}},
+            {"client_row_id": 4, "kind": "l3_modeB_result_server",
+             "props": {"filename": "a.dig", "proposals": 3}},
+            {"client_row_id": 5, "kind": "l3_accept_fix_server",
+             "props": {"filename": "a.dig"}}]})
+    pc.post("/v1/events", json={
+        "install_id": "m-st2", "events": [
+            {"client_row_id": 1, "kind": "upload", "props": {}}]})
+    for feat in ("modeA", "explain"):
+        pc.post("/v1/llm", json={"install_id": "m-st", "feature": feat,
+                                 "model": "claude-opus-5", "prompt": "p"})
+
+    assert pc.get("/admin/stats").status_code == 401
+    hdr = {"X-DLC-Admin-Token": "adm"}
+    d = pc.get("/admin/stats", headers=hdr).json()
+    assert d["range_days"] == 7 and d["since"] <= d["active_by_day"][0]["day"]
+    t = d["totals"]
+    assert t["active_machines"] == 2 and t["events"] == 6
+    assert t["llm_calls"] == 2 and t["ok_calls"] == 2
+    assert t["est_usd"] >= 0
+    l3 = d["l3"]
+    assert l3["modeA_runs"] == 2 and l3["modeA_confirmed"] == 1
+    assert l3["modeA_cards"] == 2
+    assert l3["modeB_runs"] == 1 and l3["fixes_accepted"] == 1
+    feats = {f["feature"]: f for f in d["by_feature"]}
+    assert feats["modeA"]["calls"] == 1 and feats["explain"]["calls"] == 1
+    assert d["active_by_day"][0]["machines"] == 2
+    assert any(k["kind"] == "upload" and k["n"] == 2
+               for k in d["top_kinds"])
+    d30 = pc.get("/admin/stats", headers=hdr,
+                 params={"range_days": 30}).json()
+    assert d30["range_days"] == 30 and d30["totals"]["events"] == 6
+    assert pc.get("/admin/stats", headers=hdr,
+                  params={"range_days": 0}).status_code == 422
+
+
+def test_health_names_the_database_file(tele_env, monkeypatch):
+    pc = _proxy_client(monkeypatch)
+    h = pc.get("/v1/health").json()
+    import os as _os
+    assert h["db_path"] == str(
+        __import__("pathlib").Path(_os.environ["DLC_PROXY_DB"]).resolve())

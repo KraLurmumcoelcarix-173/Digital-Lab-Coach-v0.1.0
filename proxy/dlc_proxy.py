@@ -284,7 +284,10 @@ def health() -> dict:
             "SELECT COUNT(*) FROM llm_calls WHERE day = ?",
             (day,)).fetchone()
         key = _effective_key()
+        db_path = str(Path(os.environ.get("DLC_PROXY_DB",
+                                          "dlc_proxy.db")).resolve())
         return {"ok": True, "machines": m, "events": e,
+                "db_path": db_path,
                 "key_configured": bool(key),
                 "key_format_ok": key.startswith("sk-") if key else False,
                 "course_token_set": bool(os.environ.get("DLC_COURSE_TOKEN")),
@@ -477,6 +480,113 @@ def admin_llm_texts(token: str | None = Query(default=None),
         conn.close()
 
 
+@app.get("/admin/stats")
+def admin_stats(token: str | None = Query(default=None),
+                x_dlc_admin_token: str | None = Header(default=None),
+                range_days: int = Query(default=7, ge=1,
+                                        le=366)) -> dict:
+    _check_admin(token, x_dlc_admin_token)
+    from datetime import timedelta
+    since = (date.today() - timedelta(days=range_days - 1)).isoformat()
+    conn = _db()
+    try:
+        ev_day = "date(received_at, 'unixepoch')"
+        active_by_day = [dict(zip(("day", "machines", "events"), r))
+                         for r in conn.execute(
+            f"SELECT {ev_day}, COUNT(DISTINCT install_id), COUNT(*)"
+            f" FROM events WHERE {ev_day} >= ?"
+            f" GROUP BY {ev_day} ORDER BY 1", (since,))]
+        (active, ev_total) = conn.execute(
+            f"SELECT COUNT(DISTINCT install_id), COUNT(*) FROM events"
+            f" WHERE {ev_day} >= ?", (since,)).fetchone()
+        (new_machines,) = conn.execute(
+            "SELECT COUNT(*) FROM machines WHERE first_seen >= ?",
+            (since,)).fetchone()
+        by_feature = {}
+        spend_by_feature = {}
+        for feat, model, calls, ok, i, o in conn.execute(
+                "SELECT feature, model, COUNT(*), COALESCE(SUM(ok),0),"
+                " COALESCE(SUM(in_tokens),0), COALESCE(SUM(out_tokens),0)"
+                " FROM llm_calls WHERE day >= ?"
+                " GROUP BY feature, model", (since,)):
+            f = by_feature.setdefault(feat, {"feature": feat, "calls": 0,
+                                             "ok_calls": 0,
+                                             "in_tokens": 0,
+                                             "out_tokens": 0})
+            f["calls"] += calls
+            f["ok_calls"] += ok
+            f["in_tokens"] += i
+            f["out_tokens"] += o
+            pin, pout = _PRICES.get(model, (5.0, 25.0))
+            spend_by_feature[feat] = spend_by_feature.get(feat, 0.0) +                 (i * pin + o * pout) / 1e6
+        features = []
+        for feat, f in sorted(by_feature.items()):
+            f["est_usd"] = round(spend_by_feature.get(feat, 0.0), 2)
+            features.append(f)
+        top_kinds = [dict(zip(("kind", "n"), r)) for r in conn.execute(
+            f"SELECT kind, COUNT(*) FROM events WHERE {ev_day} >= ?"
+            f" GROUP BY kind ORDER BY COUNT(*) DESC LIMIT 15", (since,))]
+        (a_runs, a_confirmed, a_cards) = conn.execute(
+            f"SELECT COUNT(*),"
+            f" COALESCE(SUM(json_extract(props, '$.confirmed')), 0),"
+            f" COALESCE(SUM(json_extract(props, '$.cards')), 0)"
+            f" FROM events WHERE kind = 'l3_modeA_result_server'"
+            f" AND {ev_day} >= ?", (since,)).fetchone()
+        (b_runs,) = conn.execute(
+            f"SELECT COUNT(*) FROM events"
+            f" WHERE kind = 'l3_modeB_result_server' AND {ev_day} >= ?",
+            (since,)).fetchone()
+        (accepts,) = conn.execute(
+            f"SELECT COUNT(*) FROM events"
+            f" WHERE kind = 'l3_accept_fix_server' AND {ev_day} >= ?",
+            (since,)).fetchone()
+        spend_by_day = {}
+        calls_by_day = {}
+        for d, model, i, o, c in conn.execute(
+                "SELECT day, model, COALESCE(SUM(in_tokens),0),"
+                " COALESCE(SUM(out_tokens),0), COUNT(*) FROM llm_calls"
+                " WHERE day >= ? GROUP BY day, model", (since,)):
+            pin, pout = _PRICES.get(model, (5.0, 25.0))
+            spend_by_day[d] = spend_by_day.get(d, 0.0) +                 (i * pin + o * pout) / 1e6
+            calls_by_day[d] = calls_by_day.get(d, 0) + c
+        (calls_total, ok_total, in_tok, out_tok) = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(ok),0),"
+            " COALESCE(SUM(in_tokens),0), COALESCE(SUM(out_tokens),0)"
+            " FROM llm_calls WHERE day >= ?", (since,)).fetchone()
+        return {"since": since, "range_days": range_days,
+                "totals": {"active_machines": active,
+                           "new_machines": new_machines,
+                           "events": ev_total, "llm_calls": calls_total,
+                           "ok_calls": ok_total, "in_tokens": in_tok,
+                           "out_tokens": out_tok,
+                           "est_usd": round(_est_usd_since(conn, since),
+                                            2)},
+                "active_by_day": active_by_day,
+                "by_feature": features,
+                "top_kinds": top_kinds,
+                "l3": {"modeA_runs": a_runs,
+                       "modeA_confirmed": int(a_confirmed or 0),
+                       "modeA_cards": int(a_cards or 0),
+                       "modeB_runs": b_runs, "fixes_accepted": accepts},
+                "spend_by_day": [
+                    {"day": d, "est_usd": round(v, 2),
+                     "calls": calls_by_day.get(d, 0)}
+                    for d, v in sorted(spend_by_day.items())]}
+    finally:
+        conn.close()
+
+
+def _est_usd_since(conn, since: str) -> float:
+    spend = 0.0
+    for model, i, o in conn.execute(
+            "SELECT model, COALESCE(SUM(in_tokens),0),"
+            " COALESCE(SUM(out_tokens),0) FROM llm_calls WHERE day >= ?"
+            " GROUP BY model", (since,)):
+        pin, pout = _PRICES.get(model, (5.0, 25.0))
+        spend += (i * pin + o * pout) / 1e6
+    return spend
+
+
 @app.get("/admin/export.csv", response_class=PlainTextResponse)
 def export_csv(token: str | None = Query(default=None),
                x_dlc_admin_token: str | None = Header(default=None),
@@ -557,6 +667,19 @@ _ADMIN_PAGE = """<!doctype html>
  details.props pre{background:#f3f4f6;border-radius:6px;padding:8px;
                    font-size:11.5px;white-space:pre-wrap;margin:6px 0 0}
  code.mid{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:12px}
+ .range{display:flex;gap:6px}
+ .range button{padding:5px 14px;border:1px solid #d1d5db;background:#fff;
+               border-radius:6px;cursor:pointer}
+ .range button.on{background:#111827;color:#fff;border-color:#111827}
+ .barrow{display:flex;align-items:center;gap:8px;margin:3px 0}
+ .barrow .lbl{width:110px;font-size:12px;color:#374151;white-space:nowrap;
+              overflow:hidden;text-overflow:ellipsis;text-align:right}
+ .barrow .track{flex:1;background:#eef0f3;border-radius:4px;height:14px}
+ .barrow .bar{background:#2563eb;height:14px;border-radius:4px;min-width:2px}
+ .barrow .val{font-size:12px;color:#374151;white-space:nowrap}
+ .cardbox{background:#fff;border:1px solid #e5e7eb;border-radius:8px;
+          padding:12px 14px;margin-bottom:14px}
+ #dbline{font-size:11.5px;color:#6b7280;margin:-6px 0 10px}
  .aitext{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;
          padding:8px 10px;margin-top:6px;white-space:pre-wrap;
          font-size:12.5px;max-height:340px;overflow:auto}
@@ -582,7 +705,9 @@ _ADMIN_PAGE = """<!doctype html>
      <button id="tab-overview" class="on">Overview</button>
      <button id="tab-activity">Activity</button>
      <button id="tab-ai">AI outputs</button>
+     <button id="tab-stats">Stats</button>
    </div>
+   <div id="dbline"></div>
    <div class="filters">
      <label>Day <select id="f-day"><option value="">all</option></select></label>
      <label>Machine <select id="f-mach"><option value="">all</option></select></label>
@@ -612,6 +737,26 @@ _ADMIN_PAGE = """<!doctype html>
        course server relayed (L2 summaries &amp; grades, Mode A, Mode B)</span></h2>
      <div id="ai"></div>
      <div class="pager" id="ai-pager"></div>
+   </section>
+   <section id="sec-stats" style="display:none">
+     <div class="filters"><span class="muted">Window</span>
+       <span class="range">
+         <button id="rng-7" class="on">Last 7 days</button>
+         <button id="rng-30">Last 30 days</button>
+       </span>
+       <span class="push"><span id="st-since" class="muted"></span></span>
+     </div>
+     <div class="tiles" id="st-tiles"></div>
+     <div class="cardbox"><h2 style="margin-top:0">Daily activity</h2>
+       <div id="st-daily"></div></div>
+     <div class="cardbox"><h2 style="margin-top:0">Layer 3 outcomes</h2>
+       <div class="tiles" id="st-l3" style="margin-bottom:0"></div></div>
+     <div class="cardbox"><h2 style="margin-top:0">AI usage by feature</h2>
+       <div id="st-feat"></div></div>
+     <div class="cardbox"><h2 style="margin-top:0">Most frequent events</h2>
+       <div id="st-kinds"></div></div>
+     <div class="cardbox"><h2 style="margin-top:0">Spend by day</h2>
+       <div id="st-spend"></div></div>
    </section>
  </div>
 </main>
@@ -686,12 +831,18 @@ function renderAiText(feature,text){
         `<b>student explanation:</b> ${esc(o.fix.explanation_for_student)}`+
         `\n\n<b>ops:</b> ${esc(JSON.stringify(o.fix.ops))}</div>`;
     }
+    if(o&&Array.isArray(o.proposals)){
+      const t=o.proposals.map((pr,i)=>`#${i+1} `+
+        esc(JSON.stringify(pr)).slice(0,300)).join("\n");
+      return `<div class="aihead">Mode B — ${o.proposals.length} `+
+        `proposal(s)</div><div class="aitext">${t}</div>`;
+    }
     if(o&&typeof o==="object")
       return `<div class="aitext">${esc(JSON.stringify(o,null,1))}</div>`;
   }catch(e){}
   return `<div class="aitext">${esc(text)}</div>`;
 }
-const state={tab:"overview",actPage:1,aiPage:1};
+const state={tab:"overview",actPage:1,aiPage:1,range:7};
 function filters(){
   return {day:$("f-day").value, mach:$("f-mach").value,
           kind:$("f-kind").value, feat:$("f-feat").value,
@@ -765,9 +916,50 @@ async function loadAi(){
   pager($("ai-pager"),d.total,d.page,d.per_page,
         p=>{state.aiPage=p;loadAi();});
 }
+function bars(el,rows,lbl,val,txt){
+  const mx=Math.max(1,...rows.map(val));
+  el.innerHTML=rows.length?rows.map(r=>`<div class="barrow">
+    <span class="lbl" title="${esc(lbl(r))}">${esc(lbl(r))}</span>
+    <span class="track"><span class="bar" style="width:${
+      Math.round(100*val(r)/mx)}%"></span></span>
+    <span class="val">${txt(r)}</span></div>`).join("")
+    :'<p class="muted">nothing in this window</p>';
+}
+async function loadStats(){
+  const d=await api("/admin/stats?range_days="+state.range);
+  $("st-since").textContent=`since ${d.since}`;
+  const t=d.totals;
+  const okPct=t.llm_calls?Math.round(100*t.ok_calls/t.llm_calls):100;
+  $("st-tiles").innerHTML=[
+    [t.active_machines,"active machines"],
+    [t.new_machines,"new machines"],
+    [t.events,"events"],
+    [`${t.llm_calls} (${okPct}% ok)`,"AI calls"],
+    [`${t.in_tokens}→${t.out_tokens}`,"tokens in→out"],
+    ["$"+t.est_usd,"spend (est)"],
+  ].map(([v,l])=>`<div class="tile"><b>${v}</b><span>${l}</span></div>`).join("");
+  bars($("st-daily"),d.active_by_day,r=>r.day,r=>r.events,
+       r=>`${r.events} events · ${r.machines} machine(s)`);
+  const l3=d.l3;
+  const confPct=l3.modeA_runs?Math.round(100*l3.modeA_confirmed/l3.modeA_runs):0;
+  $("st-l3").innerHTML=[
+    [l3.modeA_runs,"Mode A runs"],
+    [`${l3.modeA_confirmed} (${confPct}%)`,"confirmed fixes"],
+    [l3.modeA_cards,"fix cards shown"],
+    [l3.modeB_runs,"Mode B runs"],
+    [l3.fixes_accepted,"fixes accepted"],
+  ].map(([v,l])=>`<div class="tile"><b>${v}</b><span>${l}</span></div>`).join("");
+  $("st-feat").innerHTML=table(d.by_feature.map(f=>({...f,
+    est_usd:"$"+f.est_usd})),
+    ["feature","calls","ok_calls","in_tokens","out_tokens","est_usd"]);
+  bars($("st-kinds"),d.top_kinds,r=>r.kind,r=>r.n,r=>r.n);
+  $("st-spend").innerHTML=table(d.spend_by_day.map(r=>({...r,
+    est_usd:"$"+r.est_usd})),["day","calls","est_usd"]);
+}
 async function loadAggregates(){
   const f=filters();
   const health=await fetch("/v1/health").then(r=>r.json());
+  if(health.db_path)$("dbline").textContent="serving database: "+health.db_path;
   const s=await api("/admin/summary");
   const d=await api("/admin/daily");
   const cap=health.today_calls>=health.global_daily_calls||
@@ -794,18 +986,27 @@ async function loadAggregates(){
 }
 function showTab(t){
   state.tab=t;
-  for(const x of ["overview","activity","ai"]){
+  for(const x of ["overview","activity","ai","stats"]){
     $("sec-"+x).style.display=x===t?"":"none";
     $("tab-"+x).classList.toggle("on",x===t);
   }
   $("l-kind").style.display=t==="activity"?"":"none";
   $("l-feat").style.display=t==="ai"?"":"none";
+  for(const id of ["f-day","f-mach","f-pp"])
+    $(id).parentElement.style.display=t==="stats"?"none":"";
   reloadTab();
 }
 function reloadTab(){
   if(state.tab==="overview")loadAggregates();
   else if(state.tab==="activity")loadActivity();
-  else loadAi();
+  else if(state.tab==="ai")loadAi();
+  else loadStats();
+}
+function setRange(n){
+  state.range=n;
+  $("rng-7").classList.toggle("on",n===7);
+  $("rng-30").classList.toggle("on",n===30);
+  loadStats();
 }
 async function load(){
   await loadAggregates();
@@ -828,6 +1029,9 @@ $("auto").addEventListener("change",()=>{
 $("tab-overview").onclick=()=>showTab("overview");
 $("tab-activity").onclick=()=>showTab("activity");
 $("tab-ai").onclick=()=>showTab("ai");
+$("tab-stats").onclick=()=>showTab("stats");
+$("rng-7").onclick=()=>setRange(7);
+$("rng-30").onclick=()=>setRange(30);
 $("go").onclick=async()=>{setTok($("tok").value.trim());
   try{await load()}catch(e){$("gate-err").textContent=
     "That token was rejected — check it and try again."}};
