@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Digital Lab Coach launcher (macOS / Linux)
+# Digital Lab Coach launcher (macOS / Linux).
+# Windows users: double-click START_HERE.bat instead.
 set -e
 cd "$(dirname "$0")"
 

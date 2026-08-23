@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="64" viewBox="0 0 240 64">
+  <rect x="2" y="2" width="236" height="60" rx="8" fill="#3fb911"/>
+  <rect x="2" y="2" width="236" height="30" rx="8" fill="#ffffff" opacity="0.12"/>
+  <text x="120" y="43" font-family="Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="30" font-weight="bold" fill="#ffffff"
+        text-anchor="middle">Download</text>
+</svg>

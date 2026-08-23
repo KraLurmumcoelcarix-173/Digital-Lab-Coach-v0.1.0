@@ -1,4 +1,5 @@
 @echo off
+rem Digital Lab Coach launcher (Windows). macOS/Linux users: run ./start.sh instead.
 title Digital Lab Coach
 cd /d "%~dp0"
 

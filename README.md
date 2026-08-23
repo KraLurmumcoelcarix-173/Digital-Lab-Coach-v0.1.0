@@ -1,5 +1,7 @@
 # Digital Lab Coach (DLC)
 
+[![Download](docs/download_button.svg)](https://github.com/KraLurmumcoelcarix-173/Digital-Lab-Coach-v0.1.0/releases/latest/download/DigitalLabCoach.zip)
+
 A hybrid deterministic-checker + LLM feedback tool for debugging
 [Digital](https://github.com/hneemann/Digital) circuit labs.
 Three layers: structural analysis (Layer 1), conceptual explanation
@@ -45,10 +47,12 @@ v0.1.0 (2026/8/23) — first packaged release.
 
 ## Quick start (students)
 
-1. Download the release zip from your course page (or this repo's
+1. Hit the **Download** button at the top of this page (or grab
+   `DigitalLabCoach.zip` from your course page / this repo's
    **Releases**) and unzip it anywhere.
-2. Double-click **`START_HERE.bat`** (Windows) or run **`./start.sh`**
-   (macOS/Linux). The first run installs its own toolchain and takes a
+2. Windows and macOS/Linux are both supported: double-click
+   **`START_HERE.bat`** on Windows, or run **`./start.sh`** on
+   macOS/Linux. The first run installs its own toolchain and takes a
    few minutes; your browser then opens the app at
    `http://127.0.0.1:8765`.
 
@@ -182,6 +186,7 @@ untouched.
 | `tests/` | pytest unit tests, one file per source module.
 | `START_HERE.bat` / `start.sh` | One-click student launchers (install toolchain if needed, start the app with limits on, open the browser).
 | `UNINSTALL.bat` / `uninstall.sh` | Removes the local `~/.dlc` data folder.
+| `scripts/` | Maintainer utilities — `make_release_zip.py` builds the student release zip.
 
 ## Developer setup
 

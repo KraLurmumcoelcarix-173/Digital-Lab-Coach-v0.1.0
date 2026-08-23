@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Digital Lab Coach uninstall (macOS / Linux)
+# Digital Lab Coach uninstall (macOS / Linux).
+# Windows users: run UNINSTALL.bat instead.
 echo "This removes Digital Lab Coach's local data folder: ~/.dlc"
 echo "(settings, machine-id cache, telemetry spool)."
 echo

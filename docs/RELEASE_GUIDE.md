@@ -3,25 +3,54 @@
 The operational runbook for shipping DLC to a class. Written for the
 instructor/maintainer teaching undergraduate with Digital; students never need to read this file.
 
-## 1. Cut the GitHub release
+## What you are building
+
+Three pieces, in this order:
+
+1. **A release zip** (`DigitalLabCoach.zip`, built by a script — no
+   tests or dev clutter, sample circuits and course data included),
+   published on GitHub Releases. The README's green **Download** button
+   always points at the latest one. Students: download → unzip →
+   double-click `START_HERE` → point at `Digital.jar` → paste the course
+   URL + token in Settings → work. Windows uses `START_HERE.bat`,
+   macOS/Linux uses `./start.sh` — both are in the zip.
+2. **The course proxy** — a small server holding YOUR API key, with
+   per-machine daily limits (re-download-proof), a whole-server daily
+   circuit breaker, telemetry ingest, and the admin dashboard.
+3. **Two secrets**: the *course token* students paste once, and the
+   *admin token* only you hold (it opens the dashboard).
+
+Prerequisites: your fork is pushed and green (`uv run pytest -q`), the
+four README screenshots are in `docs/screenshots/`, and you have ~30
+minutes. The personal step-by-step checklist for the v0.1.0 launch:
+[RELEASE_TODO.md](RELEASE_TODO.md).
+
+## 1. Build the zip and cut the GitHub release
 
 1. Make sure `master` is green: `uv run pytest -q`.
-2. Tag and push:
+2. Build the student zip:
+   ```bash
+   uv run python scripts/make_release_zip.py
+   ```
+   **Expect:** `wrote dist/DigitalLabCoach.zip (…MB, … files, top folder
+   DigitalLabCoach-0.1.0/)`. Spot-check: unzip it somewhere and confirm
+   there is no `tests/` folder inside and `START_HERE.bat` is at the top
+   level.
+3. Tag and push:
    ```bash
    git tag v0.1.0
    git push origin v0.1.0
    ```
-3. On GitHub: **Releases → Draft a new release** → choose tag `v0.1.0`,
-   title `Digital Lab Coach v0.1.0`, paste the release notes, **Publish**.
-4. GitHub attaches the source archives automatically. Students download
-   **Source code (zip)** — `START_HERE.bat` (Windows) / `start.sh`
-   (macOS/Linux) at the archive root make it runnable with a double-click.
-   No extra assets need uploading.
-
-What students do: download zip → unzip → double-click `START_HERE` →
-point at their `Digital.jar` → paste the course URL + token in Settings →
-work. `START_HERE` runs the app with `DLC_ENFORCE_LIMITS=1`, so the
-per-day Mode A/B caps are active.
+4. On GitHub: **Releases → Draft a new release** → choose tag `v0.1.0`,
+   title `Digital Lab Coach v0.1.0`, paste the release notes, and
+   **attach `dist/DigitalLabCoach.zip` as a release asset** (drag it
+   into the assets box). Keep the filename exactly `DigitalLabCoach.zip`
+   — the README Download button URL
+   (`…/releases/latest/download/DigitalLabCoach.zip`) depends on it and
+   will keep working for every future version. **Publish.**
+5. Click the README's **Download** button to confirm it serves your zip.
+   (GitHub's automatic "Source code" archives also appear on the release
+   — harmless; students use the button.)
 
 ## 2. Generate the course secrets
 
