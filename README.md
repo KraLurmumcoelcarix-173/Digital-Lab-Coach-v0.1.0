@@ -34,6 +34,7 @@ v0.1.0 (2026/8/23) — first packaged release.
 - [Digital.jar for per-row test verification](#user-and-developer-optional-setup-digitaljar-for-per-row-test-verification)
 - [License](#license)
 - [Upstream](#upstream)
+- [Acknowledgement](#acknowledgement)
 
 ## Which start flow are you?
 
@@ -321,3 +322,7 @@ GPL-3.0. See LICENSE.
 
 Built to read .dig files produced by [Digital](https://github.com/hneemann/Digital),
 an open-source educational circuit simulator (GPL-3.0).
+
+## Acknowledgement 
+
+Great thanks to UNC Comp 311 team
