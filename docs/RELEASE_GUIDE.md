@@ -82,7 +82,7 @@ malformed or the course token is missing.
 | Layer | Default | Tune with |
 |---|---|---|
 | Per-student daily caps | Mode A 1/day, Mode B 2/day | `dlc/l3/limits.py` `CAPS` |
-| Per-machine proxy backstop | modeA 8, modeB 10, grade 20, explain 20 calls/day | `CALL_BUDGETS` in `proxy/dlc_proxy.py` |
+| Per-machine proxy backstop | modeA 8, modeB 10, grade 2, explain 2 calls/day | `CALL_BUDGETS` in `proxy/dlc_proxy.py` |
 | Whole-server circuit breaker | 600 calls/day AND $20 est./day | env `DLC_GLOBAL_DAILY_CALLS`, `DLC_GLOBAL_DAILY_USD` |
 
 If the breaker is triggered, every AI request answers "the course server has

@@ -9,7 +9,7 @@ One small server the instructor runs. It does three jobs:
    reports an anonymous id derived from the OS machine identifier. The
    proxy enforces per-day call budgets per feature (Mode A, Mode B,
    grading, explain) as the wipe-proof backstop behind the client's
-   own polished per-analysis limits.
+   own per-analysis limits.
 
 3. **Telemetry ingest** — students' local event spools sync here. 
    `/admin/summary` shows machines, event counts and an LLM spend estimate.
