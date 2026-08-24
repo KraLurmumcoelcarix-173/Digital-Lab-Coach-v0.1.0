@@ -134,7 +134,7 @@ enforces per-machine daily limits, collects the anonymized telemetry
 and serves the admin dashboard:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-... # not retrievable through any endpoint, relay returns only model output
 export DLC_COURSE_TOKEN=<course token>
 export DLC_ADMIN_TOKEN=<admin token>
 export DLC_PROXY_DB=/path/to/dlc_proxy.db
@@ -176,7 +176,7 @@ students paste the new token under Settings → Course server.
 | `dlc/cli/` | Command-line entrypoint that wires the layers together for student use.
 | `prompts/` | Versioned LLM prompt templates — one file per prompt variant, consumed by `dlc/llm/`.
 | `configs/` | Per-lab YAML configs (expected I/Os, handout context etc.).
-| `data/sample_circuits/` | Test fixtures — public sample circuits created by authors.
+| `data/sample_circuits/` | Test fixtures — public sample circuits and buggy circuits created by author.
 | `docs/` | Guides for instructors, release runbook, RISC-V labs manifest guides, screenshots, architecture notes, design decisions, dev log, dev debug guide.
 | `tests/` | pytest unit tests, one file per source module.
 | `START_HERE.bat` / `start.sh` | One-click student launchers
