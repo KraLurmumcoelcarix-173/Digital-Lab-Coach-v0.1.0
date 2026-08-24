@@ -24,7 +24,7 @@ v0.1.0 (2026/8/23) — first packaged release.
 - [Which start flow are you?](#which-start-flow-are-you)
 - [Quick start (students)](#quick-start-students)
   - [Working offline](#working-offline)
-  - [Telemetry notice](#telemetry-notice)
+  - [Telemetry statement](#telemetry-statement)
   - [Uninstalling](#uninstalling)
 - [Instructor setup](#instructor-setup)
   - [Course tokens](#course-tokens)

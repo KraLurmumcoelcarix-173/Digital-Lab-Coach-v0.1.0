@@ -1,11 +1,11 @@
-# Instructor guide: configuring the answer ROM data for a lab
+# Instructor guide: optionally configuring the answer ROM data for a lab
 
-> Step 2 of the instructor flow (see the README's *Instructor setup*).
+> Step 2 of the instructor flow (see the README's Instructor setup).
 > Start with `MANIFEST_GUIDE.md` if you have not configured the
 > official test set yet; deploy the course proxy last
 > (`../proxy/README.md`).
 
-This page teaches an instructor how to register the **hidden runtime ROM
+This page guides an instructor how to register the **hidden runtime ROM
 payload** for a specific lab — the program words the tool loads into a
 student's *empty* ROM during test runs and Mode A analysis, the same way
 the autograder does. It also covers the official-testcase entry the
@@ -13,20 +13,18 @@ payload rides on, because both live in the same config record.
 
 ---
 
-## 1. Decide whether this lab should have a ROM payload at all
+## 1. Decide whether this lab should have a ROM payload
 
 Ask one question: **is the ROM's content a runtime INPUT to the lab, or
 is it the lab's ANSWER?**
 
-| Situation | Configure a payload? | Example |
+| Situation | Configure a payload? | Example in 311 |
 |---|---|---|
-| The ROM holds a *program the circuit executes* — students are graded on the datapath around it, not on the words | **Yes** | `cpu.dig` instruction memory |
-| The ROM *is the deliverable* — filling it would hand out the answer and make a wrong/empty submission pass | **NEVER** | `control-unit.dig` decode table |
+| The ROM holds a program the circuit executes — students are graded on the datapath around it, not on the words | **Yes** | `cpu.dig` instruction memory |
+| The ROM is the deliverable — filling it would hand out the answer and make a wrong/empty submission pass | **NEVER & skip this md** | `control-unit.dig` decode table |
 
 A lab with no payload configured still gets official-test injection;
-its empty ROM simply stays empty (the student sees the Layer-1 warning,
-and Mode A treats the missing words as the prime suspect — that is the
-teaching path).
+its empty ROM simply stays empty and triggers L1 error.
 
 ## 2. Where the configuration lives
 
@@ -51,18 +49,17 @@ One entry per lab **filename** (matching is by exact filename, e.g.
 
 - `content` — the official testcase rows (Digital test format: first
   line is the signal header, then value rows). Injected into a run-scoped
-  copy whenever a student file's own testcase is missing or modified.
-- `sha1` — fingerprint used to recognize an *unmodified* official
+  copy whenever a student file's own testcase is missing or modified and his/her 
+  .dig is an official .dig in the course scope.
+- `sha1` — fingerprint used to recognize an unmodified official
   testcase inside a student file (see step 5).
 - `runtime` — the hidden payload. **Optional.** Only add it when step 1
   said yes.
 
 The `runtime` key can only be configured here, in the shipped defaults
-file. This is by design: the Settings page and the user-layer store
-(`~/.dlc/official_tests.json`) never carry, list, or render it, so
-answer-adjacent data never sits in a browser-reachable layer.
+file.
 
-## 3. Get the ROM words from your answer circuit
+## 3. Get the ROM words from your answer circuit if step 1 said yes
 
 Open your answer `.dig` in Digital, double-click the ROM, and read the
 data table — or read the `Data` attribute straight out of the XML:
@@ -74,12 +71,12 @@ data table — or read the `Data` attribute straight out of the XML:
 </entry>
 ```
 
-Format rules (exactly what Digital itself stores):
+Format rules:
 
 - comma-separated words, **address 0 first**, one word per address;
 - **bare hex** by default (`fe,82,1a` — no `0x` prefixes). The words are
   parsed with the student ROM's `intFormat` attribute, which is `hex`
-  unless a student changed it — plain hex is the safe choice;
+  unless a student changed it, plain hex is the safe choice;
 - Digital's run-length shorthand is supported: `7*1f` stores `1f` at 7
   consecutive addresses;
 - trailing addresses you omit read as 0 (Digital semantics).
@@ -95,13 +92,11 @@ The blob is base64 over a tiny JSON object with a `rom` key:
 Replace `'5,6'` with your comma-separated words. Paste the printed
 string as the entry's `"runtime"` value.
 
-Why base64? It keeps the program words grep-proof at rest (no plaintext
-answer strings in the repo) — it is **obfuscation, not encryption**.
-Keep the repository private and keep answer `.dig` files out of it.
+Why base64? It is obfuscation, not encryption. Keep answer `.dig` files out of it.
 
 ## 5. Compute the `sha1` for `content`
 
-The fingerprint is a *normalized* hash (comments stripped, whitespace
+The fingerprint is a normalized hash (comments stripped, whitespace
 collapsed) so cosmetic edits in a student's copy don't break matching.
 Always compute it with the tool's own function:
 
@@ -115,16 +110,15 @@ where `official_rows.txt` holds exactly the `content` text.
 
 ## 6. Restart and verify
 
-1. Restart the server (the defaults file is read per request, but a
-   restart guarantees no stale process).
+1. Restart the server.
 2. Upload a student-style file with the right filename and an **empty**
    ROM, and run its tests. You should see the note
-   *"the course program was loaded into 1 empty ROM for this run …"* and
+   "the course program was loaded into 1 empty ROM for this run …" and
    rows judged with the program in place.
 3. Run Mode A on a failing file: every prompt carries the internal
    [ROM NOTE] (the model must not touch grader-loaded words, and the
    words themselves never ride the model payload), and any verified fix
-   card ends with **"Check your ROM data"** — reminding the student
+   card ends with **"Check your ROM data"**, reminding the student
    their own file's ROM is still unprogrammed.
 
 ## 7. What the payload does and does not do (behavior contract)
@@ -134,7 +128,7 @@ where `official_rows.txt` holds exactly the `content` text.
   can convict a wrong word).
 - Applies to a **run-scoped sibling copy** only: the student's file is
   never modified, and the registered coach temps never store the words.
-- Every empty ROM in the file receives the **same** words — a lab whose
+- Every empty ROM in the file receives the **same** words, a lab whose
   answer needs two *different* ROM programs is not supported by the
   single `rom` key yet.
 - The words never appear in any UI, the Settings page, `list_tests()`,
