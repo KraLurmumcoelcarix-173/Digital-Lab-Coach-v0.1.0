@@ -38,28 +38,24 @@ v0.1.0 (2026/8/23) — first packaged release.
 
 ## Which start flow are you?
 
-- **Student in a course using DLC** → *Quick start (students)* below.
+- **Student in a course using DLC** → Quick start (students) below.
   Your instructor gives you a course-server URL + token — you do NOT
   need any API key.
-- **Instructor releasing DLC for a course** → *Instructor setup* below,
+- **Instructor releasing DLC for a course** → Instructor setup below,
   with the full runbook in
   [docs/RELEASE_GUIDE.md](docs/RELEASE_GUIDE.md).
-- **Developer / contributor** → *Developer setup* below.
+- **Developer** → Developer setup below.
 
 ## Quick start (students)
 
-1. Hit the **Download** button at the top of this page (or grab
-   `DigitalLabCoach.zip` from your course page / this repo's
-   **Releases**) and unzip it anywhere.
-2. Windows and macOS/Linux are both supported: double-click
+1. Hit the **Download** button at the top of this page and unzip it anywhere.
+2. Windows and macOS/Linux are both supported: inside the unzipped folder, double-click
    **`START_HERE.bat`** on Windows, or run **`./start.sh`** on
    macOS/Linux. The first run installs its own toolchain and takes a
    few minutes; your browser then opens the app at
    `http://127.0.0.1:8765`.
 
 ![START_HERE first run](docs/screenshots/start_here.png)
-*(screenshot to add: the START_HERE terminal on first run, right as the
-browser tab opens)*
 
 3. First run asks for your `Digital.jar` location — the same jar you run
    labs with (see the Digital.jar section below if you don't have one).

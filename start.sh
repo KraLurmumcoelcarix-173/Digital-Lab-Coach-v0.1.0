@@ -10,6 +10,14 @@ if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
+if curl -s --max-time 1 -o /dev/null http://127.0.0.1:8765/; then
+  echo "Digital Lab Coach is already running - opening your browser."
+  if command -v open >/dev/null 2>&1; then open http://127.0.0.1:8765
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://127.0.0.1:8765
+  fi
+  exit 0
+fi
+
 echo "Preparing packages - the first run can take a few minutes..."
 uv sync
 

@@ -60,7 +60,17 @@ from dlc.web.graph_export import circuit_summary, to_cytoscape
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="Digital Lab Coach", version="0.3.1")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    _telemetry_boot()
+    yield
+
+
+app = FastAPI(title="Digital Lab Coach", version="0.3.1",
+              lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 from dlc.web import l3_routes
@@ -1107,7 +1117,6 @@ def machine_info() -> dict:
     return {**ident, "proxy_configured": bool(url)}
 
 
-@app.on_event("startup")
 def _telemetry_boot() -> None:
     try:
         from dlc.telemetry.machine import machine_identity

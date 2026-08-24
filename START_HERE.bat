@@ -18,6 +18,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+netstat -ano 2>nul | findstr "LISTENING" | findstr ":8765 " >nul 2>nul
+if not errorlevel 1 (
+  echo Digital Lab Coach is already running - opening your browser.
+  start "" http://127.0.0.1:8765
+  exit /b 0
+)
+
 echo Preparing packages - the first run can take a few minutes...
 uv sync
 if errorlevel 1 (

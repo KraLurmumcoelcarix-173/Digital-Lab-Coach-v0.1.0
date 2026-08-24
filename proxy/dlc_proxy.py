@@ -18,7 +18,16 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="DLC course proxy")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    _startup_sanity()
+    yield
+
+
+app = FastAPI(title="DLC course proxy", lifespan=_lifespan)
 
 os.environ["DLC_PROXY_SELF"] = "1"
 
@@ -261,7 +270,6 @@ def _effective_key() -> str:
     return get_api_key("anthropic") or ""
 
 
-@app.on_event("startup")
 def _startup_sanity() -> None:
     key = _effective_key()
     if key and not key.startswith("sk-"):
