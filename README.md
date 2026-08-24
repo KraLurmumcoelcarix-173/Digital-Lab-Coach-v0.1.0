@@ -7,7 +7,10 @@ A hybrid deterministic-checker + LLM feedback tool for debugging
 Three layers: structural analysis (Layer 1), conceptual explanation
 (Layer 2), and a machine-verified debugging + test-coverage coach
 (Layer 3) — every LLM fix proposal is re-run against the official tests
-before a student sees it.
+before a student sees it. 
+
+We aim to improve quality and efficiency of hardware science introductory
+education and explore new means of interactive hardware design debugging.
 
 ![Dashboard view of cpu](docs/screenshots/dashboard.png)
 ![Dashboard view of t3 calculator](docs/screenshots/dashboard2.png)
@@ -65,15 +68,11 @@ v0.1.0 (2026/8/23) — first packaged release.
    later, paste it in the same place.
 
 ![Course server settings](docs/screenshots/settings_course_server.png)
-*(screenshot to add: the Settings → Course server card with URL + token
-fields filled, state showing "connected ✓")*
 
-5. Upload your `.dig` files and work: interactive graph, structural
-   issues, per-row tests, signal flow — and the Layer 2/3 AI coach.
+5. Upload your `.dig` files and start debugging: interactive graph, structural
+   issues, per-row tests, signal flow, and the Layer 2/3 AI coach.
 
 ![A verified Mode A fix card](docs/screenshots/mode_a_card.png)
-*(screenshot to add: a Failed-test analysis card with "verified fix ✓" —
-the LED4 or Wrong_cin one is perfect)*
 
 ### Working offline
 
@@ -81,35 +80,41 @@ Everything deterministic — the graph, structural issues, per-row tests,
 signal flow, subcircuit drill-in — works with no internet at all. Only
 the AI coach needs the course-server connection.
 
-### Telemetry notice
+### Telemetry Statement
 
 DLC records anonymized usage events (feature clicks, test runs, coach
-outcomes) keyed to a hashed machine id — never your name, or your files'
-contents beyond what the coach needs. Events sync to the course server
-for course-improvement research; deleting and re-downloading the tool
-continues the same anonymous record. Questions or opt-out: contact your
-instructor.
+outcomes) keyed to a hashed machine id only. Related codes are public
+and stored at proxy/ and telemetry/, DLC never modifies a student's 
+uploaded files. Events sync to the course server for course-improvement research.
+This process begins if and only if admin gains IRB permission from the department. 
+The first round of experimental use is planned to be shut down around December.
+
+When instructor's proxy server shuts down, DLC's AI features will be offline regardless
+of Internet connections. 
+
+Deleting and re-downloading the tool continues the same anonymous record. 
+
+DLC dev team is not responsible for any mis-behaviors of modifying students' files outside 
+UNC 311 classroom. You will need IRB permission from your department and work on your own fork
+of DLC in order to apply it to student and collect related student data. 
 
 ### Uninstalling
 
-Run **`UNINSTALL.bat`** / **`./uninstall.sh`** (removes the tool's local
-data folder `~/.dlc`), then delete the unzipped folder. Course usage
-limits live on the course server and are keyed to your machine —
-uninstalling or re-downloading never resets them.
+Run **`UNINSTALL.bat`** / **`./uninstall.sh`** removes the tool's local
+data folder `~/.dlc` and delete the unzipped folder.
 
 ## Instructor setup
 
-The short version (each step's details:
-[docs/RELEASE_GUIDE.md](docs/RELEASE_GUIDE.md)):
+The detailed version: [docs/RELEASE_GUIDE.md](docs/RELEASE_GUIDE.md):
 
 1. Fork this repository; configure the official test set (and manifest,
-   if your labs go beyond the built-ins) — step-by-step:
+   if your labs go beyond the built-ins): step-by-step:
    [docs/MANIFEST_GUIDE.md](docs/MANIFEST_GUIDE.md).
 2. Labs whose instruction ROM should carry a course program at grading
    time: [docs/instructor_rom_config.md](docs/instructor_rom_config.md).
 3. Generate the two course secrets, deploy the course proxy (holds YOUR
    API key), and hand students your release URL + the proxy URL + course
-   token — all below.
+   token.
 
 ### Course tokens
 
@@ -118,16 +123,15 @@ python -c "import secrets; print('course-' + secrets.token_urlsafe(18))"
 python -c "import secrets; print('admin-'  + secrets.token_urlsafe(18))"
 ```
 
-Each command prints one token in the terminal. The **course token** goes
-to students; the **admin token** stays with you (it opens the
-dashboard). Store both in a private note outside any git folder; they
-are never committed and never baked into a release.
-
 ### Running the course proxy
 
+You are only allowed to release DLC with built-in proxy with IRB permission
+from your department. If you don't need to collect student's data for research
+or course-improvement study use, feel free to modify proxy/dlc_proxy.py.
+
 The proxy ([proxy/README.md](proxy/README.md)) holds your API key,
-enforces per-machine daily limits that survive re-downloads, collects
-the anonymized telemetry, and serves the dashboard:
+enforces per-machine daily limits, collects the anonymized telemetry
+and serves the admin dashboard:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -140,27 +144,21 @@ uv run uvicorn proxy.dlc_proxy:app --host 0.0.0.0 --port 8321
 Three spend-protection layers are on by default: per-student daily caps
 (Mode A 1/day, Mode B 2/day), per-machine wipe-proof backstops, and a
 whole-server daily circuit breaker (`DLC_GLOBAL_DAILY_CALLS`, default
-600 calls; `DLC_GLOBAL_DAILY_USD`, default $20) — a leaked token can
-burn at most one day's cap. Deployment options (own machine vs $5/month
-VPS with HTTPS) are in the release guide.
+600 calls; `DLC_GLOBAL_DAILY_USD`, default $20). Deployment options 
+(own machine vs VPS with HTTPS) are in the release guide.
 
-### The course dashboard
+### The admin dashboard
 
-Open `http://<proxy-host>:8321/admin/view`, enter the admin token once
-(kept only in your browser): machines, per-day activity, per-day LLM
-usage and estimated spend, breaker state. Raw exports:
-`/admin/export.csv?table=events|machines|llm_calls`.
+Open `http://<proxy-host>:8321/admin/view`, enter the admin token once:
+ machines, per-day activity, per-day LLM usage and estimated spend, 
+ breaker state. Raw exports: `/admin/export.csv?table=events|machines|llm_calls`.
 
 ![Course dashboard](docs/screenshots/admin_dashboard.png)
-*(screenshot to add: /admin/view after your class test — tiles + the
-machines table)*
 
 ### Rotating the course token
 
 Generate a new course token, restart the proxy with it, announce it;
-students paste the new token under Settings → Course server. No
-re-release, no re-download; identities, history and limits are
-untouched.
+students paste the new token under Settings → Course server.
 
 ## File layout
 
@@ -181,8 +179,8 @@ untouched.
 | `data/sample_circuits/` | Test fixtures — public sample circuits created by authors.
 | `docs/` | Guides for instructors, release runbook, RISC-V labs manifest guides, screenshots, architecture notes, design decisions, dev log, dev debug guide.
 | `tests/` | pytest unit tests, one file per source module.
-| `START_HERE.bat` / `start.sh` | One-click student launchers (install toolchain if needed, start the app with limits on, open the browser).
-| `UNINSTALL.bat` / `uninstall.sh` | Removes the local `~/.dlc` data folder.
+| `START_HERE.bat` / `start.sh` | One-click student launchers
+| `UNINSTALL.bat` / `uninstall.sh` | Removes DLC and the local `~/.dlc` data folder.
 | `scripts/` | Maintainer utilities — `make_release_zip.py` builds the student release zip.
 
 ## Developer setup
@@ -226,24 +224,18 @@ uv sync
 uv run python -m dlc.web.server
 ```
 
-(`START_HERE` does the same, plus `DLC_ENFORCE_LIMITS=1` — the released
-student caps. Developers usually run without it so limits never block a
-debugging session.)
-
 **Side notes**
 
->   The shell installer only updates the shell it's run from. If you
->   install `uv` via Git Bash but want to use it from PowerShell, run
->   the PowerShell installer too.
+ 1. The shell installer only updates the shell it's run from. If you
+    install `uv` via Git Bash but want to use it from PowerShell, run
+    the PowerShell installer too.
 
->   After install, **close and reopen** your terminal (restart VS Code
->   if it still can't find `uv`.)
+ 2. After install, **close and reopen** your terminal (restart VS Code
+    if it still can't find `uv`.)
 
->   In Git Bash, prefer forward slashes (`C:/Users/...`)
-
->   PowerShell doesn't always parse multi-line `python -c "..."` blocks
->   cleanly. For the `test_notes.md` manual tests, use Git Bash, or save
->   the script to a `.py` file and run `uv run python script.py`.
+ 3. PowerShell doesn't always parse multi-line `python -c "..."` blocks
+    cleanly. For the `test_notes.md` manual tests, use Git Bash, or save
+    the script to a `.py` file and run `uv run python script.py`.
 
 ## Troubleshooting (Windows): `uv run` blocked by Smart App Control
 
@@ -257,8 +249,8 @@ Querying Python at `...\WindowsApps\python3.exe` failed (exit code 0x800711c7)
 ```
 
 `os error 4551`:
-an *application control policy has blocked this file*. Windows 11's **Smart App
-Control** can switch itself from *Evaluation* to *On* (e.g. after an update),
+an application control policy has blocked this file. Windows 11's **Smart App
+Control** can switch itself from Evaluation to On (e.g. after an update),
 and then it blocks unsigned executables — including the Python `uv` downloads
 (python-build-standalone) and the Microsoft Store `python3.exe` alias stub. A
 `.venv` built on a now-blocked interpreter stops launching too. This is an
@@ -270,7 +262,7 @@ environment/OS block.
    Settings → Apps → Advanced app settings → App execution aliases → turn
    **off** `python.exe`, `python3.exe` and `pythonw.exe`.
 2. **Install a signed Python 3.12** from <https://www.python.org> (PSF-signed;
-   tick *"Add python.exe to PATH"*). Verify it isn't blocked: `python --version`.
+   tick "Add python.exe to PATH"). Verify it isn't blocked: `python --version`.
    If Smart App Control still blocks it, install **Python 3.12 from the
    Microsoft Store** instead — Store apps are always trusted by Smart App Control.
 3. **Delete the dead venv and rebuild** against the signed Python (Git Bash):
@@ -282,11 +274,11 @@ uv sync
 uv run python -m dlc.web.server
 ```
 
-> Don't turn Smart App Control *off* to fix this — it is one-way (you can't
-> re-enable it without reinstalling Windows). Use a signed Python instead.
+Don't turn Smart App Control *off* to fix this — it is one-way (you can't
+re-enable it without reinstalling Windows). Use a signed Python instead.
 
 
-## User and Developer Optional setup: Digital.jar for per-row test verification
+## Developer Optional setup: Digital.jar for per-row test verification
 
 DLC's structural analysis works on any `.dig` file with no extra setup.
 
