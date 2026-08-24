@@ -17,6 +17,7 @@ education and explore new means of interactive hardware design debugging.
 
 ## Status
 
+v0.1.1 (2026/8/24) — Opus option for Mode B.
 v0.1.0 (2026/8/23) — first packaged release.
 
 ## Table of contents

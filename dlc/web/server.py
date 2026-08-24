@@ -1278,6 +1278,7 @@ def manifest_guide(raw: bool = False):
 
 @app.get("/api/llm/models")
 def list_models() -> dict:
+    proxied = bool(llm_client._proxy_config()[0])
     models = []
     for model_id, info in llm_client.MODEL_CATALOG.items():
         models.append({
@@ -1285,7 +1286,9 @@ def list_models() -> dict:
             "label": info["label"],
             "provider": info["provider"],
             "tier": info["tier"],
-            "key_configured": llm_client.has_api_key(info["provider"]),
+            "key_configured": (llm_client.has_api_key(info["provider"])
+                               or (proxied
+                                   and info["provider"] == "anthropic")),
         })
     return {"models": models, "default": llm_client.DEFAULT_MODEL}
 

@@ -1030,14 +1030,18 @@ async function l3ProposeClick() {
   const slot = l3Slot(file.filename);
   if (!slot.modeB || !slot.modeB.report || slot.modeB.proposing) return;
   slot.modeB.proposing = true;
-  logEvent("l3_modeB_propose_started", { filename: file.filename });
+  const modelPick = document.getElementById("l3-b-model");
+  const model = (modelPick && modelPick.value) || null;
+  logEvent("l3_modeB_propose_started",
+           { filename: file.filename, model: model || "default" });
   renderL3Boards(file);
   let body = null;
   try {
     const res = await fetch("/api/l3/propose", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, filename: file.filename }),
+      body: JSON.stringify({ session_id: sessionId, filename: file.filename,
+                             ...(model ? { model } : {}) }),
     });
     body = res.ok ? await res.json()
                   : { ok: false, error: `Server error ${res.status}` };
