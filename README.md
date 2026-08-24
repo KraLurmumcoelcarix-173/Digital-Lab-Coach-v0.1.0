@@ -29,12 +29,13 @@ v0.1.0 (2026/8/23) — first packaged release.
 - [Instructor setup](#instructor-setup)
   - [Course tokens](#course-tokens)
   - [Running the course proxy](#running-the-course-proxy)
-  - [The course dashboard](#the-course-dashboard)
+  - [Changing the limits](#changing-the-limits)
+  - [The admin dashboard](#the-admin-dashboard)
   - [Rotating the course token](#rotating-the-course-token)
 - [File layout](#file-layout)
 - [Developer setup](#developer-setup)
 - [Troubleshooting (Windows): Smart App Control](#troubleshooting-windows-uv-run-blocked-by-smart-app-control)
-- [Digital.jar for per-row test verification](#user-and-developer-optional-setup-digitaljar-for-per-row-test-verification)
+- [Digital.jar for per-row test verification](#developer-optional-setup-digitaljar-for-per-row-test-verification)
 - [License](#license)
 - [Upstream](#upstream)
 - [Acknowledgement](#acknowledgement)
@@ -146,6 +147,16 @@ Three spend-protection layers are on by default: per-student daily caps
 whole-server daily circuit breaker (`DLC_GLOBAL_DAILY_CALLS`, default
 600 calls; `DLC_GLOBAL_DAILY_USD`, default $20). Deployment options 
 (own machine vs VPS with HTTPS) are in the release guide.
+
+### Changing the limits
+
+| Layer | Counts | Default | Change it in |
+|---|---|---|---|
+| Per-student daily caps | runs/day, on the student's machine | Mode A 1, Mode B 2 | `CAPS` at the top of [`dlc/l3/limits.py`](dlc/l3/limits.py) |
+| Per-machine backstop | LLM calls/day per machine, server-side | modeA 8, modeB 10, grade 2, explain 2 | `CALL_BUDGETS` at the top of [`proxy/dlc_proxy.py`](proxy/dlc_proxy.py) |
+| Whole-server circuit breaker | calls/day and estimated $/day, whole class | 600 calls, $20 | env `DLC_GLOBAL_DAILY_CALLS`, `DLC_GLOBAL_DAILY_USD` |
+
+refer to [docs/RELEASE_GUIDE.md](docs/RELEASE_GUIDE.md) for more info.
 
 ### The admin dashboard
 
