@@ -9,7 +9,7 @@ Three layers: structural analysis (Layer 1), conceptual explanation
 (Layer 3) — every LLM fix proposal is re-run against the official tests
 before a student sees it. 
 
-We aim to improve quality and efficiency of hardware science introductory
+We aim to improve quality and effectiveness of introductory hardware science
 education and explore new means of interactive hardware design debugging.
 
 ![Dashboard view of cpu](docs/screenshots/dashboard.png)
