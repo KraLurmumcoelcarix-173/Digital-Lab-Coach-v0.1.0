@@ -158,9 +158,10 @@
 
   var VARS = "ABCDEF";
 
-  // ---- low-level pattern helpers -----------------------------------------
+/*# ───────────────────────────────────────────────────────────────────
+  *#  Low level pattern helpers
+  *# ──────────────────────────────────────────────────────────────────#*/
 
-  // All minterms covered by a pattern (free bits expand both ways).
   function patternMinterms(pattern, n) {
     var res = [0];
     for (var i = 0; i < n; i++) {
@@ -185,7 +186,9 @@
     return b; // b[0] is A (MSB)
   }
 
-  // Smallest sub-cube (pattern) that contains every given minterm.
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Smallest sub-cube (pattern) that contains every given minterm
+  *# ──────────────────────────────────────────────────────────────────#*/
   function spanningPattern(minterms, n) {
     var p = [];
     for (var i = 0; i < n; i++) {
@@ -202,7 +205,9 @@
 
   function isPowerOfTwo(x) { return x > 0 && (x & (x - 1)) === 0; }
 
-  // SOP literal for a 1-grouping pattern: fixed 1 -> X, fixed 0 -> X'.
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  SOP literal for a 1-grouping pattern: fixed 1 -> X, fixed 0 -> X'
+  *# ──────────────────────────────────────────────────────────────────#*/
   function literalSOP(pattern, n) {
     var s = "";
     for (var i = 0; i < n; i++) {
@@ -212,8 +217,10 @@
     return s === "" ? "1" : s;
   }
 
-  // POS sum-term for a 0-grouping pattern (De Morgan of the product of zeros):
-  // fixed 0 -> X, fixed 1 -> X', OR-ed inside parentheses.
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  POS sum-term for a 0-grouping pattern (De Morgan of the product of zeros)
+  *# ──────────────────────────────────────────────────────────────────#*/
+
   function literalPOS(pattern, n) {
     var lits = [];
     for (var i = 0; i < n; i++) {
@@ -223,7 +230,9 @@
     return lits.length === 0 ? "0" : "(" + lits.join("+") + ")";
   }
 
-  // ---- model -------------------------------------------------------------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  model
+  *# ──────────────────────────────────────────────────────────────────#*/
 
   function KMapModel(numVars) {
     if (numVars < 2 || numVars > 6) {
@@ -284,18 +293,20 @@
     for (var r = 0; r < this.numRows; r++)
       for (var c = 0; c < this.numCols; c++) this.grid[r][c] = "0";
   };
-  // Set the whole function from a list of minterm values, indexed by minterm.
+
   KMapModel.prototype.setFromMintermValues = function (vals) {
     for (var m = 0; m < (1 << this.numVars); m++) {
       var rc = this.mintermToCell(m);
       this.grid[rc[0]][rc[1]] = vals[m] || "0";
     }
   };
-  // Storage-geometry-agnostic helpers so the UI can address cells by minterm.
+
   KMapModel.prototype.toggleMinterm = function (m) { var rc = this.mintermToCell(m); this.toggleCell(rc[0], rc[1]); };
   KMapModel.prototype.setMinterm = function (m, v) { var rc = this.mintermToCell(m); this.setCellValue(rc[0], rc[1], v); };
 
-  // ---- expression parser (SOP text -> minterms) --------------------------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Expression parser
+  *# ──────────────────────────────────────────────────────────────────#*/
 
   var ExpressionParser = {
     parse: function (expression, numVars) {
@@ -345,7 +356,9 @@
     }
   }
 
-  // ---- solver ------------------------------------------------------------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Solver
+  *# ──────────────────────────────────────────────────────────────────#*/
 
   function KMapSolver() {}
 
@@ -550,7 +563,9 @@
     return out;
   };
 
-  // ---- exports -----------------------------------------------------------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Export
+  *# ──────────────────────────────────────────────────────────────────#*/
   var api = {
     KMapModel: KMapModel,
     ExpressionParser: ExpressionParser,
@@ -574,7 +589,9 @@
     var solver = new KMapSolver();
     var state = { model: new KMapModel(4), form: 'SOP', lastSolve: null, selectedCover: 0 };
 
-    // ---------- layout: single map for n<=4, stacked 4-var maps for n=5,6 ----
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Layout
+  *# ──────────────────────────────────────────────────────────────────#*/
     function grayN(bits) { var out = [], n = 1 << bits; for (var i = 0; i < n; i++) { var g = i ^ (i >> 1); out.push(g.toString(2).padStart(bits, '0')); } return out; }
     function buildLayout(m) {
       var n = m.numVars;
@@ -601,7 +618,9 @@
       return { panels: panels, perRow: 1 };
     }
 
-    // ---------- setup ----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Setup
+  *# ──────────────────────────────────────────────────────────────────#*/
     function setVars(n) { state.model = new KMapModel(parseInt(n, 10)); resetSolve(); renderAll(); }
     function setForm(f) {
       state.form = f;
@@ -616,11 +635,15 @@
     }
     function resetSolve() { state.lastSolve = null; state.selectedCover = 0; }
 
-    // ---------- interaction ----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Interaction
+  *# ──────────────────────────────────────────────────────────────────#*/
     function cellClick(m) { state.model.toggleMinterm(m); resetSolve(); renderAll(); }
     function truthToggle(m) { state.model.toggleMinterm(m); resetSolve(); renderAll(); }
 
-    // ---------- solve ----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Solve
+  *# ──────────────────────────────────────────────────────────────────#*/
     function solve() { state.lastSolve = solver.solve(state.model, state.form); state.selectedCover = 0; renderResults(); renderKmap(); }
     function selectCover(i) { state.selectedCover = i; renderResults(); renderKmap(); }
     function parseExpr() {
@@ -639,7 +662,9 @@
       document.getElementById('exprInput').value = presets[state.model.numVars] || ''; parseExpr();
     }
 
-    // ---------- rendering ----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Rendering
+  *# ──────────────────────────────────────────────────────────────────#*/
     function renderAll() {
       renderPrinciples(); renderKmap(); renderTruth();
       if (state.lastSolve) renderResults(); else clearResults();
@@ -724,8 +749,10 @@
       return specs;
     }
 
-    // Paint loops. animate=true (only the SOP<->POS toggle) reuses divs by key so
-    // a color present in both views slides; added/removed colors pop instantly.
+    /*# ───────────────────────────────────────────────────────────────────
+     *#  Paint loops
+     *# ──────────────────────────────────────────────────────────────────#*/
+
     function paintLoops(animate) {
       var layer = document.getElementById('loopLayer'); if (!layer) return;
       var specs = loopSpecs(), existing = {}, seen = {};
@@ -830,7 +857,9 @@
       el.innerHTML = html;
     }
 
-    // ---------- helpers ----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Helpers
+  *# ──────────────────────────────────────────────────────────────────#*/
     function uniqSorted(a) { return Array.from(new Set(a)).sort(function (x, y) { return x - y; }); }
     function runs(sorted) { var out = [], cur = []; for (var i = 0; i < sorted.length; i++) { if (!cur.length || sorted[i] === cur[cur.length - 1] + 1) cur.push(sorted[i]); else { out.push(cur); cur = [sorted[i]]; } } if (cur.length) out.push(cur); return out; }
     function cellBy(sub, sr, sc) { return document.querySelector('.kmap-cell[data-submap="' + sub + '"][data-sr="' + sr + '"][data-sc="' + sc + '"]'); }

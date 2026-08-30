@@ -210,6 +210,43 @@ def browse_jar() -> dict:
         return {"ok": False, "reason": "cancelled or no tkinter available"}
     return {"ok": True, "path": path}
 
+_APP_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _tutor_marker() -> Path:
+    env = os.environ.get("DLC_TUTOR_MARKER")
+    return Path(env) if env else _APP_ROOT / ".dlc_tutor_done"
+
+
+@app.get("/api/tutorial/state")
+def tutorial_state() -> dict:
+    return {"seen": _tutor_marker().exists()}
+
+
+@app.post("/api/tutorial/seen")
+def tutorial_seen() -> dict:
+    try:
+        _tutor_marker().write_text(time.strftime("%Y-%m-%d %H:%M:%S"),
+                                   encoding="utf-8")
+        return {"ok": True}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+_TUTOR_DEMO = (_APP_ROOT / "data" / "sample_circuits" / "30_bug_benchmark"
+               / "bug3_wrong_cin" / "Wrong_cin.dig")
+
+
+@app.get("/api/tutorial/demo")
+def tutorial_demo() -> dict:
+    try:
+        return {"ok": True, "filename": "tutor_demo.dig",
+                "content": _TUTOR_DEMO.read_text(encoding="utf-8")}
+    except OSError as exc:
+        return {"ok": False, "filename": None, "content": None,
+                "error": f"demo circuit unavailable: {exc}"}
+
+
 @app.post("/api/circuit")
 async def circuit(files: list[UploadFile] = File(...)) -> dict:
     if not files:

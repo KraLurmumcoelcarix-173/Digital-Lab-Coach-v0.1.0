@@ -1,8 +1,10 @@
-/* Settings page (gear tab). Loaded after app.js: reuses its globals
-   (escapeHtml, logEvent) and the existing jar/key MODALS — the settings
-   sections are the hub; Change/Configure buttons open the same dialogs the
-   toolbar chips do. Official tests are the new machinery: local CRUD over
-   /api/config/official_tests, matched by Mode B as instructor truth. */
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Settings page (gear tab). Loaded after app.js: reuses its globals
+  *#  (escapeHtml, logEvent) and the existing jar/key MODALS — the settings
+  *#  sections are the hub; Change/Configure buttons open the same dialogs the
+  *#  toolbar chips do. Official tests are the new machinery: local CRUD over
+  *#  /api/config/official_tests, matched by Mode B as instructor truth
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 async function renderSettings() {
   // Digital.jar summary (same endpoint the chip uses)

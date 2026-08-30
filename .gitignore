@@ -40,3 +40,6 @@ build/
 # subcircuit resolution. The runner cleans them up; this line guards
 # against a crashed run leaving one behind.
 dlc_row_*.dig
+
+# First-run tutor marker (per-install; a fresh download resets it)
+.dlc_tutor_done

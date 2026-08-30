@@ -1,8 +1,6 @@
-/* Layer 3 coach tab styles — companion to l3.js; loaded after
-   style.css so it can rely on its variables (--panel, --border,
-   --muted). Kept separate so L3 UI rounds ship small files. */
-
-/* --- Layer 3 coach tab: mirror pane + two boards -------- */
+/*# ───────────────────────────────────────────────────────────────────
+  *#  Layer 3 coach tab: mirror pane + mode A + mode B boards
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 .l3-layout {
   display: grid;
@@ -89,7 +87,9 @@
 
 .l3-board-foot { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-/* Mode A model picker — same visual weight as a ghost button */
+/*# ───────────────────────────────────────────────────────────────────
+  *#  Mode A model picker
+  *# ──────────────────────────────────────────────────────────────────#*/
 .l3-model-pick {
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -109,7 +109,9 @@
   font-size: 12px;
   line-height: 1.5;
 }
-/* --- Mode B coverage report (2.5 board render) --------------------------- */
+/*# ───────────────────────────────────────────────────────────────────
+  *#  Mode B coverage report
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 .l3-cov-circuit {
   border: 1px solid var(--border);
@@ -163,7 +165,9 @@
   color: var(--muted);
 }
 .l3-notes li { margin-bottom: 2px; }
-/* --- Mode B proposals + injected-rows panel (2.3 UI + 2.7) ---------------- */
+/*# ───────────────────────────────────────────────────────────────────
+  *#  Mode B proposal board
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 .l3-sec-title {
   font-size: 12px;
@@ -274,7 +278,10 @@
 .l3-rej-pair { margin: 3px 0 5px 0; }
 .l3-rej-pair code { background: #f3f4f6; padding: 0 4px; border-radius: 4px; }
 .l3-rej-pair small { color: #9ca3af; display: block; margin-top: 1px; }
-/* --- Mode A analysis board (hypothesis cards + ladder) -------------------- */
+
+/*# ───────────────────────────────────────────────────────────────────
+  *#  mode A analysis board
+  *# ──────────────────────────────────────────────────────────────────#*/
 .l3-diag { font-size: 12px; color: #904d23; background: #fffbeb;
   border-left: 3px solid #f59e0b; border-radius: 0 6px 6px 0;
   padding: 5px 9px; margin: 0 0 6px 0; }
@@ -301,7 +308,9 @@
 .l3-unv-fail { color: #b91c1c; font-size: 11.5px; font-weight: 600;
   margin-top: 5px; }
 
-/* --- fix walkthrough player ------------------------------------- */
+/*# ───────────────────────────────────────────────────────────────────
+  *#  fix walkthrough player
+  *# ──────────────────────────────────────────────────────────────────#*/
 #l3-anim-pointer {
   position: absolute; z-index: 60; font-size: 22px; color: #b91c1c;
   text-shadow: 0 1px 3px rgba(0,0,0,.35);
@@ -318,9 +327,9 @@
   margin-top: 14px; background: #111827; color: #f9fafb; font-size: 12.5px;
   padding: 5px 14px; border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
-/* error-toast look: light rose card, red
-   circular x icon, bold title over softer body text, thick red
-   underline, dismiss button */
+/*# ───────────────────────────────────────────────────────────────────
+  *#  Error toast 
+  *# ──────────────────────────────────────────────────────────────────#*/
 #l3-diag-board {
   position: absolute; left: 12px; bottom: 12px; z-index: 55; max-width: 46%;
   background: #fdeded; color: #5f2120;

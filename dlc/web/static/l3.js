@@ -1,4 +1,6 @@
-//Layer 3 coach tab
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Layer 3 coach tab
+  *# ──────────────────────────────────────────────────────────────────#*/
 const l3ARunBtn  = document.getElementById("l3-a-run");
 const l3BRunBtn  = document.getElementById("l3-b-run");
 
@@ -385,7 +387,7 @@ function renderL3Boards(file) {
       cls = "ready";
     } else if (n > 0) {
       status = `Scan done: ${n} cell${n === 1 ? "" : "s"} where a test row ` +
-               `and the circuit disagree — details below.`;
+               `and the circuit disagree`;
       cls = "blocked";
     } else if ((rep.select_gate || []).length) {
       status = "Scan done: tests and circuit agree, but some op values " +
@@ -431,8 +433,8 @@ function l3ModeAStatus(res) {
       return { status: "No fix passed the machine re-run — best " +
                "unverified idea below.", cls: "blocked" };
     }
-    return { status: `${n} verified hypothesis card${n === 1 ? "" : "s"} — ` +
-             `every fix below passed the full re-run before you saw it.`,
+    return { status: `${n} verified hypothesis card${n === 1 ? "" : "s"} - ` +
+             `every fix below was Digital.jar verified.`,
              cls: "ready" };
   }
   return { status: res.warning || "Analysis failed.", cls: "blocked" };
@@ -522,7 +524,7 @@ function _l3CardHtml(ma, c) {
         ? _l3AcceptedFixHtml(ma.acceptedFix.body)
         : `<div class="l3-prop-bar">` +
           `<button class="btn" data-l3a-acceptfix="${c.rank}">Accept fix &rarr; temp copy</button>` +
-          `<span class="l3-prop-hint">applies the fix to a TEMP copy only — your file is never touched; the session then coaches the fixed temp</span></div>`) +
+          `<span class="l3-prop-hint">applies the fix to a TEMP copy only, the session then coaches the fixed temp</span></div>`) +
       `</div>`;
   }
   return html + `</div>`;
@@ -651,7 +653,7 @@ function _l3FailingRowsTable(res) {
     if (af) {
       if (af.dataset.armed !== "1") {
         af.dataset.armed = "1";
-        af.textContent = "Click again to confirm — TEMP copy only";
+        af.textContent = "Click again to confirm";
         setTimeout(() => {
           if (af.isConnected) {
             af.dataset.armed = "";
@@ -761,7 +763,7 @@ function _l3FlagCardHtml(f) {
     ? vals + `This is the OFFICIAL course testcase (fingerprint verified) — ` +
       `the row is right, so your circuit is wrong at this output. Run ` +
       `per-row tests, then the Failed-test analysis above.`
-    : vals + `One of them is wrong — or both: the row's expected value may ` +
+    : vals + `One of them is wrong - or both: the row's expected value may ` +
       `be a typo (fix the testcase), the circuit may have a bug at this ` +
       `output (run per-row tests, then the Failed-test analysis above), ` +
       `or both drifted together.`;
@@ -2124,9 +2126,8 @@ function _l3AcceptedFixHtml(body) {
           `<span class="l3-retest-row ${r.status === "passed" ? "ok" : "bad"}">row ${r.index}</span>`).join("") +
         `</div>`
       : "") +
-    `<div class="l3-prop-hint">The session now coaches the FIXED temp: a Mode A ` +
-    `re-run shows these rows passing, and Mode B scans/proposals continue on it. ` +
-    `Apply the same change in Digital, then re-upload your file to make it real.</div></div>`;
+    `<div class="l3-prop-hint">The session now coaches the FIXED temp.` +
+    `Apply the same change in Digital to make it real.</div></div>`;
 }
 
 let l3FixPath = [];

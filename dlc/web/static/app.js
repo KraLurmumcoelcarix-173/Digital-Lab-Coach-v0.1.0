@@ -1,6 +1,7 @@
-/* Digital Lab Coach front end. Loads Cytoscape, handles multi-file
-   uploads, renders signal-flow graph, drives summary + hover popup.
-*/
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Digital Lab Coach front end. Loads Cytoscape, handles multi-file
+  *#  uploads, renders signal-flow graph, drives summary + hover popup.  
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 const GRAPH_LIBS_OK =
   typeof cytoscape !== "undefined" && typeof window.cytoscapeDagre !== "undefined";
@@ -120,7 +121,9 @@ const CY_STYLE = [
       "background-color": "#fee2e2",
     },
   },
-  // --- signal-flow coloring (applied when a test row is clicked) ---------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Signal-flow coloring
+  *# ──────────────────────────────────────────────────────────────────#*/
   // 1-bit wires: bright green = 1, dark green = 0 (no number, like Digital).
   {
     selector: "edge.sig-hi",
@@ -194,7 +197,9 @@ const CY_STYLE = [
       "background-color": "#fee2e2", "label": "data(label)",
     },
   },
-  // --- wire-hover focus: isolate one wire + its value ---------------------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Wire hover focus
+  *# ──────────────────────────────────────────────────────────────────#*/
   // Defined LAST so it wins over the signal-flow opacities above. Hovering a
   // wire fades everything else so an overlapping value stays readable.
   { selector: "edge.hover-dim", style: { "opacity": 0.06 } },
@@ -291,7 +296,9 @@ function logEvent(kind, details = {}) {
 }
 window.dlcEventLog = eventLog;
 
-// --- telemetry sink flush -----------------------------------------------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  telemetry sink flush
+  *# ──────────────────────────────────────────────────────────────────#*/
 // Batch-persist dlcEventLog to /api/telemetry (local SQLite; see
 // dlc/telemetry/sink.py) every 15s and on page hide. Fire-and-forget:
 // telemetry must never affect the app, so failures are swallowed and a
@@ -647,7 +654,10 @@ function renderGraph(graph) {
   });
 }
 
-// --- subcircuit drill-in: view a subcircuit's inner signal flow for the row --
+
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Subcircuit drill-in overlay 
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 function isSubNode(node) {
   const en = node && node.data && node.data("element_name");
@@ -1523,7 +1533,10 @@ function renderTestResults(payload) {
   testsResultsEl.innerHTML = html;
 }
 
-// --- Signal-flow overlay: click a test row to color wires by their value ----
+
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Signal-flow overlay: click a test row to color wires by their value
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 async function showSignalFlowForRow(specIdx, rowIdx, trEl) {
   if (!sessionId || !loaded[currentIdx]) return;
@@ -1555,7 +1568,9 @@ async function showSignalFlowForRow(specIdx, rowIdx, trEl) {
   updateClockHint();
 }
 
-// --- clock tick: step the signal flow through the remaining rows -----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Clock tick: step the signal flow through the remaining rows
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 function circuitHasClock() {
   return !!(cy && cy.nodes('[element_name = "Clock"]').nonempty());
@@ -2447,7 +2462,9 @@ l2LlmBtn.addEventListener("click", async () => {
   else l2EndAbortable();
 });
 
-// ---------- L2 summary grade: credibility donut + hover detail ----------
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  L2 summary grading and donut chart
+  *# ──────────────────────────────────────────────────────────────────#*/
 const GRADE_COLORS = ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4", "#f97316"];
 
 function _bandColor(band) {
@@ -2708,7 +2725,10 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// --- Layer 3 coach tab: moved to l3.js (loaded right after this file). ---
+
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Layer 3 coach tab: moved to l3.js (loaded right after this file)
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 const tabButtons = document.querySelectorAll(".tabs .tab");
 const pages = document.querySelectorAll(".page");
@@ -2741,7 +2761,10 @@ tabButtons.forEach((b) => {
 });
 
 function returnToMain() { showTab("main"); }
-/* --- Net-id overlay toggle (Layer 1 graph) ------------------------------ */
+
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  Net-id overlay toggle (Layer 1 graph)
+  *# ──────────────────────────────────────────────────────────────────#*/
 
 let netIdsOnL1 = false;
 

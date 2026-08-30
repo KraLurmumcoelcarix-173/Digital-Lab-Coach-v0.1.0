@@ -1,0 +1,121 @@
+  /*# ───────────────────────────────────────────────────────────────────
+  *#  First-run guided tour + ?help popup
+  *# ──────────────────────────────────────────────────────────────────#*/
+#tutor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+}
+#tutor-overlay.tutor-dim {
+  background: rgba(15, 23, 42, 0.55);
+}
+#tutor-spot {
+  position: fixed;
+  border: 2px dashed #6366f1;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.55);
+  transition: left 0.25s, top 0.25s, width 0.25s, height 0.25s;
+  pointer-events: none;
+}
+#tutor-card {
+  position: fixed;
+  width: 400px;
+  max-width: 92vw;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.35);
+  padding: 16px 18px 14px 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #1f2937;
+}
+#tutor-card h3 {
+  margin: 2px 0 6px 0;
+  font-size: 16px;
+  color: #312e81;
+}
+#tutor-x {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  font-size: 15px;
+  color: #6b7280;
+  cursor: pointer;
+}
+#tutor-x:hover { color: #111827; }
+#tutor-dots { margin-bottom: 4px; }
+.tutor-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e0e7ff;
+  margin-right: 5px;
+}
+.tutor-dot.on { background: #4f46e5; }
+#tutor-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  gap: 10px;
+}
+#tutor-count { color: #6b7280; font-size: 12px; }
+#tutor-demo-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#tutor-demo-row.hidden { display: none; }
+#tutor-demo-btn {
+  border: 1px solid #4f46e5;
+  background: #eef2ff;
+  color: #3730a3;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#tutor-demo-btn:hover { background: #e0e7ff; }
+#tutor-demo-msg { color: #15803d; font-size: 12px; }
+
+/* the ? button inherits .tab-gear*/
+#tutor-help-btn { font-weight: 700; }
+
+#tutor-help-pop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+#tutor-help-card {
+  position: relative;
+  margin-top: 14vh;
+  width: 360px;
+  max-width: 90vw;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.35);
+  padding: 18px 20px 16px 20px;
+  font-size: 13.5px;
+  color: #1f2937;
+}
+#tutor-help-card h3 { margin: 0 0 6px 0; color: #312e81; }
+#tutor-help-card p { margin: 0 0 12px 0; line-height: 1.5; }
+#tutor-help-x {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  font-size: 15px;
+  color: #6b7280;
+  cursor: pointer;
+}
+#tutor-help-x:hover { color: #111827; }
