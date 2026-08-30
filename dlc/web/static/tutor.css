@@ -359,3 +359,9 @@
   padding: 8px 14px;
   font-size: 13px;
 }
+
+/* row passthrough after the demo test run; extra sample sections */
+#tutor-overlay.tutor-passthrough { pointer-events: none; }
+#tutor-overlay.tutor-passthrough #tutor-card { pointer-events: auto; }
+.ts-acc-amber { border-left-color: #f59e0b; }
+.ts-acc-pink { border-left-color: #ec4899; }

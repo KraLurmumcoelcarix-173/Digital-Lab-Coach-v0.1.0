@@ -94,6 +94,14 @@
       action: { label: "Show a sample result ▸", run: "sampleL3" },
     },
     {
+      title: "Clear all",
+      html: "Done with a lab or want a fresh start? <b>Clear all</b> " +
+        "unloads every uploaded file - your originals on disk are " +
+        "untouched. Try it:",
+      target: "#clear-btn",
+      action: { label: "Clear all ▸", run: "clearall" },
+    },
+    {
       title: "Extra practice — and you're set",
       html: "The <b>K-map</b> tab is a practice page for kmaps.<br/> That's it. The " +
         "<b>?</b> button replays it anytime. Enjoy 311! ✓",
@@ -108,15 +116,18 @@
     '<div id="tutor-sample-library" class="ts-block">' +
     "<h2>Component library</h2>" +
     '<p class="ts-muted">Components present in this circuit. Hover a card to preview.</p>' +
-    '<div class="ts-lib-grid">' +
-    '<div class="ts-lib-card"><div class="ts-lib-ico">⧉</div>Register</div>' +
-    '<div class="ts-lib-card"><div class="ts-lib-ico">＋</div>Adder</div>' +
-    '<div class="ts-lib-card"><span class="ts-lib-badge">30</span><div class="ts-lib-ico">⌗</div>Tunnel (named net)</div>' +
-    '<div class="ts-lib-card"><span class="ts-lib-badge">4</span><div class="ts-lib-ico">01</div>Constant</div>' +
-    '<div class="ts-lib-card"><div class="ts-lib-ico">⎍</div>Clock</div>' +
-    '<div class="ts-lib-card"><div class="ts-lib-ico">▷</div>Multiplexer (MUX)</div>' +
-    '<div class="ts-lib-card"><div class="ts-lib-ico">▤</div>ROM</div>' +
-    '<div class="ts-lib-card"><span class="ts-lib-badge">5</span><div class="ts-lib-ico">⑃</div>Splitter / merger</div>' +
+    '<div class="library-grid" style="max-height:none;">' +
+    '<div class="library-card"><img src="/static/images/components/register.png" alt="Register"/><div class="name">Register</div></div>' +
+    '<div class="library-card"><img src="/static/images/components/adder.png" alt="Adder"/><div class="name">Adder</div></div>' +
+    '<div class="library-card"><span class="count">30</span><img src="/static/images/components/tunnel.png" alt="Tunnel (named net)"/><div class="name">Tunnel (named net)</div></div>' +
+    '<div class="library-card"><span class="count">4</span><img src="/static/images/components/const.png" alt="Constant"/><div class="name">Constant</div></div>' +
+    '<div class="library-card"><img src="/static/images/components/clock.png" alt="Clock"/><div class="name">Clock</div></div>' +
+    '<div class="library-card"><span class="count">2</span><img src="/static/images/components/out.png" alt="Output port"/><div class="name">Output port</div></div>' +
+    '<div class="library-card"><img src="/static/images/components/rom.png" alt="ROM"/><div class="name">ROM</div></div>' +
+    '<div class="library-card"><img src="/static/images/components/subcircuit.png" alt="Subcircuit reference"/><div class="name">Subcircuit reference</div></div>' +
+    '<div class="library-card"><span class="count">5</span><img src="/static/images/components/splitter.png" alt="Splitter / merger"/><div class="name">Splitter / merger</div></div>' +
+    '<div class="library-card"><img src="/static/images/components/bit_extender.png" alt="Bit extender"/><div class="name">Bit extender</div></div>' +
+    '<div class="library-card"><img src="/static/images/components/mux.png" alt="Multiplexer (MUX)"/><div class="name">Multiplexer (MUX)</div></div>' +
     "</div></div>" +
     '<div id="tutor-sample-grade" class="ts-block">' +
     "<h2>Summary grade</h2>" +
@@ -154,6 +165,16 @@
     '<div class="ts-acc-head"><span class="ts-acc-num">3</span>' +
     "<b>Signal flow</b> <span class='ts-muted'><i>Input → output " +
     "paths.</i></span><span class='ts-acc-plus'>+</span></div>" +
+    "</div>" +
+    '<div class="ts-acc ts-acc-amber">' +
+    '<div class="ts-acc-head"><span class="ts-acc-num">4</span>' +
+    "<b>Topology</b> <span class='ts-muted'><i>Fan-in / fan-out and " +
+    "layout hot spots.</i></span><span class='ts-acc-plus'>+</span></div>" +
+    "</div>" +
+    '<div class="ts-acc ts-acc-pink">' +
+    '<div class="ts-acc-head"><span class="ts-acc-num">5</span>' +
+    "<b>Course concepts</b> <span class='ts-muted'><i>Lecture-tag " +
+    "mapping.</i></span><span class='ts-acc-plus'>+</span></div>" +
     "</div>" +
     "</div></div></div>";
 
@@ -358,6 +379,8 @@
     root.querySelector("#tutor-body").innerHTML = step.html;
     root.querySelector("#tutor-act-msg").textContent = "";
     root.classList.toggle("tutor-noexit", !!sample);
+    root.classList.toggle("tutor-passthrough",
+      !sample && !detour && !!(step.altTargetWhenDone && testsDone));
     root.querySelector("#tutor-back").style.display = sample ? "none" : "";
 
     const actRow = root.querySelector("#tutor-act-row");
@@ -373,8 +396,7 @@
 
     if (sample) {
       const n = SAMPLES[sample.key].steps.length;
-      root.querySelector("#tutor-count").textContent =
-        "sample " + (sample.i + 1) + " / " + n;
+      root.querySelector("#tutor-count").textContent = "";
       root.querySelector("#tutor-dots").innerHTML = "";
       root.querySelector("#tutor-next").textContent =
         sample.i >= n - 1 ? "Back to the tour ▸" : "Next";
@@ -442,6 +464,21 @@
     else if (act.run === "runtests") runTestsDetour();
     else if (act.run === "sampleL2") enterSample("sampleL2");
     else if (act.run === "sampleL3") enterSample("sampleL3");
+    else if (act.run === "clearall") clearAllAction();
+  }
+
+  function clearAllAction() {
+    const btn = document.getElementById("clear-btn");
+    if (!btn || btn.disabled) { msg("nothing to clear"); return; }
+    // The app confirms before wiping; inside the tour the button IS the
+    // confirmation, so auto-accept for this one click.
+    const orig = window.confirm;
+    window.confirm = function () { return true; };
+    try { btn.click(); } finally { window.confirm = orig; }
+    testsDone = false;
+    demo2Done = false;
+    msg("cleared ✓");
+    setTimeout(place, 450);
   }
 
   function msg(t) { root.querySelector("#tutor-act-msg").textContent = t; }
@@ -503,22 +540,17 @@
     detour = "jar";
     root.style.display = "none";
     chip.click();
-    function maybeDone() {
-      // Save keeps the modal open on a bad path — only return once it
-      // is actually hidden.
-      setTimeout(function () {
-        if (modal.classList.contains("hidden")) {
-          save.removeEventListener("click", maybeDone);
-          cancel.removeEventListener("click", maybeDone);
-          detour = null;
-          root.style.display = "";
-          idx = 3;
-          render();
-        }
-      }, 350);
-    }
-    save.addEventListener("click", maybeDone);
-    cancel.addEventListener("click", maybeDone);
+    setTimeout(function waitClose() {
+      if (!open) return;
+      if (modal.classList.contains("hidden")) {
+        detour = null;
+        root.style.display = "";
+        idx = 3;
+        render();
+      } else {
+        setTimeout(waitClose, 250);
+      }
+    }, 450);
   }
 
   /* Run-tests detour: the tour vanishes for the 1–2 s the per-row run
@@ -548,7 +580,14 @@
         detour = null;
         testsDone = true;
         root.classList.remove("tutor-ghost");
+        const spotEl = root.querySelector("#tutor-spot");
+        spotEl.style.transition = "none";
         render();
+        setTimeout(place, 250);
+        setTimeout(function () {
+          place();
+          spotEl.style.transition = "";
+        }, 700);
       } else if (Date.now() - t0 > 60000) {
         detour = null;
         root.classList.remove("tutor-ghost");
