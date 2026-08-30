@@ -233,15 +233,22 @@ def tutorial_seen() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-_TUTOR_DEMO = (_APP_ROOT / "data" / "sample_circuits" / "30_bug_benchmark"
-               / "bug3_wrong_cin" / "Wrong_cin.dig")
+_TUTOR_BENCH = _APP_ROOT / "data" / "sample_circuits" / "30_bug_benchmark"
+_TUTOR_DEMOS = {
+    1: ("tutor_demo.dig",
+        _TUTOR_BENCH / "bug3_wrong_cin" / "Wrong_cin.dig"),
+    2: ("tutor_demo2.dig",
+        _TUTOR_BENCH / "bug2_wrong_floating_pipeline_output"
+        / "Wrong_floating_pipeline_output.dig"),
+}
 
 
 @app.get("/api/tutorial/demo")
-def tutorial_demo() -> dict:
+def tutorial_demo(which: int = 1) -> dict:
+    name, path = _TUTOR_DEMOS.get(which, _TUTOR_DEMOS[1])
     try:
-        return {"ok": True, "filename": "tutor_demo.dig",
-                "content": _TUTOR_DEMO.read_text(encoding="utf-8")}
+        return {"ok": True, "filename": name,
+                "content": path.read_text(encoding="utf-8")}
     except OSError as exc:
         return {"ok": False, "filename": None, "content": None,
                 "error": f"demo circuit unavailable: {exc}"}
