@@ -71,10 +71,12 @@
       title: "Layer-3 the AI coach (≈ 30 s – 3 min)",
       html: "<b>Analyze failing rows</b> (Mode A) hypothesizes your " +
         "bug, tests the fix on a copy, and shows it <b>only if the " +
-        "official tests pass</b>, 1 run/day.<br/> If too much fails at once you get " +
+        "official tests pass</b>, 1 run/day.<br/>" +
+        "<br/><br/>" +
+        "If too much fails at once you get " +
         "the <b>wholesale-failure check</b> instead: design-level " +
         "advice, and it costs you <b>no run</b>.<br/>" +
-        "                                                              " +
+        "<br/><br/>" +
         "<b>Coverage coach</b> (Mode B) checks your tests and proposes " +
         "verified new rows. If your test coverage is good enough, mode B" +
         "won't run. Use it if you are interested in understanding tests" +
