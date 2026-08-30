@@ -280,7 +280,7 @@ main {
 
 .hover-popup {
   position: absolute;
-  top: 14px;
+  top: 48px;
   right: 14px;
   width: 290px;
   max-height: calc(100vh - 100px);

@@ -383,3 +383,5 @@
 
 /* while the L3 drill bar shows, the netid button drops below it */
 #l3-graph-pane.l3-drilling #l3-netid-toggle { top: 64px; }
+
+#l3-graph-pane.l3-drilling .hover-popup { top: 102px; }

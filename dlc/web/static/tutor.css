@@ -365,3 +365,9 @@
 #tutor-overlay.tutor-passthrough #tutor-card { pointer-events: auto; }
 .ts-acc-amber { border-left-color: #f59e0b; }
 .ts-acc-pink { border-left-color: #ec4899; }
+
+.tutor-shield { display: none; position: fixed; }
+#tutor-overlay.tutor-passthrough .tutor-shield {
+  display: block;
+  pointer-events: auto;
+}

@@ -238,8 +238,7 @@ _TUTOR_DEMOS = {
     1: ("tutor_demo.dig",
         _TUTOR_BENCH / "bug3_wrong_cin" / "Wrong_cin.dig"),
     2: ("tutor_demo2.dig",
-        _TUTOR_BENCH / "bug2_wrong_floating_pipeline_output"
-        / "Wrong_floating_pipeline_output.dig"),
+        _TUTOR_BENCH / "bug4_missing_pipeline" / "Missing_pipeline.dig"),
 }
 
 

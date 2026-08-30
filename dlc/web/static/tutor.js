@@ -293,6 +293,10 @@
     root.id = "tutor-overlay";
     root.innerHTML =
       '<div id="tutor-spot"></div>' +
+      '<div class="tutor-shield" id="tutor-shield-t"></div>' +
+      '<div class="tutor-shield" id="tutor-shield-b"></div>' +
+      '<div class="tutor-shield" id="tutor-shield-l"></div>' +
+      '<div class="tutor-shield" id="tutor-shield-r"></div>' +
       '<div id="tutor-card">' +
       '  <button id="tutor-x" title="Exit the tour">✕</button>' +
       '  <div id="tutor-dots"></div>' +
@@ -326,6 +330,7 @@
     if (sample) return;               // sample mode: Next is the only exit
     open = false;
     detour = null;
+    if (followTimer) { clearInterval(followTimer); followTimer = null; }
     removeSamplePage();
     if (root) { root.remove(); root = null; }
     window.removeEventListener("resize", onMove);
@@ -338,6 +343,8 @@
     if (root) root.classList.remove("tutor-noexit");
   }
 
+  let followTimer = null;
+
   function start(at) {
     if (open) return;
     idx = at || 0;
@@ -345,6 +352,12 @@
     demo2Done = false;
     build();
     open = true;
+    followTimer = setInterval(function () {
+      if (open && root && !detour &&
+          root.classList.contains("tutor-passthrough")) {
+        place();
+      }
+    }, 600);
     render();
   }
 
@@ -440,6 +453,19 @@
     spot.style.top = (r.top - pad) + "px";
     spot.style.width = (r.width + 2 * pad) + "px";
     spot.style.height = (r.height + 2 * pad) + "px";
+    const x0 = r.left - pad, y0 = r.top - pad;
+    const x1 = r.right + pad, y1 = r.bottom + pad;
+    const sh = function (id, l, t, w, h) {
+      const e = root.querySelector(id);
+      e.style.left = l + "px";
+      e.style.top = t + "px";
+      e.style.width = Math.max(0, w) + "px";
+      e.style.height = Math.max(0, h) + "px";
+    };
+    sh("#tutor-shield-t", 0, 0, window.innerWidth, y0);
+    sh("#tutor-shield-b", 0, y1, window.innerWidth, window.innerHeight - y1);
+    sh("#tutor-shield-l", 0, y0, x0, y1 - y0);
+    sh("#tutor-shield-r", x1, y0, window.innerWidth - x1, y1 - y0);
     card.style.transform = "none";
     const cw = 400;
     const left = Math.min(Math.max(12, r.left), window.innerWidth - cw - 12);
