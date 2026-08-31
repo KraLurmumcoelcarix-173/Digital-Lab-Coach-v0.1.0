@@ -502,10 +502,10 @@ COMPONENT_KB: dict[str, dict] = {
         "description": (
             "Voltage-controlled switch: the channel conducts while the "
             "gate is HIGH and opens while it is LOW. The workhorse of "
-            "pull-down networks — it passes a strong 0 toward Ground "
+            "pull-down networks - it passes a strong 0 toward Ground "
             "but only a degraded 1."
         ),
-        "transistor_count": "1 — this IS the transistor",
+        "transistor_count": "1 : this IS the transistor",
         "transistor_note": (
             "Series NFETs conduct only when ALL gates are high (NAND "
             "pull-down); parallel NFETs conduct when ANY gate is high "
@@ -515,9 +515,7 @@ COMPONENT_KB: dict[str, dict] = {
         "extra": {
             "behavior_example": (
                 "gate=1 -> the two channel pins are connected (switch "
-                "closed); gate=0 -> disconnected. In inverter_nmos, "
-                "gate=A=1 shorts the output to Ground: strong 0 beats "
-                "the weak pull-up."
+                "closed); gate=0 -> disconnected."
             ),
             "common_mistakes": (
                 "Leaving the gate unwired (the switch state is "
@@ -537,9 +535,8 @@ COMPONENT_KB: dict[str, dict] = {
         ),
         "transistor_count": "1 — this IS the transistor",
         "transistor_note": (
-            "Parallel PFETs conduct when ANY gate is low (NAND "
-            "pull-up); series PFETs conduct only when ALL gates are "
-            "low (NOR pull-up) — always the dual of the NFET network."
+            "Parallel PFETs conduct when ANY gate is low; series PFETs conduct only when ALL gates are "
+            "low (NOR pull-up)."
         ),
         "port_summary": "1 gate input + 2 channel pins (bidirectional)",
         "extra": {
@@ -561,14 +558,14 @@ COMPONENT_KB: dict[str, dict] = {
         "image": "pullup.png",
         "description": (
             "A WEAK driver that holds its node at 1 while nothing "
-            "stronger drives it; any conducting transistor wins. The "
-            "load device of historical NMOS logic — the output rests "
+            "stronger drives it; The "
+            "load device of historical NMOS logic: the output rests "
             "HIGH until the pull-down network conducts."
         ),
         "transistor_count": "N/A (resistor load)",
         "transistor_note": (
             "Ratioed logic: the low level is a resistor divider, and "
-            "current flows whenever a transistor fights the load — the "
+            "current flows whenever a transistor fights the load, the "
             "static power that CMOS was invented to eliminate."
         ),
         "port_summary": "1 weak output pin",
@@ -591,7 +588,7 @@ COMPONENT_KB: dict[str, dict] = {
         "description": (
             "The mirror of PullUp: a WEAK driver holding its node at 0 "
             "until a conducting transistor overrides it. The load "
-            "device of PMOS-style logic — the output rests LOW until "
+            "device of PMOS-style logic: the output rests LOW until "
             "the pull-up network conducts."
         ),
         "transistor_count": "N/A (resistor load)",
@@ -603,7 +600,7 @@ COMPONENT_KB: dict[str, dict] = {
         "port_summary": "1 weak output pin",
         "extra": {
             "behavior_example": (
-                "nand2_pmos: Y rests at a weak 0 through the PullDown; "
+                "nand2_pmos.dig: Y rests at a weak 0 through the PullDown; "
                 "A=0 or B=0 turns a PFET on and the strong 1 from VDD "
                 "wins — exactly the NAND truth table."
             ),
