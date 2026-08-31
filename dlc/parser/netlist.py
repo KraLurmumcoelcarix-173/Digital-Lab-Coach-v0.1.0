@@ -37,7 +37,9 @@ IMPLICIT_PIN_RADIUS = 500
 _SUBCIRCUIT_DEFAULT_WIDTH_GRID = 3  # Digital's default custom-shape width:
 # a child with no Width attribute renders 3 grid units (60 px) wide
 # (verified against Digital's own SVG export of such instances).
-NO_SIGNAL_ELEMENTS = {"Testcase", "Rectangle"}
+NO_SIGNAL_ELEMENTS = {"Testcase", "Rectangle", "Text"}
+
+SWITCH_CHANNEL_ELEMENTS = {"NFET", "PFET"}
 
 class _UnionFind:
     """
@@ -106,6 +108,15 @@ class Net:
     def sinks(self) -> list:
         return [p for p in self.pins if p.direction == "in"]
 
+    def possible_drivers(self) -> list:
+        return [
+            p for p in self.pins
+            if p.direction == "out"
+            or p.direction == "weak"
+            or (p.direction == "bidir"
+                and p.element_name in SWITCH_CHANNEL_ELEMENTS)
+        ]
+
 
 @dataclass
 class NetList:
@@ -122,9 +133,9 @@ class NetList:
         return self.nets[nid]
 
     def summary(self) -> str:
-        n_with_driver = sum(1 for net in self.nets if net.drivers())
+        n_with_driver = sum(1 for net in self.nets if net.possible_drivers())
         n_no_driver = sum(
-            1 for net in self.nets if net.pins and not net.drivers()
+            1 for net in self.nets if net.pins and not net.possible_drivers()
         )
         n_multi_driver = sum(1 for net in self.nets if len(net.drivers()) > 1)
         return (
@@ -257,7 +268,7 @@ def _assign_endpoints_to_pins(
             dx = abs(px - ep[0])
             dy = abs(py - ep[1])
             d = dx + dy
-            if spec.direction in ("in", "bidir"):
+            if spec.direction in ("in", "bidir", "weak"):
                 if dx > 0 or dy > 20:
                     continue
             else:

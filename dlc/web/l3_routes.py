@@ -24,6 +24,50 @@ from dlc.testing.spec import extract_test_specs
 router = APIRouter()
 
 
+_SWITCH_LEVEL_ELEMENTS = frozenset({"NFET", "PFET", "PullUp", "PullDown"})
+
+
+def _switch_level_elements_in(circuit, seen=None) -> set[str]:
+    """Element names from _SWITCH_LEVEL_ELEMENTS found in the circuit or
+    any resolved subcircuit (cycle-safe via the visited-id set)."""
+    if seen is None:
+        seen = set()
+    if id(circuit) in seen:
+        return set()
+    seen.add(id(circuit))
+    found = {
+        c.element_name for c in circuit.components
+        if c.element_name in _SWITCH_LEVEL_ELEMENTS
+    }
+    for sub in circuit.subcircuits:
+        if sub.child_circuit is not None:
+            found |= _switch_level_elements_in(sub.child_circuit, seen)
+    return found
+
+
+def _transistor_guard(path: str) -> dict | None:
+    try:
+        circuit = parse_dig_file(path)
+    except Exception:
+        return None
+    found = sorted(_switch_level_elements_in(circuit))
+    if not found:
+        return None
+    return {
+        "ok": False,
+        "unsupported": True,
+        "warning": (
+            "DLC does not support transistor labs yet — this circuit "
+            "contains switch-level elements ("
+            + ", ".join(found)
+            + "). Both Layer-3 modes reason at gate level, so they sit "
+            "this one out. Use the Dashboard checks, the Library tab, "
+            "and Digital's own simulation/tests for tier-2.5 labs; "
+            "switch-level coaching is planned for a later release."
+        ),
+    }
+
+
 class CoverageRequest(BaseModel):
     session_id: str
     filename: str
@@ -43,6 +87,9 @@ def l3_coverage(req: CoverageRequest) -> dict:
     if (_lt and _lt.get("for") == req.filename and _lt.get("path")
             and os.path.exists(_lt["path"])):
         scan_path, on_temp = _lt["path"], True
+    guard = _transistor_guard(scan_path)
+    if guard is not None:
+        return guard
     if not limits.allowed("modeB"):
         return {
             "ok": False,
@@ -91,6 +138,9 @@ def l3_propose(req: ProposeRequest) -> dict:
     if (_lt and _lt.get("for") == req.filename and _lt.get("path")
             and os.path.exists(_lt["path"])):
         prop_path = _lt["path"]
+    guard = _transistor_guard(prop_path)
+    if guard is not None:
+        return {**guard, "proposals": [], "rejected": [], "notes": []}
     try:
         result = proposer.propose_rows(prop_path, model=req.model)
     except Exception as exc:
@@ -308,6 +358,9 @@ def llm_debug(req: DebugRequest) -> dict:
     from dlc.web import server
 
     target = server._resolve_target(req.session_id, req.filename)
+    guard = _transistor_guard(target["path"])
+    if guard is not None:
+        return {**guard, "mode": "unsupported", "cards": []}
     if not limits.allowed("modeA"):
         return {
             "ok": False,

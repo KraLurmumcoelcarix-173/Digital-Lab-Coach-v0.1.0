@@ -36,8 +36,13 @@ _FAMILY_BY_ELEMENT: dict[str, str] = {
     "Splitter": "splitter",
     "Register": "storage",
     "ROM": "storage",
+    "NFET": "switch",
+    "PFET": "switch",
+    "PullUp": "switch",
+    "PullDown": "switch",
     "Testcase": "annotation",
     "Rectangle": "annotation",
+    "Text": "annotation",
 }
 
 _FAMILY_DISPLAY: dict[str, str] = {
@@ -52,6 +57,7 @@ _FAMILY_DISPLAY: dict[str, str] = {
     "subcircuit": "SUBCIRCUIT",
     "const": "CONSTANT",
     "clock": "CLOCK",
+    "switch": "TRANSISTOR",
     "other": "OTHER",
 }
 
@@ -248,7 +254,7 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
 def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
     inventory: dict[str, int] = {}
     for comp in circuit.components:
-        if comp.element_name in ("Testcase", "Rectangle"):
+        if comp.element_name in ("Testcase", "Rectangle", "Text"):
             continue
         inventory[comp.element_name] = inventory.get(comp.element_name, 0) + 1
 
@@ -269,9 +275,9 @@ def circuit_summary(circuit: Circuit, netlist: NetList) -> dict:
         for sub in circuit.subcircuits
     ]
 
-    n_driven = sum(1 for n in netlist.nets if n.drivers())
+    n_driven = sum(1 for n in netlist.nets if n.possible_drivers())
     n_undriven_with_pins = sum(
-        1 for n in netlist.nets if n.pins and not n.drivers()
+        1 for n in netlist.nets if n.pins and not n.possible_drivers()
     )
     n_multi = sum(1 for n in netlist.nets if len(n.drivers()) > 1)
 

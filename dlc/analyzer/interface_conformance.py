@@ -65,7 +65,7 @@ def _check_dangling_subcircuit_inputs(
                 ))
                 continue
             pin, net = entry
-            if not net.drivers():
+            if not net.possible_drivers():
                 out.append(Issue(
                     kind="dangling_subcircuit_input",
                     severity=IssueSeverity.ERROR,

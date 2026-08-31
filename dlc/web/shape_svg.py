@@ -10,7 +10,8 @@ _FAMILY_FILL = {
     "io-in": "#cfe5ff", "io-out": "#ffdcb3", "gate": "#b9e4c1",
     "arith": "#f4b9b9", "mux": "#d8c4ef", "splitter": "#f1ea9a",
     "storage": "#d3d3d3", "tunnel": "#f7d7e8", "subcircuit": "#ffc1c1",
-    "const": "#dfdfdf", "clock": "#dfdfdf", "other": "#e9ecef",
+    "const": "#dfdfdf", "clock": "#dfdfdf", "switch": "#c9e8e4",
+    "other": "#e9ecef",
 }
 _STROKE = "#334155"
 
@@ -391,6 +392,67 @@ def _vdd_svg(comp, fill) -> dict:
     return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
 
 
+def _fet_svg(comp, fill, *, p_type: bool) -> dict:
+    """
+    MOSFET symbol: gate lead + gate plate on the left (bubble marks the
+    PFET's active-low gate), heavier channel plate beside it, channel
+    leads to the right edge top/bottom — matching the pin table's
+    g / top-channel / bottom-channel layout.
+    """
+    w, h = 46, 64
+    ty, by = 14.0, h - 14.0
+    mid = h / 2
+    gx, cx = 18, 26
+    parts = []
+    if p_type:
+        parts.append(_stub(0, mid, gx - 8, mid))
+        parts.append(_bubble(gx - 4.4, mid))
+    else:
+        parts.append(_stub(0, mid, gx, mid))
+    parts.append(f'<line x1="{gx}" y1="{ty + 4}" x2="{gx}" y2="{by - 4}" '
+                 f'stroke="{_STROKE}" stroke-width="1.8"/>')
+    parts.append(f'<line x1="{cx}" y1="{ty}" x2="{cx}" y2="{by}" '
+                 f'stroke="{_STROKE}" stroke-width="2.4"/>')
+    parts.append(_stub(cx, ty, w, ty))
+    parts.append(_stub(cx, by, w, by))
+    parts.append(f'<text x="{cx + 7}" y="{mid + 4}" font-size="11" '
+                 f'font-family="ui-monospace,monospace" fill="{_STROKE}">'
+                 f'{"P" if p_type else "N"}</text>')
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h,
+            "tier": "glyph"}
+
+
+def _pull_svg(comp, fill, *, up: bool) -> dict:
+    """
+    Resistor load: rail mark on one end (VDD bar for PullUp, Ground
+    hatches for PullDown), resistor box, node lead on the other end.
+    """
+    w, h = 40, 58
+    cx = w / 2
+    rx, rw = cx - 7, 14
+    r_top, r_bot = 18.0, 40.0
+    parts = [f'<rect x="{rx}" y="{r_top}" width="{rw}" '
+             f'height="{r_bot - r_top}" fill="{fill}" stroke="{_STROKE}" '
+             f'stroke-width="1.6"/>']
+    if up:
+        parts.append(f'<line x1="{cx - 11}" y1="6" x2="{cx + 11}" y2="6" '
+                     f'stroke="{_STROKE}" stroke-width="1.8"/>')
+        parts.append(_stub(cx, 6, cx, r_top))
+        parts.append(_stub(cx, r_bot, cx, h - 6))
+        parts.append(_dot(cx, h - 6))
+    else:
+        parts.append(_dot(cx, 6))
+        parts.append(_stub(cx, 6, cx, r_top))
+        parts.append(_stub(cx, r_bot, cx, h - 12))
+        for i, half in enumerate((10, 6, 2)):
+            y = h - 11 + i * 4
+            parts.append(f'<line x1="{cx - half}" y1="{y}" '
+                         f'x2="{cx + half}" y2="{y}" stroke="{_STROKE}" '
+                         f'stroke-width="1.7"/>')
+    return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h,
+            "tier": "glyph"}
+
+
 def _clock_svg(comp, fill) -> dict:
     w, h = 58, 34
     mid = h / 2
@@ -444,17 +506,11 @@ def _box_with_pins(comp, fill, *, label="", symbol="", clock_pin=None,
 
 
 def _bitextender_svg(comp, fill) -> dict:
-    # narrow (in) -> wide (out) trapezoid, showing the width growth
     w, h = 60, 40
     parts = [f'<path d="M16,16 L46,6 L46,{h-6} L16,{h-16} Z" '
              f'fill="{fill}" stroke="{_STROKE}" stroke-width="1.6"/>',
              _stub(0, h / 2, 16, h / 2), _stub(46, h / 2, w, h / 2)]
     return {"svg": _data_uri(_svg(w, h, "".join(parts))), "w": w, "h": h, "tier": "glyph"}
-
-
-# --------------------------------------------------------------------------
-# Public dispatch
-# --------------------------------------------------------------------------
 
 def _ep(xf: float, yf: float) -> str:
     """A glyph-local (xf, yf) fraction -> Cytoscape endpoint, relative to the
@@ -463,15 +519,6 @@ def _ep(xf: float, yf: float) -> str:
 
 
 def port_endpoints(comp: Component, w: int, h: int) -> dict:
-    """
-    Map each pin name to a Cytoscape edge endpoint aligned with the glyph's
-    drawn port stub, so wires meet the ports instead of the bounding box.
-
-    Inputs sit on the left edge, outputs on the right, mux/`sel`-style pins on
-    the bottom; Ground/VDD drive from top/bottom. Positions mirror the
-    _even_ys layout the draw functions use (exact for gates/boxes, within a
-    pixel or two for mux/splitter). Seven-seg keeps the default endpoint.
-    """
     name = comp.element_name
     if name == "Seven-Seg":
         return {}
@@ -485,6 +532,18 @@ def port_endpoints(comp: Component, w: int, h: int) -> dict:
         return {pins[0].name: _ep(0.5, 0.12)}
     if name == "VDD":
         return {pins[0].name: _ep(0.5, 0.88)}
+    if name in ("NFET", "PFET"):
+        out = {}
+        for p in pins:
+            if p.direction == "in":
+                out[p.name] = _ep(0.02, 0.5)
+            else:
+                out[p.name] = _ep(0.98, 0.22 if p.offset_y == 0 else 0.78)
+        return out
+    if name == "PullUp":
+        return {pins[0].name: _ep(0.5, 0.9)}
+    if name == "PullDown":
+        return {pins[0].name: _ep(0.5, 0.1)}
 
     margin = (12.0 / h) if h else 0.2
 
@@ -553,6 +612,14 @@ def _draw_glyph(comp: Component, fill: str, name: str) -> dict | None:
             return _vdd_svg(comp, fill)
         if name == "Clock":
             return _clock_svg(comp, fill)
+        if name == "NFET":
+            return _fet_svg(comp, fill, p_type=False)
+        if name == "PFET":
+            return _fet_svg(comp, fill, p_type=True)
+        if name == "PullUp":
+            return _pull_svg(comp, fill, up=True)
+        if name == "PullDown":
+            return _pull_svg(comp, fill, up=False)
         if name == "Register":
             return _box_with_pins(comp, fill, label="reg", clock_pin="C")
         if name == "Add":

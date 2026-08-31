@@ -273,7 +273,7 @@ def _pin_dict(circuit: Circuit, pin: Pin) -> dict:
 
 def _net_anomalies(net: Net, has_width_conflict: bool) -> list[str]:
     tags: list[str] = []
-    if net.pins and not net.drivers():
+    if net.pins and not net.possible_drivers():
         tags.append("undriven")
         if all(p.direction == "in" for p in net.pins):
             tags.append("dangling_input")
@@ -390,7 +390,7 @@ def _collect_bugs(
     bugs: list[BugFact] = []
 
     for net in netlist.nets:
-        if net.pins and not net.drivers():
+        if net.pins and not net.possible_drivers():
             sink_pins = [p for p in net.pins if p.direction == "in"]
             if sink_pins:
                 descs = [_pin_descriptor(circuit, p) for p in sink_pins]

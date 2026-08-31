@@ -119,8 +119,33 @@ def _subcircuit_compact(s: dict) -> dict:
     return out
 
 
-def _compact_facts(facts: dict) -> dict:
+_SWITCH_LEVEL_ELEMENTS = ("NFET", "PFET", "PullUp", "PullDown")
+
+
+def _switch_level_block(inventory: dict) -> dict | None:
+    present = {k: inventory[k] for k in _SWITCH_LEVEL_ELEMENTS
+               if k in (inventory or {})}
+    if not present:
+        return None
     return {
+        "elements": present,
+        "semantics": (
+            "Switch-level (transistor) circuit. An NFET conducts while "
+            "its gate is 1; a PFET conducts while its gate is 0. "
+            "PullUp/PullDown are WEAK drivers setting a node's resting "
+            "value; any conducting transistor overrides them. FET "
+            "channel pins appear as 'bidir' in the net facts, and the "
+            "directed topology graph does not trace through channels — "
+            "reason about signal flow from the nets, not the graph."
+        ),
+    }
+
+
+def _compact_facts(facts: dict) -> dict:
+    switch_level = _switch_level_block(facts.get("inventory", {}) or {})
+    extra = {"switch_level": switch_level} if switch_level else {}
+    return {
+        **extra,
         "inventory": facts.get("inventory", {}),
         "inputs": [_io_compact(p) for p in facts.get("inputs", [])],
         "outputs": [_io_compact(p) for p in facts.get("outputs", [])],

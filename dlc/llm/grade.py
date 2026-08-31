@@ -56,6 +56,10 @@ _ELEMENT_TERMS = {
     "NOr": ["nor"],
     "XNOr": ["xnor"],
     "Clock": ["clock"],
+    "NFET": ["nfet", "nmos", "n-channel", "n-type"],
+    "PFET": ["pfet", "pmos", "p-channel", "p-type"],
+    "PullUp": ["pull-up", "pullup", "pull up"],
+    "PullDown": ["pull-down", "pulldown", "pull down"],
 }
 
 

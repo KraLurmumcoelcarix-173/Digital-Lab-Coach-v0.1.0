@@ -40,6 +40,19 @@ _CLOCK_PINS = [PinSpec("clk", 0, 0, "out")]
 _GROUND_PINS = [PinSpec("out", 0, 0, "out")]
 _VDD_PINS = [PinSpec("out", 0, 0, "out")]
 
+# Switch-level devices (tier 2.5 transistor labs)
+_PFET_PINS = [
+    PinSpec("g", offset_x=0,  offset_y=0,  direction="in"),
+    PinSpec("s", offset_x=20, offset_y=0,  direction="bidir"),
+    PinSpec("d", offset_x=20, offset_y=40, direction="bidir"),
+]
+_NFET_PINS = [
+    PinSpec("g", offset_x=0,  offset_y=40, direction="in"),
+    PinSpec("d", offset_x=20, offset_y=0,  direction="bidir"),
+    PinSpec("s", offset_x=20, offset_y=40, direction="bidir"),
+]
+_PULL_PINS = [PinSpec("out", 0, 0, "weak")]
+
 _ADD_PINS = [
     PinSpec("a",   0,  0,  "in"),
     PinSpec("b",   0,  20, "in"),
@@ -103,6 +116,10 @@ STATIC_PIN_TABLE: dict[str, list[PinSpec]] = {
     "ROM":    _ROM_PINS,
     "RegisterFile": _REGISTER_FILE_PINS,
     "Seven-Seg": _SEVEN_SEG_PINS,
+    "PFET":     _PFET_PINS,
+    "NFET":     _NFET_PINS,
+    "PullUp":   _PULL_PINS,
+    "PullDown": _PULL_PINS,
 }
 
 _NARY_GATE_ELEMENTS = frozenset({"And", "Or", "XOr", "NAnd", "NOr", "XNOr"})

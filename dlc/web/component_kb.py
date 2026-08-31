@@ -496,6 +496,125 @@ COMPONENT_KB: dict[str, dict] = {
             ),
         },
     },
+    "NFET": {
+        "display_name": "NFET (N-channel MOSFET)",
+        "image": "nfet.png",
+        "description": (
+            "Voltage-controlled switch: the channel conducts while the "
+            "gate is HIGH and opens while it is LOW. The workhorse of "
+            "pull-down networks — it passes a strong 0 toward Ground "
+            "but only a degraded 1."
+        ),
+        "transistor_count": "1 — this IS the transistor",
+        "transistor_note": (
+            "Series NFETs conduct only when ALL gates are high (NAND "
+            "pull-down); parallel NFETs conduct when ANY gate is high "
+            "(NOR pull-down)."
+        ),
+        "port_summary": "1 gate input + 2 channel pins (bidirectional)",
+        "extra": {
+            "behavior_example": (
+                "gate=1 -> the two channel pins are connected (switch "
+                "closed); gate=0 -> disconnected. In inverter_nmos, "
+                "gate=A=1 shorts the output to Ground: strong 0 beats "
+                "the weak pull-up."
+            ),
+            "common_mistakes": (
+                "Leaving the gate unwired (the switch state is "
+                "undefined), or using an NFET to pass a 1 upward — "
+                "N-channel devices hand that job to the PFET half."
+            ),
+        },
+    },
+    "PFET": {
+        "display_name": "PFET (P-channel MOSFET)",
+        "image": "pfet.png",
+        "description": (
+            "The complementary switch: conducts while the gate is LOW "
+            "(the bubble on the gate marks the active-low behavior). "
+            "Builds pull-up networks — it passes a strong 1 from VDD "
+            "but only a degraded 0."
+        ),
+        "transistor_count": "1 — this IS the transistor",
+        "transistor_note": (
+            "Parallel PFETs conduct when ANY gate is low (NAND "
+            "pull-up); series PFETs conduct only when ALL gates are "
+            "low (NOR pull-up) — always the dual of the NFET network."
+        ),
+        "port_summary": "1 gate input + 2 channel pins (bidirectional)",
+        "extra": {
+            "behavior_example": (
+                "gate=0 -> channel conducts; gate=1 -> open. In "
+                "inverter_cmos, A=0 turns the PFET on and drives Y=1 "
+                "while the NFET is safely off."
+            ),
+            "common_mistakes": (
+                "Reading the PFET as active-high (it is the opposite), "
+                "or building both networks from the same gate polarity "
+                "so PFET and NFET conduct together and short VDD to "
+                "Ground."
+            ),
+        },
+    },
+    "PullUp": {
+        "display_name": "Pull-up resistor (weak 1)",
+        "image": "pullup.png",
+        "description": (
+            "A WEAK driver that holds its node at 1 while nothing "
+            "stronger drives it; any conducting transistor wins. The "
+            "load device of historical NMOS logic — the output rests "
+            "HIGH until the pull-down network conducts."
+        ),
+        "transistor_count": "N/A (resistor load)",
+        "transistor_note": (
+            "Ratioed logic: the low level is a resistor divider, and "
+            "current flows whenever a transistor fights the load — the "
+            "static power that CMOS was invented to eliminate."
+        ),
+        "port_summary": "1 weak output pin",
+        "extra": {
+            "behavior_example": (
+                "nor2_nmos: Y rests at a weak 1 through the PullUp; "
+                "either NFET turning on shorts Y to Ground and the "
+                "strong 0 wins."
+            ),
+            "common_mistakes": (
+                "Expecting the pull-up to win against a conducting "
+                "FET (it never does), or omitting it so the output "
+                "floats whenever every transistor is off."
+            ),
+        },
+    },
+    "PullDown": {
+        "display_name": "Pull-down resistor (weak 0)",
+        "image": "pulldown.png",
+        "description": (
+            "The mirror of PullUp: a WEAK driver holding its node at 0 "
+            "until a conducting transistor overrides it. The load "
+            "device of PMOS-style logic — the output rests LOW until "
+            "the pull-up network conducts."
+        ),
+        "transistor_count": "N/A (resistor load)",
+        "transistor_note": (
+            "Same ratioed-logic story as PullUp, mirrored: static "
+            "current flows while a PFET holds the node HIGH against "
+            "the load."
+        ),
+        "port_summary": "1 weak output pin",
+        "extra": {
+            "behavior_example": (
+                "nand2_pmos: Y rests at a weak 0 through the PullDown; "
+                "A=0 or B=0 turns a PFET on and the strong 1 from VDD "
+                "wins — exactly the NAND truth table."
+            ),
+            "common_mistakes": (
+                "Confusing it with Ground (Ground is a STRONG 0 and "
+                "would short against the PFETs), or expecting it to "
+                "sink a conducting pull-up network."
+            ),
+        },
+    },
+
     "Seven-Seg": {
         "display_name": "Seven-segment display",
         "image": "seven_seg.png",
@@ -517,7 +636,7 @@ COMPONENT_KB: dict[str, dict] = {
 }
 
 
-ANNOTATION_TYPES = {"Testcase", "Rectangle"}
+ANNOTATION_TYPES = {"Testcase", "Rectangle", "Text"}
 
 
 def library_for_inventory(inventory: dict) -> list[dict]:

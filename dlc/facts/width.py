@@ -145,8 +145,11 @@ def pin_width(component: Component, pin_name: str) -> int | None:
     
     if e == "Tunnel":
         return None
-    
-    if e in ("Testcase", "Rectangle"):
+
+    if e in ("NFET", "PFET", "PullUp", "PullDown"):
+        return _bits(component)
+
+    if e in ("Testcase", "Rectangle", "Text"):
         return None
     
     if e.endswith(".dig"):
