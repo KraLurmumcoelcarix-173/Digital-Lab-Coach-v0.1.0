@@ -500,27 +500,29 @@ COMPONENT_KB: dict[str, dict] = {
         "display_name": "NMOS transistor",
         "image": "nmos.png",
         "description": (
-            "Voltage-controlled switch: the channel conducts while the "
-            "gate is HIGH and opens while it is LOW. The workhorse of "
-            "pull-down networks - it passes a strong 0 toward Ground "
-            "but only a degraded 1."
+            "A switch controlled by voltage. Gate = 1 connects the two "
+            "channel pins; gate = 0 disconnects them. NMOS transistors "
+            "pass a strong 0, so they build the paths that pull an "
+            "output down to Ground."
         ),
-        "transistor_count": "1 : this IS the transistor",
+        "transistor_count": "1 (this IS the transistor)",
         "transistor_note": (
-            "Series NFETs conduct only when ALL gates are high (NAND "
-            "pull-down); parallel NFETs conduct when ANY gate is high "
-            "(NOR pull-down)."
+            "In series: all gates must be 1 for the path to conduct "
+            "(NAND pull-down). In parallel: any one gate at 1 is "
+            "enough (NOR pull-down)."
         ),
         "port_summary": "1 gate input + 2 channel pins (bidirectional)",
         "extra": {
             "behavior_example": (
-                "gate=1 -> the two channel pins are connected (switch "
-                "closed); gate=0 -> disconnected."
+                "In inverter_nmos: when A = 1 the NMOS turns on and "
+                "connects Y to Ground, so Y = 0. When A = 0 it turns "
+                "off, nothing drives Y, and the pull-up resistor sets "
+                "Y = 1."
             ),
             "common_mistakes": (
-                "Leaving the gate unwired (the switch state is "
-                "undefined), or using an NFET to pass a 1 upward — "
-                "N-channel devices hand that job to the PFET half."
+                "Leaving the gate unwired, so the switch state is "
+                "unknown. Using an NMOS to pass a 1: that job belongs "
+                "to the PMOS transistor."
             ),
         },
     },
@@ -528,28 +530,28 @@ COMPONENT_KB: dict[str, dict] = {
         "display_name": "PMOS transistor",
         "image": "pmos.png",
         "description": (
-            "The complementary switch: conducts while the gate is LOW "
-            "(the bubble on the gate marks the active-low behavior). "
-            "Builds pull-up networks — it passes a strong 1 from VDD "
-            "but only a degraded 0."
+            "The opposite switch: gate = 0 connects the two channel "
+            "pins; gate = 1 disconnects them. The small circle on the "
+            "gate is the reminder. PMOS transistors pass a strong 1, "
+            "so they build the paths that pull an output up to VDD."
         ),
-        "transistor_count": "1 — this IS the transistor",
+        "transistor_count": "1 (this IS the transistor)",
         "transistor_note": (
-            "Parallel PFETs conduct when ANY gate is low; series PFETs conduct only when ALL gates are "
-            "low (NOR pull-up)."
+            "In parallel: any one gate at 0 conducts (NAND pull-up). "
+            "In series: all gates must be 0 (NOR pull-up). The PMOS "
+            "network is always the mirror of the NMOS network."
         ),
         "port_summary": "1 gate input + 2 channel pins (bidirectional)",
         "extra": {
             "behavior_example": (
-                "gate=0 -> channel conducts; gate=1 -> open. In "
-                "inverter_cmos, A=0 turns the PFET on and drives Y=1 "
-                "while the NFET is safely off."
+                "In inverter_cmos: when A = 0 the PMOS turns on and "
+                "connects Y to VDD, so Y = 1. The NMOS is off at the "
+                "same time, so there is no path to Ground."
             ),
             "common_mistakes": (
-                "Reading the PFET as active-high (it is the opposite), "
-                "or building both networks from the same gate polarity "
-                "so PFET and NFET conduct together and short VDD to "
-                "Ground."
+                "Reading it as active-high like an NMOS (it is the "
+                "opposite). Wiring the two networks so both conduct at "
+                "once, which connects VDD straight to Ground."
             ),
         },
     },
@@ -557,28 +559,29 @@ COMPONENT_KB: dict[str, dict] = {
         "display_name": "Pull-up resistor (weak 1)",
         "image": "pullup.png",
         "description": (
-            "A WEAK driver that holds its node at 1 while nothing "
-            "stronger drives it; The "
-            "load device of historical NMOS logic: the output rests "
-            "HIGH until the pull-down network conducts."
+            "A weak driver. It holds its wire at 1 only while no "
+            "transistor is driving that wire. Any transistor that "
+            "turns on is stronger and sets the value instead. This "
+            "was the load device of old NMOS chips."
         ),
         "transistor_count": "N/A (resistor load)",
         "transistor_note": (
-            "Ratioed logic: the low level is a resistor divider, and "
-            "current flows whenever a transistor fights the load, the "
-            "static power that CMOS was invented to eliminate."
+            "While a transistor holds the output at 0, current keeps "
+            "flowing through the resistor. That wasted power is the "
+            "main reason CMOS replaced this style."
         ),
         "port_summary": "1 weak output pin",
         "extra": {
             "behavior_example": (
-                "nor2_nmos: Y rests at a weak 1 through the PullUp; "
-                "either NFET turning on shorts Y to Ground and the "
-                "strong 0 wins."
+                "In nor2_nmos: when A = 0 and B = 0, both NMOS are "
+                "off, so the pull-up sets Y = 1. When A = 1 or B = 1, "
+                "that NMOS turns on and connects Y to Ground, so "
+                "Y = 0. That is exactly NOR."
             ),
             "common_mistakes": (
-                "Expecting the pull-up to win against a conducting "
-                "FET (it never does), or omitting it so the output "
-                "floats whenever every transistor is off."
+                "Expecting it to beat a conducting transistor (it "
+                "never does). Forgetting it, so the output floats "
+                "when every transistor is off."
             ),
         },
     },
@@ -586,28 +589,28 @@ COMPONENT_KB: dict[str, dict] = {
         "display_name": "Pull-down resistor (weak 0)",
         "image": "pulldown.png",
         "description": (
-            "The mirror of PullUp: a WEAK driver holding its node at 0 "
-            "until a conducting transistor overrides it. The load "
-            "device of PMOS-style logic: the output rests LOW until "
-            "the pull-up network conducts."
+            "The mirror of PullUp: a weak driver that holds its wire "
+            "at 0 only while no transistor is driving it. Used as the "
+            "load in PMOS style labs."
         ),
         "transistor_count": "N/A (resistor load)",
         "transistor_note": (
-            "Same ratioed-logic story as PullUp, mirrored: static "
-            "current flows while a PFET holds the node HIGH against "
-            "the load."
+            "Same wasted power story as PullUp, mirrored: current "
+            "keeps flowing while a PMOS holds the output at 1 against "
+            "the resistor."
         ),
         "port_summary": "1 weak output pin",
         "extra": {
             "behavior_example": (
-                "nand2_pmos.dig: Y rests at a weak 0 through the PullDown; "
-                "A=0 or B=0 turns a PFET on and the strong 1 from VDD "
-                "wins — exactly the NAND truth table."
+                "In nand2_pmos: when A = 1 and B = 1, both PMOS are "
+                "off, so the pull-down sets Y = 0. When A = 0 or "
+                "B = 0, that PMOS turns on and connects Y to VDD, so "
+                "Y = 1. That is exactly NAND."
             ),
             "common_mistakes": (
-                "Confusing it with Ground (Ground is a STRONG 0 and "
-                "would short against the PFETs), or expecting it to "
-                "sink a conducting pull-up network."
+                "Confusing it with Ground. Ground drives a strong 0 "
+                "all the time and would fight the transistors. The "
+                "pull-down only sets the resting value."
             ),
         },
     },

@@ -56,15 +56,7 @@ def _transistor_guard(path: str) -> dict | None:
     return {
         "ok": False,
         "unsupported": True,
-        "warning": (
-            "DLC does not support transistor labs yet — this circuit "
-            "contains switch-level elements ("
-            + ", ".join(found)
-            + "). Both Layer-3 modes reason at gate level, so they sit "
-            "this one out. Use the Dashboard checks, the Library tab, "
-            "and Digital's own simulation/tests for tier-2.5 labs; "
-            "switch-level coaching is planned for a later release."
-        ),
+        "warning": "DLC does not support transistor labs yet.",
     }
 
 

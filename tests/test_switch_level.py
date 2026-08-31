@@ -212,3 +212,56 @@ def test_gate_level_files_are_not_guarded():
         "/api/l3/coverage", json={"session_id": sid, "filename": name},
     ).json()
     assert out.get("unsupported") is not True
+
+
+def _cytoscape_for(path):
+    from dlc.parser.graph import build_signal_graph
+    from dlc.web.graph_export import to_cytoscape
+    c = parse_dig_file(path)
+    nl = build_netlist(c)
+    g = build_signal_graph(c, nl)
+    return to_cytoscape(c, nl, g)
+
+
+def test_cytoscape_connects_every_switch_level_node():
+    payload = _cytoscape_for(f"{TLAB_DIR}/nand2_pmos.dig")
+    touched = set()
+    for e in payload["edges"]:
+        touched.add(e["data"]["source"])
+        touched.add(e["data"]["target"])
+    isolated = [
+        n["data"]["element_name"] for n in payload["nodes"]
+        if n["data"]["id"] not in touched
+    ]
+    assert isolated == [], f"floating nodes on the canvas: {isolated}"
+    assert any(e["data"].get("wire") for e in payload["edges"])
+
+
+def test_cytoscape_halfadder_has_no_floating_nodes():
+    payload = _cytoscape_for(f"{TLAB_DIR}/halfadder_mix.dig")
+    touched = set()
+    for e in payload["edges"]:
+        touched.add(e["data"]["source"])
+        touched.add(e["data"]["target"])
+    isolated = [
+        n["data"]["element_name"] for n in payload["nodes"]
+        if n["data"]["id"] not in touched
+    ]
+    assert isolated == [], f"floating nodes on the canvas: {isolated}"
+
+
+def test_cytoscape_gate_level_payload_carries_no_wire_edges():
+    gate_files = sorted(glob.glob("data/sample_circuits/tier1_minimal/*.dig"))
+    assert gate_files
+    for path in gate_files:
+        payload = _cytoscape_for(path)
+        assert not any(e["data"].get("wire") for e in payload["edges"]), path
+
+
+def test_l3_guard_message_is_one_short_sentence(uploaded_transistor_session):
+    client, sid = uploaded_transistor_session
+    out = client.post(
+        "/api/l3/coverage",
+        json={"session_id": sid, "filename": "inverter_cmos.dig"},
+    ).json()
+    assert out["warning"] == "DLC does not support transistor labs yet."

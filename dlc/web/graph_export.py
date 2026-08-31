@@ -4,7 +4,7 @@ Cytoscape.js consumes for rendering.
 """
 
 from dlc.parser.models import Circuit
-from dlc.parser.netlist import NetList
+from dlc.parser.netlist import NetList, SWITCH_CHANNEL_ELEMENTS
 from dlc.facts.width import pin_width
 from dlc.facts.net_width import infer_net_widths
 from dlc.parser.pin_geometry import inverted_input_names
@@ -252,6 +252,67 @@ def to_cytoscape(circuit: Circuit, netlist: NetList, graph) -> dict:
                 edata["te"] = te
             edges.append({"data": edata})
             edge_id += 1
+
+    covered_by_net: dict = {}
+    for u, v, data in graph.edges(data=True):
+        nid = data.get("net_id")
+        if nid is not None:
+            covered_by_net.setdefault(nid, set()).update((u, v))
+
+    for net in netlist.nets:
+        has_switch = any(
+            p.direction == "weak"
+            or (p.direction == "bidir"
+                and p.element_name in SWITCH_CHANNEL_ELEMENTS)
+            for p in net.pins
+        )
+        if not has_switch:
+            continue
+        cov = covered_by_net.get(net.net_id, set())
+        ordered = []
+        seen_comp = set(cov)
+        for p in sorted(net.pins, key=lambda p: (p.x, p.y)):
+            if p.component_index in seen_comp:
+                continue
+            if p.element_name == "Tunnel":
+                continue
+            seen_comp.add(p.component_index)
+            ordered.append(p)
+        if not ordered:
+            continue
+        info = per_net.get(net.net_id)
+        bits = info.width if info is not None else None
+        if cov:
+            driver_anchors = sorted(
+                p.component_index for p in net.drivers()
+                if p.component_index in cov
+            )
+            anchor = driver_anchors[0] if driver_anchors else min(cov)
+            prev_id, prev_pin = str(anchor), ""
+            start = 0
+        else:
+            prev_id, prev_pin = str(ordered[0].component_index), ordered[0].pin_name
+            start = 1
+        for p in ordered[start:]:
+            edata = {
+                "id": f"e{edge_id}",
+                "source": prev_id,
+                "target": str(p.component_index),
+                "net_id": net.net_id,
+                "driver_pin": prev_pin,
+                "sink_pin": p.pin_name,
+                "bits": bits,
+                "wire": 1,
+            }
+            se = node_ports.get(prev_id, {}).get(prev_pin)
+            te = node_ports.get(str(p.component_index), {}).get(p.pin_name)
+            if se:
+                edata["se"] = se
+            if te:
+                edata["te"] = te
+            edges.append({"data": edata})
+            edge_id += 1
+            prev_id, prev_pin = str(p.component_index), p.pin_name
 
     return {"nodes": nodes, "edges": edges}
 

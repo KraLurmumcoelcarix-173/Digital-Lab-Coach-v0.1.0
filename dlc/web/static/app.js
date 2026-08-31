@@ -85,6 +85,8 @@ const CY_STYLE = [
   // provided one), so arrows meet the ports instead of the bounding box.
   { selector: "edge[se]", style: { "source-endpoint": "data(se)" } },
   { selector: "edge[te]", style: { "target-endpoint": "data(te)" } },
+  // Switch-level net wiring: plain wires with no arrowhead, like Digital
+  { selector: "edge[wire]", style: { "target-arrow-shape": "none" } },
   { selector: "edge.faded", style: { "opacity": 0.1 } },
   {
     selector: "edge.highlight",
