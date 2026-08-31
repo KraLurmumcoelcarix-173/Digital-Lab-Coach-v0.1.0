@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<circuit>
+<version>2</version>
+<attributes/>
+<visualElements><visualElement><elementName>NFET</elementName><elementAttributes><entry><string>Label</string><string>NA</string></entry></elementAttributes><pos x="200" y="440"/></visualElement><visualElement><elementName>NFET</elementName><elementAttributes><entry><string>Label</string><string>NB</string></entry></elementAttributes><pos x="320" y="440"/></visualElement><visualElement><elementName>PullUp</elementName><elementAttributes/><pos x="220" y="360"/></visualElement><visualElement><elementName>Ground</elementName><elementAttributes/><pos x="280" y="520"/></visualElement><visualElement><elementName>In</elementName><elementAttributes><entry><string>Label</string><string>A</string></entry></elementAttributes><pos x="120" y="480"/></visualElement><visualElement><elementName>In</elementName><elementAttributes><entry><string>Label</string><string>B</string></entry></elementAttributes><pos x="120" y="560"/></visualElement><visualElement><elementName>Out</elementName><elementAttributes><entry><string>Label</string><string>Y</string></entry></elementAttributes><pos x="420" y="400"/></visualElement><visualElement><elementName>Testcase</elementName><elementAttributes><entry><string>Testdata</string><testData><dataString>A B Y
+0 0 1
+0 1 0
+1 0 0
+1 1 0</dataString></testData></entry></elementAttributes><pos x="420" y="500"/></visualElement></visualElements>
+<wires><wire><p1 x="120" y="480"/><p2 x="200" y="480"/></wire><wire><p1 x="120" y="560"/><p2 x="300" y="560"/></wire><wire><p1 x="300" y="480"/><p2 x="300" y="560"/></wire><wire><p1 x="300" y="480"/><p2 x="320" y="480"/></wire><wire><p1 x="220" y="360"/><p2 x="220" y="400"/></wire><wire><p1 x="220" y="400"/><p2 x="220" y="440"/></wire><wire><p1 x="340" y="400"/><p2 x="340" y="440"/></wire><wire><p1 x="220" y="400"/><p2 x="340" y="400"/></wire><wire><p1 x="340" y="400"/><p2 x="420" y="400"/></wire><wire><p1 x="220" y="480"/><p2 x="220" y="500"/></wire><wire><p1 x="340" y="480"/><p2 x="340" y="500"/></wire><wire><p1 x="220" y="500"/><p2 x="280" y="500"/></wire><wire><p1 x="280" y="500"/><p2 x="340" y="500"/></wire><wire><p1 x="280" y="500"/><p2 x="280" y="520"/></wire></wires>
+<measurementOrdering/>
+</circuit>
