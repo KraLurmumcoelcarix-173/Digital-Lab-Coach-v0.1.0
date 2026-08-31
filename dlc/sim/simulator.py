@@ -358,11 +358,19 @@ def simulate(
     child_by_index = _build_child_by_index(circuit)
     have_unmodeled = set()
 
-    def set_net(nid: int, val: int) -> bool:
+    net_strength: dict[int, str] = {}
+
+    def set_net(nid: int, val: int, strength: str = "strong") -> bool:
+        cur = net_strength.get(nid)
         if nid in net_values:
-            return False
+            if not (strength == "strong" and cur == "weak"):
+                return False
         bits = result.net_bits.get(nid)
-        net_values[nid] = (val & _mask(bits)) if bits else val
+        v = (val & _mask(bits)) if bits else val
+        if nid in net_values and net_values[nid] == v and cur == strength:
+            return False
+        net_values[nid] = v
+        net_strength[nid] = strength
         return True
 
     def pin_net(idx: int, pin_name: str) -> int | None:
@@ -389,6 +397,85 @@ def simulate(
             q_net = pin_net(idx, "Q")
             if q_net is not None:
                 set_net(q_net, reg_state(idx))
+
+    fet_idxs = [i for i, c in enumerate(circuit.components)
+                if c.element_name in ("NFET", "PFET")]
+    pull_idxs = [i for i, c in enumerate(circuit.components)
+                 if c.element_name in ("PullUp", "PullDown")]
+
+    def _switch_pass() -> bool:
+        if not fet_idxs and not pull_idxs:
+            return False
+        changed = False
+        parent: dict[int, int] = {}
+
+        def find(x: int) -> int:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        member_nets: set[int] = set()
+        for i in fet_idxs:
+            comp = circuit.components[i]
+            nets = {name: nid for name, _d, nid in comp_pins.get(i, [])}
+            a, b = nets.get("d"), nets.get("s")
+            if a is not None:
+                member_nets.add(a)
+            if b is not None:
+                member_nets.add(b)
+            g = nets.get("g")
+            if g is None or g not in net_values or a is None or b is None:
+                continue
+            gv = net_values[g]
+            on = (gv != 0) if comp.element_name == "NFET" else (gv == 0)
+            if on:
+                union(a, b)
+
+        weak_by_net: dict[int, int] = {}
+        for i in pull_idxs:
+            comp = circuit.components[i]
+            bits = max(1, _as_int(comp.attributes.get("Bits", 1), 1))
+            weak_val = _mask(bits) if comp.element_name == "PullUp" else 0
+            for _name, _d, nid in comp_pins.get(i, []):
+                member_nets.add(nid)
+                weak_by_net[nid] = weak_val
+
+        groups: dict[int, list[int]] = defaultdict(list)
+        for nid in member_nets:
+            groups[find(nid)].append(nid)
+
+        for members in groups.values():
+            strong_vals = {
+                net_values[n] for n in members
+                if n in net_values and net_strength.get(n) == "strong"
+            }
+            if len(strong_vals) == 1:
+                v = strong_vals.pop()
+                for n in members:
+                    if set_net(n, v):
+                        changed = True
+                continue
+            if strong_vals:
+                continue
+            weak_vals = {weak_by_net[n] for n in members if n in weak_by_net}
+            weak_vals |= {
+                net_values[n] for n in members
+                if n in net_values and net_strength.get(n) == "weak"
+            }
+            if len(weak_vals) == 1:
+                v = weak_vals.pop()
+                for n in members:
+                    if n not in net_values:
+                        if set_net(n, v, strength="weak"):
+                            changed = True
+        return changed
 
     max_iters = len(circuit.components) + 4
     sub_cache: dict[int, tuple] = {}
@@ -459,6 +546,8 @@ def simulate(
                 if direction == "out" and name in outs:
                     if set_net(nid, outs[name]):
                         changed = True
+        if _switch_pass():
+            changed = True
         if not changed:
             break
     has_register = False

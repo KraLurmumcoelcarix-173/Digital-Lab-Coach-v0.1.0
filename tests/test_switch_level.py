@@ -265,3 +265,81 @@ def test_l3_guard_message_is_one_short_sentence(uploaded_transistor_session):
         json={"session_id": sid, "filename": "inverter_cmos.dig"},
     ).json()
     assert out["warning"] == "DLC does not support transistor labs yet."
+
+@pytest.mark.parametrize("dig_path", TLAB)
+def test_simulator_matches_embedded_truth_table(dig_path):
+    from dlc.parser.graph import build_signal_graph
+    from dlc.sim.simulator import simulate, inputs_for_row
+    from dlc.testing.spec import extract_test_specs, match_variables_to_io
+
+    c = parse_dig_file(dig_path)
+    nl = build_netlist(c)
+    g = build_signal_graph(c, nl)
+    spec = extract_test_specs(c)[0]
+    bindings = match_variables_to_io(spec.headers, c)
+    checked = 0
+    for row in spec.rows:
+        if row.is_malformed:
+            continue
+        res = simulate(c, nl, g, inputs_for_row(c, spec.headers, row))
+        for col, header in enumerate(spec.headers):
+            b = bindings.get(header)
+            if b is None or b.role != "output":
+                continue
+            tok = row.values[col] if col < len(row.values) else None
+            if getattr(tok, "kind", None) != "int" or tok.value is None:
+                continue
+            got = res.output_values.get(header)
+            assert got == tok.value, (
+                f"{dig_path} row {row.line_index}: {header} "
+                f"expected {tok.value}, simulated {got}"
+            )
+            checked += 1
+    assert checked > 0
+
+
+def test_simulator_resolves_weak_then_strong(tmp_path):
+    """nor2_nmos: A=0,B=0 leaves the weak pull-up 1; A=1 shorts to a
+    strong Ground 0 through the conducting NFET."""
+    from dlc.parser.graph import build_signal_graph
+    from dlc.sim.simulator import simulate
+
+    c = parse_dig_file(f"{TLAB_DIR}/nor2_nmos.dig")
+    nl = build_netlist(c)
+    g = build_signal_graph(c, nl)
+    assert simulate(c, nl, g, {"A": 0, "B": 0}).output_values["Y"] == 1
+    assert simulate(c, nl, g, {"A": 1, "B": 0}).output_values["Y"] == 0
+
+
+def _set_bits(root, element, bits):
+    for ve in root.iter("visualElement"):
+        if ve.findtext("elementName") == element:
+            attrs = ve.find("elementAttributes")
+            entry = etree.SubElement(attrs, "entry")
+            etree.SubElement(entry, "string").text = "Bits"
+            etree.SubElement(entry, "int").text = str(bits)
+            return True
+    return False
+
+
+def test_wide_vdd_into_transistor_is_a_width_mismatch(tmp_path):
+    t = etree.parse(f"{TLAB_DIR}/inverter_cmos.dig")
+    assert _set_bits(t.getroot(), "VDD", 4)
+    p = tmp_path / "wide_vdd.dig"
+    t.write(str(p))
+    kinds = _issue_kinds(p)
+    assert "width_mismatch" in kinds
+
+
+def test_wide_pullup_is_a_width_mismatch(tmp_path):
+    t = etree.parse(f"{TLAB_DIR}/nor2_nmos.dig")
+    assert _set_bits(t.getroot(), "PullUp", 4)
+    p = tmp_path / "wide_pull.dig"
+    t.write(str(p))
+    assert "width_mismatch" in _issue_kinds(p)
+
+
+def test_clean_labs_have_no_width_issues():
+    for path in TLAB:
+        issues = check_all_l1_deep(parse_dig_file(path))
+        assert not issues.by_kind("width_mismatch"), path

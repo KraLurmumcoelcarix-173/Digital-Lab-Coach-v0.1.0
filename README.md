@@ -159,6 +159,19 @@ whole-server daily circuit breaker (`DLC_GLOBAL_DAILY_CALLS`, default
 
 refer to [docs/RELEASE_GUIDE.md](docs/RELEASE_GUIDE.md) for more info.
 
+### Adapting the course syllabus (Layer 2 lecture tags)
+
+Layer 2 cites lectures from one hard-coded list. When your syllabus
+changes (or you fork DLC for another course):
+
+1. Edit `SYLLABUS_311` near the top of
+   [`dlc/llm/explain.py`](dlc/llm/explain.py): one line per lecture,
+   in the form `Lecture N: topic`. Both the Layer 2 summary and its
+   grader tag lectures against this list.
+2. Optional: the course name "UNC COMP 311" also appears in the prompt
+   headers under [`prompts/`](prompts/) and in `dlc/llm/explain.py`.
+3. Restart the server.
+
 ### The admin dashboard
 
 Open `http://<proxy-host>:8321/admin/view`, enter the admin token once:

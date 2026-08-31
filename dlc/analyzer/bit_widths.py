@@ -109,6 +109,63 @@ def _check_driver_sink_width_mismatch(
     return out
 
 
+def _check_switch_net_widths(
+    circuit: Circuit, netlist: NetList
+) -> list[Issue]:
+    out: list[Issue] = []
+    for net in netlist.nets:
+        pins = [p for p in net.pins if p.element_name != "Tunnel"]
+        if not any(p.direction in ("bidir", "weak") for p in pins):
+            continue
+        widths = []
+        for p in pins:
+            w = _pin_width_with_subcircuit(circuit, p)
+            if w is not None:
+                widths.append((w, p))
+        if len(widths) < 2:
+            continue
+        widths.sort(key=lambda t: (t[1].direction != "out",
+                                   t[1].component_index))
+        base_w, base_p = widths[0]
+        for w, p in widths[1:]:
+            if w == base_w:
+                continue
+            if (p.direction not in ("bidir", "weak")
+                    and base_p.direction not in ("bidir", "weak")):
+                continue
+            b_name = _component_display_name(
+                circuit.components[base_p.component_index],
+                base_p.component_index)
+            p_name = _component_display_name(
+                circuit.components[p.component_index], p.component_index)
+            out.append(Issue(
+                kind="width_mismatch",
+                severity=IssueSeverity.ERROR,
+                title=(
+                    f"Bit-width mismatch on a transistor net: "
+                    f"{b_name}.{base_p.pin_name} vs {p_name}.{p.pin_name}"
+                ),
+                message=(
+                    f"{b_name}.{base_p.pin_name} is {base_w}-bit but "
+                    f"{p_name}.{p.pin_name} on the same wire is {w}-bit. "
+                    f"Every rail, transistor and resistor sharing a wire "
+                    f"must use the same Bits value; Digital will refuse "
+                    f"to simulate this net."
+                ),
+                component_indices=[base_p.component_index,
+                                   p.component_index],
+                location=(p.x, p.y),
+                net_id=net.net_id,
+                suggested_fix=(
+                    "Open each component's attributes and set the same "
+                    "Bits value on both (transistor labs normally use "
+                    "1 bit everywhere)."
+                ),
+            ))
+            break
+    return out
+
+
 def check_bit_widths(
     circuit: Circuit,
     netlist: NetList | None = None,
@@ -122,4 +179,5 @@ def check_bit_widths(
     issues = IssueCollection()
     issues.extend(_check_driver_width_conflicts(circuit, facts))
     issues.extend(_check_driver_sink_width_mismatch(circuit, netlist))
+    issues.extend(_check_switch_net_widths(circuit, netlist))
     return issues
