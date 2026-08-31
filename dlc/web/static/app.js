@@ -439,7 +439,7 @@ function resetDashboard() {
   testAllPanel.classList.add("hidden");
   placeholder.classList.remove("hidden");
   placeholder.innerHTML =
-    `No circuit loaded. Add a .dig file from the toolbar ` +
+    `No circuit loaded. Add a <code>.dig</code> file from the toolbar ` +
     `above &mdash; multiple files (parent + subcircuits) supported.`;
   summaryEl.innerHTML = `<span class="muted">No file loaded.</span>`;
   issuesListEl.innerHTML = `<span class="muted">No file loaded.</span>`;
@@ -2225,7 +2225,7 @@ window.addEventListener("keydown", (e) => {
 const NO_REAL_IMAGE = new Set([
   "bit_extender.png", "decoder.png", "in.png", "out.png", "register.png",
   "seven_seg.png", "splitter.png", "subcircuit.png", "tunnel.png",
-  "nfet.png", "pfet.png", "pullup.png", "pulldown.png",
+  "nmos.png", "pmos.png", "pullup.png", "pulldown.png",
 ]);
 
 const REAL_CAPTIONS = {

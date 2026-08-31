@@ -79,6 +79,10 @@ def _node_display_label(idx: int, comp) -> str:
     if comp.element_name == "Const":
         value = comp.attributes.get("Value", 0)
         return f"Const({value})\n[{idx}]"
+    if comp.element_name == "NFET":
+        return f"NMOS\n[{idx}]"
+    if comp.element_name == "PFET":
+        return f"PMOS\n[{idx}]"
     return f"{comp.element_name}\n[{idx}]"
 
 

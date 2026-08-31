@@ -16,7 +16,7 @@ from dlc.web.component_kb import library_for_inventory
 TLAB_DIR = "data/sample_circuits/tier2.5_transistor"
 TLAB = sorted(glob.glob(f"{TLAB_DIR}/*.dig"))
 
-SWITCH_IMAGES = {"nfet.png", "pfet.png", "pullup.png", "pulldown.png"}
+SWITCH_IMAGES = {"nmos.png", "pmos.png", "pullup.png", "pulldown.png"}
 
 
 def test_transistor_lab_folder_is_present():
@@ -128,6 +128,9 @@ def test_switch_level_components_have_real_library_entries():
         {"NFET": 2, "PFET": 1, "PullUp": 1, "PullDown": 1}
     )
     assert {c["key"] for c in cards} == {"NFET", "PFET", "PullUp", "PullDown"}
+    by_key = {c["key"]: c for c in cards}
+    assert by_key["NFET"]["display_name"] == "NMOS transistor"
+    assert by_key["PFET"]["display_name"] == "PMOS transistor"
     for card in cards:
         assert "No encyclopedia entry" not in card["description"]
         assert card["image"] in SWITCH_IMAGES
@@ -143,6 +146,7 @@ def test_compact_facts_carry_switch_level_semantics():
     block = compact.get("switch_level")
     assert block and block["elements"].get("PFET") == 2
     assert "weak" in block["semantics"].lower()
+    assert "Text" not in compact["inventory"]
 
 @pytest.fixture()
 def uploaded_transistor_session():

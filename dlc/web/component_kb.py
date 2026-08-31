@@ -497,8 +497,8 @@ COMPONENT_KB: dict[str, dict] = {
         },
     },
     "NFET": {
-        "display_name": "NFET (N-channel MOSFET)",
-        "image": "nfet.png",
+        "display_name": "NMOS transistor",
+        "image": "nmos.png",
         "description": (
             "Voltage-controlled switch: the channel conducts while the "
             "gate is HIGH and opens while it is LOW. The workhorse of "
@@ -527,8 +527,8 @@ COMPONENT_KB: dict[str, dict] = {
         },
     },
     "PFET": {
-        "display_name": "PFET (P-channel MOSFET)",
-        "image": "pfet.png",
+        "display_name": "PMOS transistor",
+        "image": "pmos.png",
         "description": (
             "The complementary switch: conducts while the gate is LOW "
             "(the bubble on the gate marks the active-low behavior). "

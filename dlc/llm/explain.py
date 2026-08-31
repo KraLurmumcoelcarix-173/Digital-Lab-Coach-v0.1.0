@@ -142,11 +142,15 @@ def _switch_level_block(inventory: dict) -> dict | None:
 
 
 def _compact_facts(facts: dict) -> dict:
-    switch_level = _switch_level_block(facts.get("inventory", {}) or {})
+    inventory = {
+        k: v for k, v in (facts.get("inventory", {}) or {}).items()
+        if k != "Text"
+    }
+    switch_level = _switch_level_block(inventory)
     extra = {"switch_level": switch_level} if switch_level else {}
     return {
         **extra,
-        "inventory": facts.get("inventory", {}),
+        "inventory": inventory,
         "inputs": [_io_compact(p) for p in facts.get("inputs", [])],
         "outputs": [_io_compact(p) for p in facts.get("outputs", [])],
         "subcircuits": [
