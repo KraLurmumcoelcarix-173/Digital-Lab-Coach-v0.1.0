@@ -194,19 +194,25 @@ def _subcircuit_pin_specs(child) -> list:
         if c.is_input() or c.element_name == "Clock"
     ]
     child_outs = list(child.outputs())
+    symmetric = len(child_outs) == 1
+    n_in = len(child_inputs)
+    out_offs = (n_in // 2) * 20 if symmetric else 0
     pins = []
     for i, child_in in enumerate(child_inputs):
+        y = i * 20
+        if symmetric and n_in % 2 == 0 and i >= n_in // 2:
+            y += 20
         pins.append(PinSpec(
             name=child_in.label or f"in_{i}",
             offset_x=0,
-            offset_y=i * 20,
+            offset_y=y,
             direction="in",
         ))
     for i, child_out in enumerate(child_outs):
         pins.append(PinSpec(
             name=child_out.label or f"out_{i}",
             offset_x=body_width,
-            offset_y=i * 20,
+            offset_y=i * 20 + out_offs,
             direction="out",
         ))
     return pins
