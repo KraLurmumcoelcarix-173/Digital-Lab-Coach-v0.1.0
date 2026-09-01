@@ -24,6 +24,7 @@ student_data/
 *_anonymous.dig
 spring2026_archive/
 ta_archive/
+dlc_proxy.db*
 
 # IDE
 .vscode/
