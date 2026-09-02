@@ -92,6 +92,22 @@ def test_comparator():
     assert sim._eval_comparator(cmp, {"A": 5, "B": 3}) == {"gr": 1, "eq": 0, "le": 0}
     assert sim._eval_comparator(cmp, {"A": 3, "B": 3}) == {"gr": 0, "eq": 1, "le": 0}
 
+
+def test_comparator_signed_two_complement():
+    s = _c("Comparator", Bits=32, Signed=True)
+    assert sim._eval_comparator(s, {"A": 0xFFFFFFFF, "B": 1}) == {
+        "gr": 0, "eq": 0, "le": 1}
+    assert sim._eval_comparator(s, {"A": 1, "B": 0xFFFFFFFF}) == {
+        "gr": 1, "eq": 0, "le": 0}
+    assert sim._eval_comparator(s, {"A": 0xFFFFFFFF, "B": 0xFFFFFFFF}) == {
+        "gr": 0, "eq": 1, "le": 0}
+    u = _c("Comparator", Bits=32)
+    assert sim._eval_comparator(u, {"A": 0xFFFFFFFF, "B": 1}) == {
+        "gr": 1, "eq": 0, "le": 0}
+    s4 = _c("Comparator", Bits=4, Signed=True)
+    assert sim._eval_comparator(s4, {"A": 0b1000, "B": 0b0111}) == {
+        "gr": 0, "eq": 0, "le": 1}
+
 def test_barrel_shifter_left_right_arith_rotate():
     ls = _c("BarrelShifter", Bits=8)
     assert sim._eval_barrel_shifter(ls, {"in": 0x01, "sh": 4}) == {"out": 0x10}

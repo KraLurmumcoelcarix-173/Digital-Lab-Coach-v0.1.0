@@ -338,8 +338,10 @@ an open-source educational circuit simulator (GPL-3.0).
 
 ## Acknowledgement 
 
+Great thanks to UNC 2025 - 2026 Comp 311 team and all 311 instructors
+
 Great thanks to hneemann
 
-Great thanks to UNC 2025 - 2026 Comp 311 team and all 311 instructors
+
 
 

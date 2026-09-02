@@ -197,6 +197,17 @@ def _eval_comparator(comp, in_vals):
     if "A" not in in_vals or "B" not in in_vals:
         return None
     a, b = in_vals["A"], in_vals["B"]
+    if comp.attributes.get("Signed"):
+        # Digital's Signed comparator reads A/B as two's complement at Bits
+        bits = int(comp.attributes.get("Bits", 1) or 1)
+        mask = (1 << bits) - 1
+        top = 1 << (bits - 1)
+        a &= mask
+        b &= mask
+        if a & top:
+            a -= 1 << bits
+        if b & top:
+            b -= 1 << bits
     return {
         "gr": 1 if a > b else 0,
         "eq": 1 if a == b else 0,
