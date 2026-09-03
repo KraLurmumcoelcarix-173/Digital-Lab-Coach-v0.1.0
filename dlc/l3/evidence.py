@@ -11,7 +11,8 @@ from dlc.llm.explain import _compact_facts
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.graph import build_signal_graph
 from dlc.parser.netlist import build_netlist
-from dlc.sim.simulator import SimResult, simulate_sequential
+from dlc.sim import models as formula_models
+from dlc.sim.simulator import SimResult, simulate_rows, simulate_sequential
 from dlc.testing.spec import TestSpec, extract_test_specs, match_variables_to_io
 
 CONTRACT = "l3.debug.v1.1"
@@ -735,6 +736,14 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     bindings = match_variables_to_io(spec.headers, circuit)
     rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
 
+    # Passing subcircuits are replaced by their verified formula models;
+    # the whole testcase is replayed once instead of once per row.
+    resolver = formula_models.resolver_for(circuit, manifest)
+    if resolver.decided:
+        res.notes.append(
+            "subcircuits evaluated as formula models: "
+            + ", ".join(f"{f} → {m}" for f, m in sorted(resolver.decided.items())))
+
     sims: dict[int, SimResult] = {}
     row_mismatch_columns: list[set] | None = None
     row_mismatch_cells: dict[int, list[dict]] | None = None
@@ -742,18 +751,22 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
         failing: list[int] = []
         row_mismatch_columns = []
         row_mismatch_cells = {}
+        try:
+            all_sims = simulate_rows(circuit, netlist, graph, spec,
+                                     model_resolver=resolver)
+        except Exception as exc:
+            res.notes.append(
+                f"evaluator error {type(exc).__name__}: {exc}")
+            all_sims = {}
         for row in spec.rows:
             if row.is_malformed:
                 res.notes.append(
                     f"row {row.line_index} is malformed and was skipped.")
                 continue
-            try:
-                sim = simulate_sequential(circuit, netlist, graph, spec,
-                                          row.line_index)
-            except Exception as exc:
+            sim = all_sims.get(row.line_index)
+            if sim is None:
                 res.notes.append(
-                    f"row {row.line_index}: evaluator error "
-                    f"{type(exc).__name__}: {exc}")
+                    f"row {row.line_index}: evaluator produced no result.")
                 continue
             _outs, mism = _outputs_report(spec, bindings, row, sim)
             if mism:
@@ -764,6 +777,14 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                 row_mismatch_cells[row.line_index] = list(mism)
     else:
         failing = list(failing_indices)
+        try:
+            sims = simulate_rows(circuit, netlist, graph, spec, failing,
+                                 model_resolver=resolver)
+        except Exception as exc:
+            res.notes.append(
+                f"evaluator error {type(exc).__name__}: {exc}; rows are "
+                f"re-evaluated one by one.")
+            sims = {}
         if jar_mismatches:
             sets = [
                 {c.get("column") for c in (jar_mismatches.get(i) or [])

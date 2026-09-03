@@ -17,10 +17,13 @@ Endpoints:
   POST /api/llm/explain        Layer 2 conceptual summary
   POST /api/llm/grade          Layer 2 summary credibility grade
 """
+from collections import OrderedDict
 from pathlib import Path
+import hashlib
 import os
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 
@@ -53,7 +56,7 @@ from dlc.web.component_kb import library_for_inventory
 from dlc.parser.pin_geometry import inverted_input_names
 
 from dlc.testing.spec import extract_test_specs
-from dlc.sim.simulator import simulate_sequential
+from dlc.sim.simulator import RowReplay, simulate_sequential
 from dlc.telemetry.sink import log_events
 from dlc.web.graph_export import circuit_summary, to_cytoscape
 
@@ -970,26 +973,77 @@ def _fmt_output(v, width, signed_hint) -> str:
 
 
 
+_ROW_REPLAYS: "OrderedDict[tuple, dict]" = OrderedDict()
+_ROW_REPLAYS_MAX = 8
+_ROW_REPLAYS_LOCK = threading.Lock()
+
+
+def _tree_digest(path: str, circuit) -> str:
+    paths = [path]
+    seen: set[str] = set()
+
+    def walk(c):
+        for ref in c.subcircuits:
+            p = ref.resolved_path
+            if p and p not in seen and ref.child_circuit is not None:
+                seen.add(p)
+                paths.append(p)
+                walk(ref.child_circuit)
+    walk(circuit)
+    h = hashlib.sha1()
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                h.update(f.read())
+        except OSError:
+            h.update(p.encode())
+    return h.hexdigest()
+
+
+def _row_replay(path: str, spec_index: int) -> dict:
+    circuit = parse_dig_file(path)
+    digest = _tree_digest(path, circuit)
+    key = (path, spec_index)
+    with _ROW_REPLAYS_LOCK:
+        hit = _ROW_REPLAYS.get(key)
+        if hit is not None and hit["digest"] == digest:
+            _ROW_REPLAYS.move_to_end(key)
+            return hit
+    netlist = build_netlist(circuit)
+    graph = build_signal_graph(circuit, netlist)
+    specs = extract_test_specs(circuit)
+    spec = specs[spec_index] if 0 <= spec_index < len(specs) else None
+    entry = {
+        "digest": digest, "circuit": circuit, "netlist": netlist,
+        "graph": graph, "specs": specs, "spec": spec,
+        "replay": RowReplay(circuit, netlist, graph, spec) if spec else None,
+        "lock": threading.Lock(),
+    }
+    with _ROW_REPLAYS_LOCK:
+        _ROW_REPLAYS[key] = entry
+        _ROW_REPLAYS.move_to_end(key)
+        while len(_ROW_REPLAYS) > _ROW_REPLAYS_MAX:
+            _ROW_REPLAYS.popitem(last=False)
+    return entry
+
+
 @app.post("/api/simulate")
 def simulate_row(req: SimulateRequest) -> dict:
-    """Signal-flow values for one clicked test row."""
     target = _resolve_target(req.session_id, req.filename)
     try:
-        circuit = parse_dig_file(target["path"])
-        netlist = build_netlist(circuit)
-        graph = build_signal_graph(circuit, netlist)
+        entry = _row_replay(target["path"], req.spec_index)
     except Exception as exc:
         return {"ok": False, "warning": f"Could not parse circuit: {exc}",
                 "net_values": {}, "outputs": [], "unresolved_nets": []}
-
-    specs = extract_test_specs(circuit)
-    if not specs or req.spec_index >= len(specs):
+    circuit, netlist = entry["circuit"], entry["netlist"]
+    specs, spec = entry["specs"], entry["spec"]
+    if not specs or spec is None:
         return {"ok": False, "warning": "No such testcase in this circuit.",
                 "net_values": {}, "outputs": [], "unresolved_nets": []}
-    spec = specs[req.spec_index]
 
     try:
-        res = simulate_sequential(circuit, netlist, graph, spec, req.row_index)
+        with entry["lock"]:
+            res = entry["replay"].upto(req.row_index)
     except Exception as exc:
         return {"ok": False,
                 "warning": f"Evaluator error: {type(exc).__name__}: {exc}",

@@ -337,6 +337,7 @@ def simulate(
     path: tuple[int, ...] = (),
     capture_path: tuple[int, ...] | None = None,
     capture_box: dict | None = None,
+    model_resolver=None,
     _depth: int = 0,
     _max_depth: int = 16,
 ) -> SimResult:
@@ -536,13 +537,23 @@ def simulate(
                 on_capture_route = (
                     capture_path is not None
                     and capture_path[:len(child_path)] == child_path)
+                model = None
+                if model_resolver is not None and not on_capture_route:
+                    child_c = child_by_index.get(idx)
+                    if child_c is not None:
+                        model = model_resolver(child_c)
                 if (cached is not None and cached[0] == sig
                         and not on_capture_route):
                     outs, child_rn = cached[1], cached[2]
+                elif model is not None:
+                    outs, child_rn = _eval_model(
+                        model, in_vals, state_store.get(child_path), child_path)
+                    sub_cache[idx] = (sig, outs, child_rn)
                 else:
                     outs, child_rn = _eval_subcircuit(
                         comp, idx, in_vals, child_by_index, _depth, _max_depth,
-                        state_store, path, capture_path, capture_box)
+                        state_store, path, capture_path, capture_box,
+                        model_resolver=model_resolver)
                     sub_cache[idx] = (sig, outs, child_rn)
                 if child_rn:
                     result.reg_next.update(child_rn)
@@ -625,6 +636,7 @@ def simulate_sequential(
     *,
     capture_path: tuple[int, ...] | None = None,
     capture_box: dict | None = None,
+    model_resolver=None,
 ) -> SimResult:
     rows = [r for r in spec.rows if not r.is_malformed]
     target = None
@@ -643,14 +655,16 @@ def simulate_sequential(
         clocked = _row_has_clock_edge(circuit, spec.headers, row)
         res = simulate(circuit, netlist, graph, inp, state_store=dict(reg_state),
                        capture_path=None if clocked else cap_path,
-                       capture_box=None if clocked else cap_box)
+                       capture_box=None if clocked else cap_box,
+                       model_resolver=model_resolver)
         if clocked:
             new_state = dict(reg_state)
             new_state.update(res.reg_next)
             reg_state = new_state
             res = simulate(circuit, netlist, graph, inp,
                            state_store=dict(reg_state),
-                           capture_path=cap_path, capture_box=cap_box)
+                           capture_path=cap_path, capture_box=cap_box,
+                           model_resolver=model_resolver)
         return res
 
     result = SimResult()
@@ -662,6 +676,59 @@ def simulate_sequential(
         if is_target:
             break
     return result
+
+
+class RowReplay:
+
+    def __init__(self, circuit, netlist, graph, spec, *, model_resolver=None):
+        self.circuit = circuit
+        self.netlist = netlist
+        self.graph = graph
+        self.spec = spec
+        self.model_resolver = model_resolver
+        self.rows = [r for r in spec.rows if not r.is_malformed]
+        self.results: dict[int, SimResult] = {}
+        self._pos = 0
+        self._reg_state: dict[tuple[int, ...], int] = {}
+
+    def _step(self) -> None:
+        row = self.rows[self._pos]
+        inp = inputs_for_row(self.circuit, self.spec.headers, row)
+        clocked = _row_has_clock_edge(self.circuit, self.spec.headers, row)
+        res = simulate(self.circuit, self.netlist, self.graph, inp,
+                       state_store=dict(self._reg_state),
+                       model_resolver=self.model_resolver)
+        if clocked:
+            new_state = dict(self._reg_state)
+            new_state.update(res.reg_next)
+            self._reg_state = new_state
+            res = simulate(self.circuit, self.netlist, self.graph, inp,
+                           state_store=dict(self._reg_state),
+                           model_resolver=self.model_resolver)
+        self.results[row.line_index] = res
+        self._pos += 1
+
+    def upto(self, row_index: int) -> SimResult:
+        if row_index not in self.results:
+            wanted = any(r.line_index == row_index for r in self.rows)
+            if not wanted:
+                return SimResult()
+            while self._pos < len(self.rows) and row_index not in self.results:
+                self._step()
+        return self.results.get(row_index, SimResult())
+
+
+def simulate_rows(circuit, netlist, graph, spec, row_indices=None, *,
+                  model_resolver=None) -> dict[int, SimResult]:
+    """Post-edge results for `row_indices` (default: every row), one replay."""
+    replay = RowReplay(circuit, netlist, graph, spec,
+                       model_resolver=model_resolver)
+    if row_indices is None:
+        row_indices = [r.line_index for r in replay.rows]
+    if not row_indices:
+        return {}
+    replay.upto(max(row_indices))
+    return {i: replay.results[i] for i in row_indices if i in replay.results}
 
 
 def _row_has_clock_edge(circuit, headers, row) -> bool:
@@ -685,8 +752,17 @@ def _eval_node(comp, idx, in_vals, child_by_index, depth, max_depth):
     return None
 
 
+def _eval_model(model, in_vals, state, child_path):
+    ev = model.evaluate(in_vals, state)
+    if ev is None:
+        return None, {}
+    outs, nxt = ev
+    return outs, ({child_path: nxt} if model.stateful else {})
+
+
 def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
-                     state_store, path, capture_path=None, capture_box=None):
+                     state_store, path, capture_path=None, capture_box=None,
+                     model_resolver=None):
     child = child_by_index.get(idx)
     if child is None or depth >= max_depth:
         return None, {}
@@ -706,6 +782,7 @@ def _eval_subcircuit(comp, idx, in_vals, child_by_index, depth, max_depth,
             state_store=state_store, path=child_path,
             capture_path=capture_path if want else None,
             capture_box=capture_box if want else None,
+            model_resolver=model_resolver,
             _depth=depth + 1, _max_depth=max_depth,
         )
     except Exception:

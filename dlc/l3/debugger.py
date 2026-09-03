@@ -15,7 +15,8 @@ from dlc.llm.guard import sanitize_output
 from dlc.parser.dig_parser import parse_dig_file
 from dlc.parser.graph import build_signal_graph
 from dlc.parser.netlist import build_netlist
-from dlc.sim.simulator import simulate_sequential
+from dlc.sim import models as formula_models
+from dlc.sim.simulator import simulate_rows
 from dlc.testing.runner import find_digital_jar, per_row_run_auto
 from dlc.testing.spec import extract_test_specs, match_variables_to_io
 
@@ -188,7 +189,8 @@ def validate_animation(script: list, n_components: int) -> list[dict]:
     out.append({"act": "retest"})
     return out
 
-def _offline_failing(temp_path: str, spec_name: str) -> tuple[list[int], dict]:
+def _offline_failing(temp_path: str, spec_name: str,
+                     manifest: dict | None = None) -> tuple[list[int], dict]:
     circuit = parse_dig_file(temp_path)
     netlist = build_netlist(circuit)
     graph = build_signal_graph(circuit, netlist)
@@ -196,11 +198,14 @@ def _offline_failing(temp_path: str, spec_name: str) -> tuple[list[int], dict]:
     bindings = match_variables_to_io(spec.headers, circuit)
     failing: list[int] = []
     details: dict[int, list[dict]] = {}
+    resolver = formula_models.resolver_for(circuit, manifest)
+    sims = simulate_rows(circuit, netlist, graph, spec, model_resolver=resolver)
     for row in spec.rows:
         if row.is_malformed:
             continue
-        sim = simulate_sequential(circuit, netlist, graph, spec,
-                                  row.line_index)
+        sim = sims.get(row.line_index)
+        if sim is None:
+            continue
         _outs, mism = ev._outputs_report(spec, bindings, row, sim)
         if mism:
             failing.append(row.line_index)

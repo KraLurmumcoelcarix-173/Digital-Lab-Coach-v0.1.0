@@ -172,6 +172,21 @@ changes (or you fork DLC for another course):
    headers under [`prompts/`](prompts/) and in `dlc/llm/explain.py`.
 3. Restart the server.
 
+### Subcircuits as formula models (Layer 3 Mode A)
+
+Mode A only starts once every subcircuit passes its own tests, so while
+it debugs the top circuit it does not simulate a passing child gate by
+gate — it evaluates the child's **formula model** instead.
+
+There is nothing to configure for the shipped 311 labs: a model is picked by the
+child's interface and is used only after it reproduces every row of that
+child's own testcase. A child without a testcase
+is simulated as drawn. To name, force or switch off a model per file,
+add a `subcircuits` block to the lab manifest — see
+[docs/MANIFEST_GUIDE.md](docs/MANIFEST_GUIDE.md); the same block carries
+the one-line `role` of each subcircuit. Layer 1's signal flow never uses
+models.
+
 ### The admin dashboard
 
 Open `http://<proxy-host>:8321/admin/view`, enter the admin token once:

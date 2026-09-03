@@ -11,6 +11,37 @@
     "boolean-unit.dig",
     "slt-unit.dig"
   ],
+  "subcircuits": {
+    "alu.dig": {
+      "model": "rv32i_alu",
+      "role": "ALU: applies the operation selected by ALUOp to A and B and raises FlagZ when the result is zero."
+    },
+    "control-unit.dig": {
+      "model": "lab5_control",
+      "role": "Control unit: decodes opcode/funct3/funct7 into the datapath's control signals for the eight Lab 5 instructions."
+    },
+    "register-file.dig": {
+      "model": "rv32i_register_file",
+      "role": "Register file: 32 registers read on two ports; writes WriteData into WriteReg on the clock edge when RegWrite is 1 (x0 stays 0)."
+    },
+    "add-sub.dig": {
+      "model": "add_sub",
+      "role": "Adder/subtractor: A plus or minus B with signed-overflow and sign flags."
+    },
+    "bidirectional-shifter.dig": {
+      "model": "bidirectional_shifter",
+      "role": "Shifter: shifts B left, right logical or right arithmetic by A, chosen by Bool."
+    },
+    "boolean-unit.dig": {
+      "model": "boolean_unit",
+      "role": "Boolean unit: bitwise AND, OR, XOR or NOR of A and B, chosen by Bool."
+    },
+    "slt-unit.dig": {
+      "model": "slt_unit",
+      "role": "Set-less-than unit: derives A<B from the subtractor's sign and overflow flags."
+    },
+    "_note": "Layer 3 Mode A treats a passing subcircuit as its formula model instead of simulating it; 'model': 'simulate' forces gate-level simulation. 'role' is the one-line description Layer 2 shows for the subcircuit."
+  },
   "categories": {
     "control-unit.dig": [
       {
