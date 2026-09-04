@@ -110,12 +110,15 @@ clock and observed outputs; the INSTRUCTIONS come from the program ROM
 whose current contents are given as "program_words". New rows alone can
 NEVER exercise a new instruction category there. Instead you may propose a
 PROGRAM EXTENSION by adding to such a group:
-  "program_words": ["<hex word>", ...]     (appended to the ROM, 1..12)
+  "program_words": ["<hex word>", ...]     (added to the ROM, 1..12)
 with EXACTLY one row per word, in order. Rules:
 - Word i and row i pair up: row i is checked on the cycle word i executes,
   AFTER the entire existing program has run and committed (registers start
   at 0 — simulate the existing "program_words" first, then yours, per the
-  lab's ISA, to derive every expected output cell).
+  lab's ISA, to derive every expected output cell). DLC places the words
+  where they execute: appended, or — when the program parks in a
+  jump-to-self halt loop — spliced in right before that loop (the target
+  then carries "program_halt"); write your rows for that position.
 - The target's "program_categories_missing" list is DETERMINISTIC decode
   truth: those lab instruction categories never execute in the current
   program. Close THOSE — one word per missing category is ideal. NEVER

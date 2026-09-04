@@ -88,8 +88,35 @@ def build_targets(report: TreeCoverageReport) -> list[dict]:
                     ex = mf.category_word_examples(m, pc["missing"], words)
                     if ex:
                         target["program_word_examples"] = ex
+            halt = _program_halt_info(m, words, spec) if m else None
+            if halt:
+                target["program_halt"] = halt
         targets.append(target)
     return targets
+
+
+def _program_halt_info(manifest: dict, words: list[int], spec) -> dict | None:
+    from dlc.l3 import manifest as mf
+    h = mf.program_halt_index(manifest, words)
+    if h is None:
+        return None
+    observe = (manifest.get("program_decode") or {}).get("observe") or {}
+    pc_col = observe.get("pc_port")
+    headers = list(spec.headers)
+    rows = [r for r in spec.rows if not r.is_malformed]
+    insert_before = len(rows)
+    if pc_col in headers:
+        col = headers.index(pc_col)
+        for i in range(len(rows) - 1, -1, -1):
+            cells = rows[i].raw.split("#", 1)[0].split()
+            tok = _tokenize(cells[col]) if col < len(cells) else None
+            if tok is not None and tok.kind == "int" and tok.value == 4 * h:
+                insert_before = i
+            else:
+                break
+    return {"insert_at": h, "halt_pc": 4 * h,
+            "insert_before_row": insert_before,
+            "pc_col": pc_col if pc_col in headers else None}
 
 
 def _program_rom_of(circuit) -> tuple[list[int], int] | None:
@@ -277,6 +304,12 @@ def _validate_program_group(
         entry, reason = _ensure_readbacks(entry, t, manifest, existing)
         if entry is None:
             return None, reason
+    halt = t.get("program_halt")
+    if halt:
+        entry = {**entry, "insert_at": halt["insert_at"],
+                 "insert_before_row": halt["insert_before_row"],
+                 "pc_col": halt.get("pc_col"),
+                 "pc_shift": 4 * len(entry["program_words"])}
     return entry, ""
 
 
@@ -287,23 +320,24 @@ def _ensure_readbacks(
     words = [int(w, 16) for w in entry["program_words"]]
     decoded = [mf.decode_program_word(manifest, w) for w in words]
 
-    def _alu(d):
-        return d and d["category"] and d["fields"].get("opcode") in (
-            mf._OPCODE_RTYPE, mf._OPCODE_ITYPE_ALU)
+    def _cls(d):
+        return (mf._CLASS_OF.get(d["fields"].get("opcode"))
+                if d and d["category"] else None)
+
+    def _reads(d, reg):
+        c = _cls(d)
+        return bool(c) and (
+            (c in mf._READS_RS1 and d["fields"].get("rs1") == reg)
+            or (c in mf._READS_RS2 and d["fields"].get("rs2") == reg))
 
     unobserved: list[int] = []
     for i, d in enumerate(decoded):
-        if not _alu(d):
+        if _cls(d) not in mf._WRITES_RD:
             continue
         rd = d["fields"].get("rd") or 0
         if rd == 0:
             continue
-        read_later = any(
-            _alu(d2) and (
-                d2["fields"].get("rs1") == rd
-                or (d2["fields"].get("opcode") == mf._OPCODE_RTYPE
-                    and d2["fields"].get("rs2") == rd))
-            for d2 in decoded[i + 1:])
+        read_later = any(_reads(d2, rd) for d2 in decoded[i + 1:])
         if not read_later and rd not in unobserved:
             unobserved.append(rd)
     if not unobserved:
@@ -319,7 +353,8 @@ def _ensure_readbacks(
                       f"read-back word (addi x0, xN, 0) per result register")
 
     known = mf.constant_registers(
-        manifest, [int(w, 16) for w in t.get("program_words", [])] + words)
+        manifest, [int(w, 16) for w in t.get("program_words", [])] + words,
+        appended=len(words))
     if any(r not in known for r in unobserved):
         return None, (f"the extension writes {regs} without reading the "
                       f"result back, and the read-back value could not be "
@@ -595,20 +630,24 @@ def _replay_gate(valid, rejected, notes, targets, paths):
             continue
         ref_file = ref_dir / g["file"] if ref_dir else None
         on_reference = False
+        splice = ({"insert_at": g["insert_at"],
+                   "insert_before_row": g.get("insert_before_row")}
+                  if g.get("insert_at") is not None else {})
         try:
             if ref_file is not None and ref_file.is_file():
                 try:
                     verdicts = replay_appended_rows(
                         str(ref_file), g["spec_name"], g["rows"],
-                        g.get("program_words"))
+                        g.get("program_words"), **splice)
                     on_reference = True
                 except Exception:
                     verdicts = replay_appended_rows(
                         path, g["spec_name"], g["rows"],
-                        g.get("program_words"))
+                        g.get("program_words"), **splice)
             else:
                 verdicts = replay_appended_rows(
-                    path, g["spec_name"], g["rows"], g.get("program_words"))
+                    path, g["spec_name"], g["rows"], g.get("program_words"),
+                    **splice)
         except Exception:
             kept.append(g)
             continue

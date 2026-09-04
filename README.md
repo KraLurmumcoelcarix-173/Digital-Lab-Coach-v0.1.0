@@ -187,6 +187,10 @@ add a `subcircuits` block to the lab manifest — see
 the one-line `role` of each subcircuit. Layer 1's signal flow never uses
 models.
 
+Two CPU manifests ship: `data/manifests/cpu.json` for the eight-instruction
+Lab 5 subset and `data/manifests/cpu_new.json` for the full 37-instruction
+RV32I CPU (`cpu_new.dig` tree).
+
 ### The admin dashboard
 
 Open `http://<proxy-host>:8321/admin/view`, enter the admin token once:

@@ -529,13 +529,16 @@ def replay_appended_rows(
     spec_name: str,
     appended: list[str],
     rom_words: list[str] | None = None,
+    insert_at: int | None = None,
+    insert_before_row: int | None = None,
 ) -> list[dict]:
     tmp = None
     try:
         if rom_words:
             from dlc.l3.oracle import extend_program_rom_text, parse_program_words
             src = Path(path).read_text(encoding="utf-8")
-            src = extend_program_rom_text(src, parse_program_words(rom_words))
+            src = extend_program_rom_text(src, parse_program_words(rom_words),
+                                          insert_at=insert_at)
             fd, tmp = tempfile.mkstemp(suffix=".dig", prefix="dlc_row_l3_",
                                        dir=str(Path(path).parent))
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -565,9 +568,10 @@ def replay_appended_rows(
                                state_store=dict(reg_state))
             return res
 
-        for row in spec.rows:
-            if row.is_malformed:
-                continue
+        data_rows = [r for r in spec.rows if not r.is_malformed]
+        if insert_at is not None and insert_before_row is not None:
+            data_rows = data_rows[:insert_before_row]
+        for row in data_rows:
             if any(t.kind == "loop_expr" for t in row.values):
                 continue
             run_row(row)

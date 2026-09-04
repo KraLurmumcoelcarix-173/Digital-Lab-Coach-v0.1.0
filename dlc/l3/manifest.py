@@ -38,9 +38,13 @@ def load_manifests() -> list[dict]:
 def find_manifest(filenames: set[str],
                   element_names: set[str] | None = None) -> dict | None:
     manifests = load_manifests()
+    best, best_n = None, 0
     for m in manifests:
-        if filenames & set(m.get("applies_to", [])):
-            return m
+        n = len(filenames & set(m.get("applies_to", [])))
+        if n > best_n:
+            best, best_n = m, n
+    if best is not None:
+        return best
     if element_names:
         for m in manifests:
             hooks = set(m.get("applies_to_elements") or [])
@@ -221,6 +225,61 @@ def program_categories(manifest: dict | None, words: list[int]) -> dict | None:
 
 _OPCODE_RTYPE = 0b0110011
 _OPCODE_ITYPE_ALU = 0b0010011
+_OPCODE_LOAD = 0b0000011
+_OPCODE_STORE = 0b0100011
+_OPCODE_BRANCH = 0b1100011
+_OPCODE_JAL = 0b1101111
+_OPCODE_JALR = 0b1100111
+_OPCODE_LUI = 0b0110111
+_OPCODE_AUIPC = 0b0010111
+
+_CLASS_OF = {
+    _OPCODE_RTYPE: "R", _OPCODE_ITYPE_ALU: "I", _OPCODE_LOAD: "LOAD",
+    _OPCODE_STORE: "STORE", _OPCODE_BRANCH: "BR", _OPCODE_JAL: "JAL",
+    _OPCODE_JALR: "JALR", _OPCODE_LUI: "LUI", _OPCODE_AUIPC: "AUIPC",
+}
+_WRITES_RD = {"R", "I", "LOAD", "JAL", "JALR", "LUI", "AUIPC"}
+_READS_RS1 = {"R", "I", "LOAD", "STORE", "BR", "JALR"}
+_READS_RS2 = {"R", "STORE", "BR"}
+
+
+def _sext(v: int, bits: int) -> int:
+    v &= (1 << bits) - 1
+    return v - (1 << bits) if v & (1 << (bits - 1)) else v
+
+
+def word_immediate(word: int, cls: str) -> int:
+    if cls in ("I", "LOAD", "JALR"):
+        return _sext(word >> 20, 12)
+    if cls == "STORE":
+        return _sext(((word >> 25) << 5) | ((word >> 7) & 0x1F), 12)
+    if cls == "BR":
+        raw = (((word >> 31) & 1) << 12) | (((word >> 7) & 1) << 11) \
+            | (((word >> 25) & 0x3F) << 5) | (((word >> 8) & 0xF) << 1)
+        return _sext(raw, 13)
+    if cls in ("LUI", "AUIPC"):
+        return _sext(word & 0xFFFFF000, 32)
+    if cls == "JAL":
+        raw = (((word >> 31) & 1) << 20) | (((word >> 12) & 0xFF) << 12) \
+            | (((word >> 20) & 1) << 11) | (((word >> 21) & 0x3FF) << 1)
+        return _sext(raw, 21)
+    return 0
+
+
+def _place_immediate(cls: str, imm: int) -> int:
+    if cls in ("I", "LOAD", "JALR"):
+        return (imm & 0xFFF) << 20
+    if cls == "STORE":
+        return (((imm >> 5) & 0x7F) << 25) | ((imm & 0x1F) << 7)
+    if cls == "BR":
+        return ((((imm >> 12) & 1) << 31) | (((imm >> 5) & 0x3F) << 25)
+                | (((imm >> 1) & 0xF) << 8) | (((imm >> 11) & 1) << 7))
+    if cls in ("LUI", "AUIPC"):
+        return imm & 0xFFFFF000
+    if cls == "JAL":
+        return ((((imm >> 20) & 1) << 31) | (((imm >> 1) & 0x3FF) << 21)
+                | (((imm >> 11) & 1) << 20) | (((imm >> 12) & 0xFF) << 12))
+    return 0
 
 
 def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
@@ -229,13 +288,14 @@ def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
         return None
     f = d["fields"]
     op, rd, rs1 = f.get("opcode"), f.get("rd"), f.get("rs1")
-    if op == _OPCODE_RTYPE:
+    cls = _CLASS_OF.get(op)
+    if cls == "R":
         if rs1 == 0 and f.get("rs2") == 0:
             return ("it reads x0 for BOTH operands — every lab instruction "
                     "computes 0 on (0, 0), so the row cannot tell one "
                     "operation from another")
         return None
-    if op == _OPCODE_ITYPE_ALU:
+    if cls == "I":
         if rs1 == 0 and ((word >> 20) & 0xFFF) == 0:
             return ("it reads x0 with immediate 0 — every lab instruction "
                     "computes 0 on (0, 0), so the row cannot tell one "
@@ -244,7 +304,25 @@ def lazy_word_reason(manifest: dict | None, word: int) -> str | None:
             return ("it discards its result into x0 and reads only x0 — "
                     "nothing register-dependent is observable")
         return None
+    if cls == "BR":
+        if rs1 == f.get("rs2"):
+            return ("it compares a register with itself — the outcome is "
+                    "fixed whatever the register holds")
+        return None
+    if cls in ("LOAD", "LUI", "AUIPC", "JAL", "JALR") and rd == 0:
+        if cls == "JAL" and word_immediate(word, cls) == 0:
+            return "it jumps to itself — a halt loop, nothing executes after it"
+        if cls in ("LOAD", "LUI", "AUIPC"):
+            return ("it discards its result into x0 — nothing the "
+                    "instruction produced is observable")
     return None
+
+
+def program_class(manifest: dict | None, word: int) -> str | None:
+    d = decode_program_word(manifest, word)
+    if not d:
+        return None
+    return _CLASS_OF.get(d["fields"].get("opcode"))
 
 
 def encode_category_word(
@@ -279,11 +357,20 @@ def encode_category_word(
         if bits is None:
             return None
         word |= bits
-    if when.get("opcode") == _OPCODE_ITYPE_ALU:
-        word |= (imm & 0xFFF) << 20
+    cls = _CLASS_OF.get(when.get("opcode"))
+    if cls == "I" and "funct7" in when:
+        word |= (imm & 0x1F) << 20
+    elif cls in ("I", "LOAD", "STORE", "BR", "JAL", "JALR", "LUI", "AUIPC"):
+        word |= _place_immediate(cls, imm)
+        if cls in ("STORE", "BR"):
+            word |= place("rs2", rs2) or 0
     else:
         word |= place("rs2", rs2) or 0
     for name, val in (("rd", rd), ("rs1", rs1)):
+        if cls in ("STORE", "BR") and name == "rd":
+            continue
+        if cls in ("LUI", "AUIPC", "JAL") and name == "rs1":
+            continue
         bits = place(name, val)
         if bits is None:
             return None
@@ -301,50 +388,185 @@ def _signed32(v: int) -> int:
     return v - (1 << 32) if v & (1 << 31) else v
 
 
-def constant_registers(manifest: dict | None, words: list[int]) -> dict[int, int]:
+def _alu_result(cat: str, a: int, b: int) -> int | None:
+    sh = b & 31
+    table = {
+        "add": (a + b) & _M32, "addi": (a + b) & _M32,
+        "sub": (a - b) & _M32,
+        "and": a & b, "andi": a & b,
+        "or": a | b, "ori": a | b,
+        "xor": a ^ b, "xori": a ^ b,
+        "sll": (a << sh) & _M32, "slli": (a << sh) & _M32,
+        "srl": a >> sh, "srli": a >> sh,
+        "sra": (_signed32(a) >> sh) & _M32, "srai": (_signed32(a) >> sh) & _M32,
+        "slt": 1 if _signed32(a) < _signed32(b) else 0,
+        "slti": 1 if _signed32(a) < _signed32(b) else 0,
+        "sltu": 1 if a < b else 0, "sltiu": 1 if a < b else 0,
+    }
+    return table.get(cat)
+
+
+def _branch_taken(cat: str, a: int, b: int) -> bool | None:
+    return {
+        "beq": a == b, "bne": a != b,
+        "blt": _signed32(a) < _signed32(b), "bge": _signed32(a) >= _signed32(b),
+        "bltu": a < b, "bgeu": a >= b,
+    }.get(cat)
+
+
+def _mem_load(cat: str, mem: dict, addr: int) -> int | None:
+    word_idx, ofs = (addr >> 2) & 31, addr & 3
+    word = mem.get(word_idx, 0)
+    if word is None:
+        return None
+    if cat == "lw":
+        return word
+    sh = ofs * 8
+    if cat in ("lb", "lbu"):
+        raw = (word >> sh) & 0xFF
+        return raw if cat == "lbu" else _sext(raw, 8) & _M32
+    if cat in ("lh", "lhu"):
+        raw = (word >> sh) & 0xFFFF
+        return raw if cat == "lhu" else _sext(raw, 16) & _M32
+    return None
+
+
+def _mem_store(cat: str, mem: dict, addr: int, val: int | None) -> None:
+    word_idx, ofs = (addr >> 2) & 31, addr & 3
+    if val is None:
+        mem[word_idx] = None
+        return
+    size = {"sb": 8, "sh": 16, "sw": 32}.get(cat)
+    if size is None:
+        mem[word_idx] = None
+        return
+    mask, sh = (1 << size) - 1, ofs * 8
+    old = mem.get(word_idx, 0)
+    if old is None:
+        old = 0 if size == 32 and ofs == 0 else None
+    if old is None:
+        mem[word_idx] = None
+        return
+    mem[word_idx] = ((old & ~((mask << sh) & _M32)) | ((val & mask) << sh)) & _M32
+
+
+def execute_program(manifest: dict | None, words: list[int], *,
+                    max_steps: int = 4096, regs: dict | None = None,
+                    mem: dict | None = None, pc: int = 0) -> dict:
+    pd = (manifest or {}).get("program_decode") or {}
+    if "rd" not in (pd.get("fields") or {}):
+        return {"regs": {}, "mem": {}, "pc": pc, "trace": [],
+                "halted": False, "stopped": "no rd field"}
+    regs = dict(regs) if regs is not None else {r: 0 for r in range(32)}
+    mem = dict(mem) if mem is not None else {}
+    trace: list[dict] = []
+    halted = False
+    stopped: str | None = None
+    for _ in range(max_steps):
+        idx = pc >> 2
+        if pc & 3 or idx < 0 or idx >= len(words):
+            stopped = "pc left the program"
+            break
+        w = words[idx]
+        d = decode_program_word(manifest, w)
+        f = d["fields"] if d else {}
+        cat = d["category"] if d else None
+        cls = _CLASS_OF.get(f.get("opcode")) if cat else None
+        rs1, rs2, rd = f.get("rs1"), f.get("rs2"), f.get("rd") or 0
+        a = regs.get(rs1) if rs1 is not None else None
+        b = regs.get(rs2) if rs2 is not None else None
+        trace.append({"pc": pc, "word": w, "category": cat,
+                      "rs1": rs1, "rs2": rs2, "a": a, "b": b})
+        next_pc = (pc + 4) & _M32
+        out: int | None = None
+        writes = False
+        if cls is None:
+            writes = True
+        elif cls in ("R", "I"):
+            operand = b if cls == "R" else word_immediate(w, cls) & _M32
+            if cls == "I" and "funct7" in _norm_when(
+                    next((c.get("when", {}) for c in
+                          (manifest.get("categories") or {}).get(
+                              pd.get("categories_from") or "", [])
+                          if c.get("name") == cat), {})):
+                operand = (w >> 20) & 0x1F
+            if a is not None and operand is not None:
+                out = _alu_result(cat, a, operand)
+            writes = True
+        elif cls == "LOAD":
+            if a is not None:
+                out = _mem_load(cat, mem, (a + word_immediate(w, cls)) & _M32)
+            writes = True
+        elif cls == "STORE":
+            if a is None:
+                mem = {k: None for k in range(32)}
+            else:
+                _mem_store(cat, mem, (a + word_immediate(w, cls)) & _M32, b)
+        elif cls == "BR":
+            taken = _branch_taken(cat, a, b) if (a is not None and b is not None) else None
+            if taken is None:
+                stopped = "branch on an unknown value"
+                break
+            if taken:
+                next_pc = (pc + word_immediate(w, cls)) & _M32
+        elif cls == "JAL":
+            out = (pc + 4) & _M32
+            next_pc = (pc + word_immediate(w, cls)) & _M32
+            writes = True
+        elif cls == "JALR":
+            if a is None:
+                stopped = "jump on an unknown value"
+                break
+            out = (pc + 4) & _M32
+            next_pc = (a + word_immediate(w, cls)) & ~1 & _M32
+            writes = True
+        elif cls == "LUI":
+            out = word_immediate(w, cls) & _M32
+            writes = True
+        elif cls == "AUIPC":
+            out = (pc + word_immediate(w, cls)) & _M32
+            writes = True
+        if writes and rd != 0:
+            if out is None:
+                regs.pop(rd, None)
+            else:
+                regs[rd] = out
+        if next_pc == pc:
+            halted = True
+            break
+        pc = next_pc
+    else:
+        stopped = "step cap"
+    return {"regs": regs, "mem": mem, "pc": pc, "trace": trace,
+            "halted": halted, "stopped": stopped}
+
+
+def program_halt_index(manifest: dict | None, words: list[int]) -> int | None:
+    run = execute_program(manifest, words)
+    return (run["pc"] >> 2) if run["halted"] else None
+
+
+def constant_registers(manifest: dict | None, words: list[int], *,
+                       appended: int = 0) -> dict[int, int]:
     pd = (manifest or {}).get("program_decode") or {}
     if "rd" not in (pd.get("fields") or {}):
         return {}
-    known: dict[int, int] = {r: 0 for r in range(32)}
-    for w in words:
-        d = decode_program_word(manifest, w)
-        if not d:
-            return {}
-        f = d["fields"]
-        rd = f.get("rd") or 0
-        cat, op = d["category"], f.get("opcode")
-        out = None
-        if cat and op == _OPCODE_ITYPE_ALU:
-            a = known.get(f.get("rs1"))
-            imm = (w >> 20) & 0xFFF
-            imm = imm - 0x1000 if imm & 0x800 else imm
-            if a is not None:
-                if cat == "addi":
-                    out = (a + imm) & _M32
-                elif cat == "andi":
-                    out = a & (imm & _M32)
-                elif cat == "slti":
-                    out = 1 if _signed32(a) < imm else 0
-        elif cat and op == _OPCODE_RTYPE:
-            a, b = known.get(f.get("rs1")), known.get(f.get("rs2"))
-            if a is not None and b is not None:
-                if cat == "add":
-                    out = (a + b) & _M32
-                elif cat == "sub":
-                    out = (a - b) & _M32
-                elif cat == "and":
-                    out = a & b
-                elif cat == "or":
-                    out = a | b
-                elif cat == "slt":
-                    out = 1 if _signed32(a) < _signed32(b) else 0
-        if rd == 0:
-            continue
-        if out is None:
-            known.pop(rd, None)
-        else:
-            known[rd] = out
+    base = words[:len(words) - appended] if appended else list(words)
+    extra = words[len(words) - appended:] if appended else []
+    run = execute_program(manifest, spliced_program(manifest, base, extra))
+    known = {r: v for r, v in run["regs"].items() if v is not None}
+    known[0] = 0
     return known
+
+
+def spliced_program(manifest: dict | None, base: list[int],
+                    extra: list[int]) -> list[int]:
+    if not extra:
+        return list(base)
+    h = program_halt_index(manifest, base)
+    if h is None:
+        return list(base) + list(extra)
+    return list(base[:h]) + list(extra) + list(base[h:])
 
 
 def category_word_examples(
@@ -376,17 +598,28 @@ def category_word_examples(
         setup_a, setup_b = pool[0], pool[1]
         free = pool[2:]
 
+    pd = (manifest or {}).get("program_decode") or {}
+    cats = (manifest.get("categories") or {}).get(
+        pd.get("categories_from") or "", [])
+
+    def when_of(name):
+        return next((_norm_when(c.get("when", {})) for c in cats
+                     if c.get("name") == name), {})
+
+    order = {"STORE": 0, "LOAD": 1}
+    missing = sorted(missing, key=lambda n: (
+        order.get(_CLASS_OF.get(when_of(n).get("opcode")), 2)))
+
     out: list[dict] = []
     for i, name in enumerate(missing):
         rd = free[i % len(free)] if free else setup_a
-        pd = (manifest or {}).get("program_decode") or {}
-        cats = (manifest.get("categories") or {}).get(
-            pd.get("categories_from") or "", [])
-        when = next((_norm_when(c.get("when", {})) for c in cats
-                     if c.get("name") == name), {})
+        when = when_of(name)
+        cls = _CLASS_OF.get(when.get("opcode"))
         used_reads = reads
-        if when.get("opcode") == _OPCODE_ITYPE_ALU:
-            rs1, imm = (0, 7) if name == "addi" else (setup_a, 7)
+        extra_words: list[int] = []
+        if cls == "I":
+            shift = "funct7" in when
+            rs1, imm = (0, 7) if name == "addi" else (setup_a, 3 if shift else 7)
             if name == "addi":
                 used_reads = {}
                 if not reads:
@@ -395,6 +628,50 @@ def category_word_examples(
                 used_reads = {f"x{setup_a}": _signed32(known[setup_a])}
             word = encode_category_word(manifest, name, rd=rd, rs1=rs1, imm=imm)
             asm = f"{name} x{rd}, x{rs1}, {imm}"
+        elif cls == "R":
+            word = encode_category_word(
+                manifest, name, rd=rd, rs1=setup_a, rs2=setup_b)
+            asm = f"{name} x{rd}, x{setup_a}, x{setup_b}"
+        elif cls == "STORE":
+            used_reads = ({f"x{setup_a}": _signed32(known[setup_a])}
+                          if reads else {})
+            word = encode_category_word(
+                manifest, name, rs1=0, rs2=setup_a, imm=0)
+            asm = f"{name} x{setup_a}, 0(x0)"
+        elif cls == "LOAD":
+            used_reads = {}
+            word = encode_category_word(manifest, name, rd=rd, rs1=0, imm=0)
+            asm = f"{name} x{rd}, 0(x0)"
+        elif cls == "BR":
+            word = encode_category_word(
+                manifest, name, rs1=setup_a, rs2=setup_b, imm=4)
+            asm = f"{name} x{setup_a}, x{setup_b}, +4"
+        elif cls == "JAL":
+            used_reads = {}
+            word = encode_category_word(manifest, name, rd=rd, imm=4)
+            asm = f"{name} x{rd}, +4"
+        elif cls == "JALR":
+            used_reads = {}
+            base_rd = free[(i + 1) % len(free)] if len(free) > 1 else setup_b
+            auipc_cat = next((c.get("name") for c in cats
+                              if _norm_when(c.get("when", {})).get("opcode")
+                              == _OPCODE_AUIPC), None)
+            base_word = (encode_category_word(manifest, auipc_cat, rd=base_rd, imm=0)
+                         if auipc_cat else None)
+            word = encode_category_word(manifest, name, rd=rd, rs1=base_rd, imm=8)
+            if base_word is None:
+                word = None
+            else:
+                extra_words = [base_word]
+            asm = f"auipc x{base_rd}, 0 ; {name} x{rd}, 8(x{base_rd})"
+        elif cls == "LUI":
+            used_reads = {}
+            word = encode_category_word(manifest, name, rd=rd, imm=0x12345000)
+            asm = f"{name} x{rd}, 0x12345"
+        elif cls == "AUIPC":
+            used_reads = {}
+            word = encode_category_word(manifest, name, rd=rd, imm=0)
+            asm = f"{name} x{rd}, 0"
         else:
             word = encode_category_word(
                 manifest, name, rd=rd, rs1=setup_a, rs2=setup_b)
@@ -402,6 +679,8 @@ def category_word_examples(
         if word is None or lazy_word_reason(manifest, word) is not None:
             continue
         entry = {"category": name, "word": f"{word:x}", "asm": asm}
+        if extra_words:
+            entry["words"] = [f"{w:x}" for w in extra_words] + [f"{word:x}"]
         if used_reads:
             entry["reads"] = used_reads
         out.append(entry)
@@ -427,6 +706,10 @@ def synthesize_program_extension(
         return None
     rs2_col = observe.get("rs2_port")
 
+    pc_col = observe.get("pc_port")
+    if pc_col not in headers:
+        pc_col = None
+
     examples = category_word_examples(manifest, missing, existing_words)
     if not examples:
         return None
@@ -451,36 +734,47 @@ def synthesize_program_extension(
     max_gap = max(1, budget // 2)
     trimmed = examples[:max_gap]
 
-    words = setups + [int(e["word"], 16) for e in trimmed]
+    words = list(setups)
+    for e in trimmed:
+        words.extend(int(w, 16) for w in e.get("words") or [e["word"]])
+    insert_at = program_halt_index(manifest, list(existing_words))
+    start_pc = 4 * (insert_at if insert_at is not None else len(existing_words))
+    run = execute_program(manifest,
+                          spliced_program(manifest, list(existing_words), words))
+    by_pc = {t["pc"]: t for t in run["trace"]}
     rows: list[str] = []
-    state_words = list(existing_words)
-    for w in words:
-        st = constant_registers(manifest, state_words)
-        f = (decode_program_word(manifest, w) or {}).get("fields", {})
+    for i in range(len(words)):
+        t = by_pc.get(start_pc + 4 * i)
+        if t is None:
+            return None
         cells = []
         for h in headers:
             if h == clock_col:
                 cells.append("C")
+            elif h == pc_col:
+                cells.append(f"0x{t['pc']:X}")
             elif h == rs1_col:
-                v = st.get(f.get("rs1"))
-                cells.append(_fmt_signed(v) if v is not None else "X")
+                cells.append(_fmt_signed(t["a"]) if t["a"] is not None else "X")
             elif rs2_col and h == rs2_col:
-                v = st.get(f.get("rs2"))
-                cells.append(_fmt_signed(v) if v is not None else "X")
+                cells.append(_fmt_signed(t["b"]) if t["b"] is not None else "X")
             else:
                 cells.append("X")
         rows.append(" ".join(cells))
-        state_words.append(w)
     closed = ", ".join(e["category"] for e in trimmed)
     dropped = len(examples) - len(trimmed)
     why = (f"Machine-built extension closing {closed} — every expected "
            f"value derived deterministically from the program by constant "
            f"propagation."
+           + (" Inserted before the program's halt loop." if insert_at is not None else "")
            + (f" ({dropped} more missing categor"
               f"{'y' if dropped == 1 else 'ies'} left for the next run —"
               f" word budget.)" if dropped > 0 else ""))
-    return {"program_words": [f"{w:x}" for w in words],
-            "rows": rows, "why": why}
+    out = {"program_words": [f"{w:x}" for w in words],
+           "rows": rows, "why": why}
+    if insert_at is not None:
+        out["insert_at"] = insert_at
+        out["pc_shift"] = 4 * len(words)
+    return out
 
 def reference_row_verdicts(
     ref_file: Path, headers: list[str], rows: list[str],

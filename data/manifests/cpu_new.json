@@ -1,0 +1,180 @@
+{
+  "lab": "lab5-rv32i",
+  "description": "COMP 311 Lab 5 extended — full RV32I single-cycle CPU (37 instructions; FENCE/ECALL/EBREAK excluded).",
+  "applies_to": [
+    "cpu_new.dig",
+    "immgen.dig",
+    "controlunit.dig",
+    "branchunit.dig",
+    "datamemory.dig",
+    "alu.dig",
+    "alu_rv32i.dig",
+    "register-file.dig",
+    "add-sub.dig",
+    "bidirectional-shifter.dig",
+    "boolean-unit.dig",
+    "slt-unit.dig"
+  ],
+  "_note": "alu.dig and alu_rv32i.dig are the same RV32I ALU under either name; keep whichever your tree uses. official_tests stays empty until the lab's tests are registered (Settings → Official tests).",
+  "subcircuits": {
+    "controlunit.dig": {
+      "model": "rv32i_control",
+      "role": "Control unit: decodes opcode/funct3/funct7 into the 17 datapath control signals for the 37 RV32I instructions; an unknown word is a NOP."
+    },
+    "alu.dig": {
+      "model": "rv32i_alu",
+      "role": "ALU: applies the operation selected by ALUOp (AND, OR, ADD, XOR, SLL, SRL, SUB, SLT, SRA, SLTU) to A and B; FlagZ is 1 when the result is zero."
+    },
+    "alu_rv32i.dig": {
+      "model": "rv32i_alu",
+      "role": "ALU: applies the operation selected by ALUOp (AND, OR, ADD, XOR, SLL, SRL, SUB, SLT, SRA, SLTU) to A and B; FlagZ is 1 when the result is zero."
+    },
+    "immgen.dig": {
+      "model": "rv32i_immgen",
+      "role": "Immediate generator: rebuilds the I, S, B, U or J immediate from the instruction word, chosen by ImmSrc (0-4)."
+    },
+    "branchunit.dig": {
+      "model": "rv32i_branch_unit",
+      "role": "Branch unit: evaluates the funct3 condition (eq, ne, lt, ge, ltu, geu) on the two register values; Taken is the enabled branch outcome or an unconditional jump."
+    },
+    "datamemory.dig": {
+      "model": "rv32i_data_memory",
+      "role": "Data memory: 32 words of byte-addressed storage; byte, half and word loads (sign- or zero-extended) and stores, writes landing on the clock edge when MemWrite is 1."
+    },
+    "register-file.dig": {
+      "model": "rv32i_register_file",
+      "role": "Register file: 32 registers read on two ports; writes WriteData into WriteReg on the clock edge when RegWrite is 1 (x0 stays 0)."
+    },
+    "add-sub.dig": {
+      "model": "add_sub",
+      "role": "Adder/subtractor: A plus or minus B with signed-overflow and sign flags."
+    },
+    "bidirectional-shifter.dig": {
+      "model": "bidirectional_shifter",
+      "role": "Shifter: shifts B left, right logical or right arithmetic by A, chosen by Bool."
+    },
+    "boolean-unit.dig": {
+      "model": "boolean_unit",
+      "role": "Boolean unit: bitwise AND, OR, XOR or NOR of A and B, chosen by Bool."
+    },
+    "slt-unit.dig": {
+      "model": "slt_unit",
+      "role": "Set-less-than unit: derives A<B from the subtractor's sign and overflow flags."
+    }
+  },
+  "categories": {
+    "controlunit.dig": [
+      {"name": "add",   "when": {"opcode": "0b0110011", "funct3": "0b000", "funct7": "0b0000000"}},
+      {"name": "sub",   "when": {"opcode": "0b0110011", "funct3": "0b000", "funct7": "0b0100000"}},
+      {"name": "sll",   "when": {"opcode": "0b0110011", "funct3": "0b001", "funct7": "0b0000000"}},
+      {"name": "slt",   "when": {"opcode": "0b0110011", "funct3": "0b010", "funct7": "0b0000000"}},
+      {"name": "sltu",  "when": {"opcode": "0b0110011", "funct3": "0b011", "funct7": "0b0000000"}},
+      {"name": "xor",   "when": {"opcode": "0b0110011", "funct3": "0b100", "funct7": "0b0000000"}},
+      {"name": "srl",   "when": {"opcode": "0b0110011", "funct3": "0b101", "funct7": "0b0000000"}},
+      {"name": "sra",   "when": {"opcode": "0b0110011", "funct3": "0b101", "funct7": "0b0100000"}},
+      {"name": "or",    "when": {"opcode": "0b0110011", "funct3": "0b110", "funct7": "0b0000000"}},
+      {"name": "and",   "when": {"opcode": "0b0110011", "funct3": "0b111", "funct7": "0b0000000"}},
+      {"name": "addi",  "when": {"opcode": "0b0010011", "funct3": "0b000"}},
+      {"name": "slli",  "when": {"opcode": "0b0010011", "funct3": "0b001", "funct7": "0b0000000"}},
+      {"name": "slti",  "when": {"opcode": "0b0010011", "funct3": "0b010"}},
+      {"name": "sltiu", "when": {"opcode": "0b0010011", "funct3": "0b011"}},
+      {"name": "xori",  "when": {"opcode": "0b0010011", "funct3": "0b100"}},
+      {"name": "srli",  "when": {"opcode": "0b0010011", "funct3": "0b101", "funct7": "0b0000000"}},
+      {"name": "srai",  "when": {"opcode": "0b0010011", "funct3": "0b101", "funct7": "0b0100000"}},
+      {"name": "ori",   "when": {"opcode": "0b0010011", "funct3": "0b110"}},
+      {"name": "andi",  "when": {"opcode": "0b0010011", "funct3": "0b111"}},
+      {"name": "lb",    "when": {"opcode": "0b0000011", "funct3": "0b000"}},
+      {"name": "lh",    "when": {"opcode": "0b0000011", "funct3": "0b001"}},
+      {"name": "lw",    "when": {"opcode": "0b0000011", "funct3": "0b010"}},
+      {"name": "lbu",   "when": {"opcode": "0b0000011", "funct3": "0b100"}},
+      {"name": "lhu",   "when": {"opcode": "0b0000011", "funct3": "0b101"}},
+      {"name": "sb",    "when": {"opcode": "0b0100011", "funct3": "0b000"}},
+      {"name": "sh",    "when": {"opcode": "0b0100011", "funct3": "0b001"}},
+      {"name": "sw",    "when": {"opcode": "0b0100011", "funct3": "0b010"}},
+      {"name": "beq",   "when": {"opcode": "0b1100011", "funct3": "0b000"}},
+      {"name": "bne",   "when": {"opcode": "0b1100011", "funct3": "0b001"}},
+      {"name": "blt",   "when": {"opcode": "0b1100011", "funct3": "0b100"}},
+      {"name": "bge",   "when": {"opcode": "0b1100011", "funct3": "0b101"}},
+      {"name": "bltu",  "when": {"opcode": "0b1100011", "funct3": "0b110"}},
+      {"name": "bgeu",  "when": {"opcode": "0b1100011", "funct3": "0b111"}},
+      {"name": "jal",   "when": {"opcode": "0b1101111"}},
+      {"name": "jalr",  "when": {"opcode": "0b1100111"}},
+      {"name": "lui",   "when": {"opcode": "0b0110111"}},
+      {"name": "auipc", "when": {"opcode": "0b0010111"}}
+    ],
+    "alu.dig": [
+      {"name": "AND",  "when": {"ALUOp": "0b0000"}},
+      {"name": "OR",   "when": {"ALUOp": "0b0001"}},
+      {"name": "ADD",  "when": {"ALUOp": "0b0010"}},
+      {"name": "XOR",  "when": {"ALUOp": "0b0011"}},
+      {"name": "SLL",  "when": {"ALUOp": "0b0100"}},
+      {"name": "SRL",  "when": {"ALUOp": "0b0101"}},
+      {"name": "SUB",  "when": {"ALUOp": "0b0110"}},
+      {"name": "SLT",  "when": {"ALUOp": "0b0111"}},
+      {"name": "SRA",  "when": {"ALUOp": "0b1000"}},
+      {"name": "SLTU", "when": {"ALUOp": "0b1001"}}
+    ],
+    "alu_rv32i.dig": [
+      {"name": "AND",  "when": {"ALUOp": "0b0000"}},
+      {"name": "OR",   "when": {"ALUOp": "0b0001"}},
+      {"name": "ADD",  "when": {"ALUOp": "0b0010"}},
+      {"name": "XOR",  "when": {"ALUOp": "0b0011"}},
+      {"name": "SLL",  "when": {"ALUOp": "0b0100"}},
+      {"name": "SRL",  "when": {"ALUOp": "0b0101"}},
+      {"name": "SUB",  "when": {"ALUOp": "0b0110"}},
+      {"name": "SLT",  "when": {"ALUOp": "0b0111"}},
+      {"name": "SRA",  "when": {"ALUOp": "0b1000"}},
+      {"name": "SLTU", "when": {"ALUOp": "0b1001"}}
+    ],
+    "immgen.dig": [
+      {"name": "I-type", "when": {"ImmSrc": 0}},
+      {"name": "S-type", "when": {"ImmSrc": 1}},
+      {"name": "B-type", "when": {"ImmSrc": 2}},
+      {"name": "U-type", "when": {"ImmSrc": 3}},
+      {"name": "J-type", "when": {"ImmSrc": 4}}
+    ],
+    "branchunit.dig": [
+      {"name": "beq",  "when": {"funct3": 0, "Branch": 1, "Jump": 0}},
+      {"name": "bne",  "when": {"funct3": 1, "Branch": 1, "Jump": 0}},
+      {"name": "blt",  "when": {"funct3": 4, "Branch": 1, "Jump": 0}},
+      {"name": "bge",  "when": {"funct3": 5, "Branch": 1, "Jump": 0}},
+      {"name": "bltu", "when": {"funct3": 6, "Branch": 1, "Jump": 0}},
+      {"name": "bgeu", "when": {"funct3": 7, "Branch": 1, "Jump": 0}},
+      {"name": "jump", "when": {"Jump": 1}},
+      {"name": "hold", "when": {"Branch": 0, "Jump": 0}}
+    ],
+    "datamemory.dig": [
+      {"name": "sw",  "when": {"MemWrite": 1, "funct3": 2}},
+      {"name": "sh",  "when": {"MemWrite": 1, "funct3": 1}},
+      {"name": "sb",  "when": {"MemWrite": 1, "funct3": 0}},
+      {"name": "lw",  "when": {"MemWrite": 0, "funct3": 2}},
+      {"name": "lh",  "when": {"MemWrite": 0, "funct3": 1}},
+      {"name": "lb",  "when": {"MemWrite": 0, "funct3": 0}},
+      {"name": "lhu", "when": {"MemWrite": 0, "funct3": 5}},
+      {"name": "lbu", "when": {"MemWrite": 0, "funct3": 4}}
+    ],
+    "register-file.dig": [
+      {"name": "write", "when": {"RegWrite": 1}},
+      {"name": "hold",  "when": {"RegWrite": 0}}
+    ]
+  },
+  "official_tests": {},
+  "reference_dir": null,
+  "program_decode": {
+    "categories_from": "controlunit.dig",
+    "fields": {
+      "opcode": [0, 7],
+      "funct3": [12, 3],
+      "funct7": [25, 7],
+      "rd": [7, 5],
+      "rs1": [15, 5],
+      "rs2": [20, 5]
+    },
+    "observe": {
+      "rs1_port": "ReadData1",
+      "rs2_port": "ReadData2",
+      "pc_port": "PCout",
+      "_note": "pc_port lets the coach place its extension before a program's halt loop and shift the halt rows' PC accordingly."
+    }
+  }
+}

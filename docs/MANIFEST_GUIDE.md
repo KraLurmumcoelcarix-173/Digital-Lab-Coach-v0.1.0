@@ -166,7 +166,8 @@ can copy it **verbatim** — the bit fields are the RISC-V standard:
     "opcode": [0, 7], "funct3": [12, 3], "funct7": [25, 7],
     "rd": [7, 5], "rs1": [15, 5], "rs2": [20, 5]
   },
-  "observe": {"rs1_port": "ReadData1", "rs2_port": "ReadData2"}
+  "observe": {"rs1_port": "ReadData1", "rs2_port": "ReadData2",
+              "pc_port": "PCout"}
 }
 ```
 
@@ -174,18 +175,27 @@ Adjust only two things:
 
 - `categories_from`: the file whose `categories` list enumerates the
   instructions your lab implements (typically your control/decode unit —
-  categories written over `opcode`/`funct3`/`funct7` columns, see
-  `data/manifests/cpu.json` as example).
+  categories written over `opcode`/`funct3`/`funct7` columns). Two
+  shipped examples: `data/manifests/cpu.json` (the eight-instruction
+  Lab 5 subset) and `data/manifests/cpu_new.json` (all 37 RV32I
+  instructions — copy its `controlunit.dig` list for any full RV32I lab).
 - `observe`: the CPU testcase's column names that show the register-file
-  read ports. This is what lets the coach add machine-derived read-back
-  rows (`addi x0, xN, 0`) so every value an extension writes is actually
-  observed.
+  read ports, and (optional) the program counter. The read ports let the
+  coach add machine-derived read-back rows (`addi x0, xN, 0`) so every
+  value an extension writes is actually observed; `pc_port` lets it
+  place an extension correctly when the program **parks in a halt loop**
+  (`jal x0, 0`): the new words are spliced in front of the loop, where
+  they actually execute, and the rows that expect the loop's PC move
+  down accordingly. Without `pc_port` a halted program can only be
+  extended by appending, which never executes — leave it out only for
+  programs that run straight off the end.
 
 With this block the tool decodes every program word deterministically,
-rejects lazy or undefined instructions, derives register values by
-constant propagation, and — if the model's proposal fails its gates —
-machine-builds a correct extension on its own (this part even works
-offline).
+rejects lazy or undefined instructions, derives register and memory
+values by running the program through a small RV32I interpreter that
+follows branches and jumps, and — if the model's proposal fails its
+gates — machine-builds a correct extension on its own (this part even
+works offline).
 
 ---
 

@@ -92,7 +92,14 @@ def _datastring_ordinal(circuit, target_spec: TestSpec) -> int:
     )
 
 
-def inject_rows_text(source_text: str, ordinal: int, rows: list[InjectedRow]) -> str:
+def _is_data_line(line: str) -> bool:
+    s = line.split("#", 1)[0].strip()
+    return bool(s)
+
+
+def inject_rows_text(source_text: str, ordinal: int, rows: list[InjectedRow],
+                     insert_before: int | None = None,
+                     rewrite: dict[int, str] | None = None) -> str:
     matches = list(_DATASTRING_RE.finditer(source_text))
     if ordinal < 0 or ordinal >= len(matches):
         raise ValueError(
@@ -101,9 +108,31 @@ def inject_rows_text(source_text: str, ordinal: int, rows: list[InjectedRow]) ->
         )
     m = matches[ordinal]
     inner = m.group(1)
-    appended = "\n".join(escape(r.raw) for r in rows)
-    new_inner = inner + ("" if inner.endswith("\n") else "\n") + appended
-    return source_text[: m.start(1)] + new_inner + source_text[m.end(1):]
+    added = [escape(r.raw) for r in rows]
+    if insert_before is None and not rewrite:
+        new_inner = inner + ("" if inner.endswith("\n") else "\n") + "\n".join(added)
+        return source_text[: m.start(1)] + new_inner + source_text[m.end(1):]
+
+    lines = inner.split("\n")
+    out: list[str] = []
+    data_idx = -1
+    inserted = insert_before is None
+    for line in lines:
+        if _is_data_line(line):
+            if data_idx >= 0:
+                if not inserted and data_idx == insert_before:
+                    out.extend(added)
+                    inserted = True
+                if rewrite and data_idx in rewrite:
+                    line = escape(rewrite[data_idx])
+            data_idx += 1
+        out.append(line)
+    if not inserted:
+        while out and not out[-1].strip():
+            out.pop()
+        out.extend(added)
+        out.append("")
+    return source_text[: m.start(1)] + "\n".join(out) + source_text[m.end(1):]
 
 
 def _find_spec(circuit, spec_name: str) -> TestSpec:
@@ -185,7 +214,8 @@ def parse_program_words(rom_words: list[str]) -> list[int]:
     return out
 
 
-def extend_program_rom_text(source_text: str, words: list[int]) -> str:
+def extend_program_rom_text(source_text: str, words: list[int],
+                            insert_at: int | None = None) -> str:
     found = find_program_rom(source_text)
     if found is None:
         raise ValueError("This circuit has no program memory (ROM with "
@@ -195,8 +225,31 @@ def extend_program_rom_text(source_text: str, words: list[int]) -> str:
         raise ValueError(
             f"Program would not fit: {len(existing)}+{len(words)} words "
             f"> ROM capacity {1 << addr_bits}.")
-    new_data = source_text[start:end] + "," + ",".join(f"{w:x}" for w in words)
+    if insert_at is None or insert_at >= len(existing):
+        new_data = source_text[start:end] + "," + ",".join(f"{w:x}" for w in words)
+    else:
+        merged = existing[:insert_at] + list(words) + existing[insert_at:]
+        new_data = ",".join(f"{w:x}" for w in merged)
     return source_text[:start] + new_data + source_text[end:]
+
+
+def shift_pc_cells(rows_raw: list[str], headers: list[str], pc_col: str,
+                   halt_pc: int, shift: int) -> dict[int, str]:
+    if pc_col not in headers:
+        return {}
+    col = headers.index(pc_col)
+    out: dict[int, str] = {}
+    for i, raw in enumerate(rows_raw):
+        body, sep, comment = raw.partition("#")
+        cells = body.split()
+        if col >= len(cells):
+            continue
+        tok = _tokenize(cells[col])
+        if tok.kind != "int" or tok.value != halt_pc:
+            continue
+        cells[col] = f"0x{(halt_pc + shift) & 0xFFFFFFFF:X}"
+        out[i] = " ".join(cells) + (f" {sep}{comment}" if sep else "")
+    return out
 
 
 def add_testcase_text(source_text: str, label: str, data_string: str) -> str:
@@ -365,6 +418,10 @@ def rerun_with_program(
     jar_path: str | None = None,
     timeout: float = 60.0,
     keep_temp: bool = False,
+    insert_at: int | None = None,
+    insert_before_row: int | None = None,
+    pc_shift: int = 0,
+    pc_col: str | None = None,
 ) -> InjectionOutcome:
     jar = jar_path or find_digital_jar()
     if jar is None:
@@ -386,9 +443,18 @@ def rerun_with_program(
                 f"Program extension needs exactly one row per word "
                 f"({len(words)} word(s), {len(rows)} row(s)).")
         source_text = src_path.read_text(encoding="utf-8")
-        source_text = extend_program_rom_text(source_text, words)
+        source_text = extend_program_rom_text(source_text, words,
+                                              insert_at=insert_at)
         ordinal = _datastring_ordinal(circuit, spec)
-        source_text = inject_rows_text(source_text, ordinal, rows)
+        rewrite: dict[int, str] = {}
+        if insert_at is not None and pc_shift and pc_col:
+            originals = [r.raw for r in spec.rows if not r.is_malformed]
+            rewrite = shift_pc_cells(originals, list(spec.headers), pc_col,
+                                     4 * insert_at, pc_shift)
+        source_text = inject_rows_text(
+            source_text, ordinal, rows,
+            insert_before=insert_before_row if insert_at is not None else None,
+            rewrite=rewrite or None)
         rom_program = ",".join(f"{w:x}" for w in find_program_rom(source_text)[0])
     except ValueError as exc:
         return InjectionOutcome(ok=False, warning=str(exc))
@@ -399,6 +465,9 @@ def rerun_with_program(
         f.write(source_text)
 
     n_original = spec.row_count()
+    first_added = (insert_before_row
+                   if insert_at is not None and insert_before_row is not None
+                   else n_original)
     try:
         temp_circuit = parse_dig_file(temp_path)
         temp_specs = extract_test_specs(temp_circuit)
@@ -413,8 +482,8 @@ def rerun_with_program(
         any_bad = added_bad = False
         base_total = base_passed = 0
         for rr in results:
-            added = rr.row_index >= n_original
-            origin = (rows[rr.row_index - n_original].origin
+            added = first_added <= rr.row_index < first_added + len(rows)
+            origin = (rows[rr.row_index - first_added].origin
                       if added else "original")
             src_row = rows_by_idx.get(rr.row_index)
             bad = rr.status in ("failed", "error")

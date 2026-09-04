@@ -173,6 +173,10 @@ class InjectRequest(BaseModel):
     origin: str = "coach"
     as_second: bool = False
     rom_words: list[str] = []
+    insert_at: int | None = None
+    insert_before_row: int | None = None
+    pc_shift: int = 0
+    pc_col: str | None = None
 
 
 @router.post("/api/l3/inject")
@@ -209,8 +213,13 @@ def l3_inject(req: InjectRequest) -> dict:
             base_path, spec_name, rows, req.rom_words, keep_temp=True,
         )
     elif req.rom_words:
+        splice = ({"insert_at": req.insert_at,
+                   "insert_before_row": req.insert_before_row,
+                   "pc_shift": req.pc_shift, "pc_col": req.pc_col}
+                  if req.insert_at is not None else {})
         outcome = rerun_with_program(
             base_path, spec_name, rows, req.rom_words, keep_temp=True,
+            **splice,
         )
     else:
         outcome = rerun_with_rows(

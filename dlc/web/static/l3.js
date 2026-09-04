@@ -1103,6 +1103,10 @@ async function l3AcceptClick() {
           session_id: sessionId, filename: g.file,
           spec_name: g.spec_name, rows: g.rows,
           rom_words: g.program_words || [],
+          insert_at: g.insert_at ?? null,
+          insert_before_row: g.insert_before_row ?? null,
+          pc_shift: g.pc_shift || 0,
+          pc_col: g.pc_col || null,
         }),
       });
       out = res.ok ? await res.json()
