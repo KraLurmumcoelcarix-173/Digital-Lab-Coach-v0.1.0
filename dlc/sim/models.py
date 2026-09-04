@@ -90,6 +90,30 @@ def _alu(i, _s):
     return {"Result": r, "FlagZ": 1 if r == 0 else 0}, None
 
 
+def _alu_lab5(i, _s):
+    a, b, op = i["A"] & M32, i["B"] & M32, i["ALUOp"] & 0xF
+    amt = a & 63
+    if op == 0:
+        r = a & b
+    elif op == 1:
+        r = a | b
+    elif op == 3:
+        r = a ^ b
+    elif op == 4:
+        r = (b << amt) & M32 if amt < 32 else 0
+    elif op == 5:
+        r = b >> amt if amt < 32 else 0
+    elif op == 6:
+        r = (a - b) & M32
+    elif op == 7:
+        r = 1 if _s32(a) < _s32(b) else 0
+    elif op == 8:
+        r = (_s32(b) >> min(amt, 31)) & M32
+    else:
+        r = (a + b) & M32
+    return {"Result": r, "FlagZ": 1 if r == 0 else 0}, None
+
+
 _OPC = {"R": 0b0110011, "I": 0b0010011, "LOAD": 0b0000011,
         "STORE": 0b0100011, "BR": 0b1100011, "JAL": 0b1101111,
         "JALR": 0b1100111, "LUI": 0b0110111, "AUIPC": 0b0010111}
@@ -294,6 +318,11 @@ MODELS: tuple[FormulaModel, ...] = (
         "ALU: applies the operation selected by ALUOp to A and B and "
         "raises FlagZ when the result is zero.",
         _IO32 + (("ALUOp", 4),), (("Result", 32), ("FlagZ", 1)), _alu),
+    FormulaModel(
+        "lab5_alu",
+        "ALU (original Lab 5): AND, OR, ADD, XOR, SUB, SLT and shifts of B "
+        "by A, selected by ALUOp; FlagZ is 1 when the result is zero.",
+        _IO32 + (("ALUOp", 4),), (("Result", 32), ("FlagZ", 1)), _alu_lab5),
     FormulaModel(
         "lab5_control",
         "Control unit: decodes opcode/funct3/funct7 into the datapath's "
