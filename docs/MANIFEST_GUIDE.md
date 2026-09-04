@@ -94,7 +94,8 @@ DLC ships these **formula models**:
 
 | Model | Interface it expects | Computes |
 |---|---|---|
-| `rv32i_alu` | A, B, ALUOp → Result, FlagZ | AND, OR, ADD, XOR, SLL, SRL, SUB, SLT, SRA, SLTU |
+| `rv32i_alu` | A, B, ALUOp → Result, FlagZ | AND, OR, ADD, XOR, SLL, SRL, SUB, SLT, SRA, SLTU (shifts A by B) |
+| `lab5_alu` | A, B, ALUOp → Result, FlagZ | the original Lab 5 ALU: same codes without SLTU, shifts B by A |
 | `lab5_control` | opcode, funct3, funct7 → the eight Lab 5 signals | decode table, unknown word decodes as `add` |
 | `rv32i_control` | opcode, funct3, funct7 → up to 17 signals | decode table for all 37 RV32I instructions, unknown word is a NOP |
 | `rv32i_register_file` | ReadReg1, ReadReg2, WriteReg, WriteData, RegWrite, Clock → ReadData1, ReadData2 | 32 registers, edge-triggered write, x0 stays 0 |

@@ -194,7 +194,10 @@ models.
 
 Two CPU manifests ship: `data/manifests/cpu.json` for the eight-instruction
 Lab 5 subset and `data/manifests/cpu_new.json` for the full 37-instruction
-RV32I CPU (`cpu_new.dig` tree).
+RV32I CPU (`cpu_new.dig` tree). For the RV32I lab the Coverage Coach runs 
+the program through a small RV32I interpreter, follows its branches and jumps
+and splices any extension in  front of the loop since that program parks in a 
+`jal x0, 0` halt loop, where it actually executes.
 
 ### The admin dashboard
 

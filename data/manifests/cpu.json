@@ -13,8 +13,8 @@
   ],
   "subcircuits": {
     "alu.dig": {
-      "model": "rv32i_alu",
-      "role": "ALU: applies the operation selected by ALUOp to A and B and raises FlagZ when the result is zero."
+      "model": "lab5_alu",
+      "role": "ALU: applies the operation selected by ALUOp (AND, OR, ADD, XOR, SUB, SLT and shifts of B by A) and raises FlagZ when the result is zero."
     },
     "control-unit.dig": {
       "model": "lab5_control",
