@@ -140,6 +140,80 @@ def _outputs_report(spec: TestSpec, bindings, row, sim: SimResult):
             })
     return outputs, mismatches
 
+
+def _expected_ints(spec: TestSpec, bindings, row) -> dict[str, tuple[int, int | None]]:
+    col = {h: i for i, h in enumerate(spec.headers)}
+    out: dict[str, tuple[int, int | None]] = {}
+    for h in spec.headers:
+        b = bindings.get(h)
+        if b is None or b.role != "output" or col[h] >= len(row.values):
+            continue
+        tok = row.values[col[h]]
+        if tok.kind == "int" and tok.value is not None:
+            out[h] = (tok.value, b.bit_width)
+    return out
+
+
+def net_names_map(circuit, netlist) -> dict[int, str]:
+    names: dict[int, str] = {}
+    for net in netlist.nets:
+        if net.tunnel_names:
+            names[net.net_id] = "/".join(sorted(net.tunnel_names))
+            continue
+        for p in net.pins:
+            comp = circuit.components[p.component_index]
+            if comp.element_name in ("In", "Out", "Clock") and comp.label:
+                names[net.net_id] = comp.label
+                break
+    return names
+
+
+_STUCK_MIN_ROWS = 6
+_STUCK_SKIP = frozenset({
+    "In", "Out", "Const", "Ground", "VDD", "Clock", "Tunnel", "Testcase",
+    "Rectangle", "Text", "Probe", "PullUp", "PullDown",
+})
+
+
+def stuck_components(circuit, netlist, sims: dict[int, SimResult]) -> dict[int, str]:
+    if len(sims) < _STUCK_MIN_ROWS:
+        return {}
+    ins: dict[int, set[int]] = {}
+    outs: dict[int, set[int]] = {}
+    for net in netlist.nets:
+        for p in net.pins:
+            if p.direction == "in":
+                ins.setdefault(p.component_index, set()).add(net.net_id)
+            elif p.direction == "out":
+                outs.setdefault(p.component_index, set()).add(net.net_id)
+    rows = list(sims.values())
+    result: dict[int, str] = {}
+    for idx, comp in enumerate(circuit.components):
+        if (comp.element_name in _STUCK_SKIP or comp.element_name in _DATA_ELEMENTS
+                or comp.element_name.endswith(".dig")
+                or idx not in outs or idx not in ins):
+            continue
+        frozen: list[int] = []
+        for nid in outs[idx]:
+            vals = [s.net_values.get(nid) for s in rows]
+            if any(v is None for v in vals) or len(set(vals)) != 1:
+                frozen = []
+                break
+            frozen.append(vals[0])
+        if not frozen:
+            continue
+        varies = any(
+            len({s.net_values.get(nid) for s in rows} - {None}) > 1
+            for nid in ins[idx])
+        if not varies:
+            continue
+        shown = ", ".join(f"0x{v:X}" for v in frozen[:2])
+        result[idx] = (
+            f"its output never changes over the whole testcase (always "
+            f"{shown}) although its inputs do — dead or wrong-kind logic")
+    return result
+
+
 def select_columns(circuit, netlist, spec: TestSpec, bindings=None) -> list[str]:
     if bindings is None:
         bindings = match_variables_to_io(spec.headers, circuit)
@@ -356,7 +430,7 @@ def gross_check(circuit, spec: TestSpec, failing_count: int, *,
 
 def _row_evidence(circuit, netlist, graph, spec, bindings, row, *,
                   sel_cols, manifest, sim=None, jar_cells=None,
-                  notes=None) -> RowEvidence:
+                  notes=None, stuck=None, net_names=None) -> RowEvidence:
     if sim is None:
         sim = simulate_sequential(circuit, netlist, graph, spec,
                                   row.line_index)
@@ -371,7 +445,9 @@ def _row_evidence(circuit, netlist, graph, spec, bindings, row, *,
     col = {h: i for i, h in enumerate(spec.headers)}
     selects = [[h, row.values[col[h]].raw] for h in sel_cols]
     cat = row_category(circuit, netlist, sim, manifest)
-    report = localize(circuit, netlist, graph, sim, outputs)
+    report = localize(circuit, netlist, graph, sim, outputs,
+                      expected_values=_expected_ints(spec, bindings, row),
+                      stuck=stuck, net_names=net_names)
     net_values = {
         str(nid): {
             "value": val,
@@ -593,6 +669,7 @@ def suspect_wiring(circuit, netlist, indices: list[int],
                    rep_rows: list["RowEvidence"] | None = None,
                    hide_rom_words: bool = False) -> list[dict]:
     out: list[dict] = []
+    names = net_names_map(circuit, netlist)
     for idx in indices:
         if not (0 <= idx < len(circuit.components)):
             continue
@@ -625,6 +702,8 @@ def suspect_wiring(circuit, netlist, indices: list[int],
                 entry = {"pin": p.pin_name, "direction": p.direction,
                          "net_id": net.net_id,
                          "connects_to": others[:6]}
+                if net.net_id in names:
+                    entry["net"] = names[net.net_id]
                 if values:
                     entry["values"] = values
                 pins.append(entry)
@@ -662,6 +741,11 @@ def build_payload(compact_circuit: dict, spec: TestSpec, cluster: Cluster, *,
         "suspects": cluster.merged.to_dict(),
     }
     if circuit is not None and netlist is not None:
+        names = net_names_map(circuit, netlist)
+        seen_nets = {nid for r in reps for nid in r.net_values}
+        payload["cluster"]["net_names"] = {
+            str(nid): name for nid, name in sorted(names.items())
+            if str(nid) in seen_nets}
         indices = list(cluster.merged.suspect_indices())
         for i, comp in enumerate(circuit.components):
             if comp.element_name in _DATA_ELEMENTS and i not in indices:
@@ -736,8 +820,6 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     bindings = match_variables_to_io(spec.headers, circuit)
     rows_by_index = {r.line_index: r for r in spec.rows if not r.is_malformed}
 
-    # Passing subcircuits are replaced by their verified formula models;
-    # the whole testcase is replayed once instead of once per row.
     resolver = formula_models.resolver_for(circuit, manifest)
     if resolver.decided:
         res.notes.append(
@@ -747,17 +829,19 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
     sims: dict[int, SimResult] = {}
     row_mismatch_columns: list[set] | None = None
     row_mismatch_cells: dict[int, list[dict]] | None = None
+    try:
+        all_sims = simulate_rows(circuit, netlist, graph, spec,
+                                 model_resolver=resolver)
+    except Exception as exc:
+        res.notes.append(
+            f"evaluator error {type(exc).__name__}: {exc}"
+            + ("" if failing_indices is None
+               else "; rows are re-evaluated one by one."))
+        all_sims = {}
     if failing_indices is None:
         failing: list[int] = []
         row_mismatch_columns = []
         row_mismatch_cells = {}
-        try:
-            all_sims = simulate_rows(circuit, netlist, graph, spec,
-                                     model_resolver=resolver)
-        except Exception as exc:
-            res.notes.append(
-                f"evaluator error {type(exc).__name__}: {exc}")
-            all_sims = {}
         for row in spec.rows:
             if row.is_malformed:
                 res.notes.append(
@@ -777,14 +861,7 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                 row_mismatch_cells[row.line_index] = list(mism)
     else:
         failing = list(failing_indices)
-        try:
-            sims = simulate_rows(circuit, netlist, graph, spec, failing,
-                                 model_resolver=resolver)
-        except Exception as exc:
-            res.notes.append(
-                f"evaluator error {type(exc).__name__}: {exc}; rows are "
-                f"re-evaluated one by one.")
-            sims = {}
+        sims = {i: all_sims[i] for i in failing if i in all_sims}
         if jar_mismatches:
             sets = [
                 {c.get("column") for c in (jar_mismatches.get(i) or [])
@@ -817,6 +894,16 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
 
     res.mode = "analysis"
     sel_cols = select_columns(circuit, netlist, spec, bindings)
+    net_names = net_names_map(circuit, netlist)
+    try:
+        stuck = stuck_components(circuit, netlist, all_sims)
+    except Exception:
+        stuck = {}
+    if stuck:
+        res.notes.append(
+            "output frozen over the whole testcase although inputs vary: "
+            + ", ".join(f"{circuit.components[i].element_name}[{i}]"
+                        for i in sorted(stuck)))
     evidence: list[RowEvidence] = []
     for idx in failing:
         row = rows_by_index.get(idx)
@@ -831,6 +918,7 @@ def assemble_evidence(circuit, netlist, graph, spec: TestSpec, *,
                 circuit, netlist, graph, spec, bindings, row,
                 sel_cols=sel_cols, manifest=manifest,
                 sim=sims.get(idx), jar_cells=jar_cells, notes=res.notes,
+                stuck=stuck, net_names=net_names,
             ))
         except Exception as exc:
             res.notes.append(

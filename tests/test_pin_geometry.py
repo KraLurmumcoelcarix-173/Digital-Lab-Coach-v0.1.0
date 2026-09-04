@@ -54,6 +54,9 @@ def test_bitextender_has_in_and_out():
     positions = absolute_pin_positions(_mk("BitExtender", 0, 0, inputBits=1, outputBits=32))
     names = {spec.name for _, spec in positions}
     assert names == {"in", "out"}
+    by_name = {spec.name: (pos.x, pos.y) for pos, spec in positions}
+    assert by_name["in"] == (0, 0)
+    assert by_name["out"] == (60, 0)
 
 
 def test_barrel_shifter_has_in_sh_out():

@@ -47,8 +47,11 @@ in their `~/.dlc/config.json` as `proxy_url` / `proxy_token`).
 
 ## Notes
 
-- Budgets live in `CALL_BUDGETS` at the top of `dlc_proxy.py`
-  (per machine, per server-day, per feature).
+- Per-machine budgets live in `CALL_BUDGETS` at the top of `dlc_proxy.py`
+  (per machine, per server-day, per feature); the whole-class breaker is
+  `DLC_GLOBAL_DAILY_CALLS` (600) and `DLC_GLOBAL_DAILY_USD` (20) in the
+  environment. The README's *Changing the limits* section shows all three
+  layers side by side.
 - Storage is one SQLite file — back it up by copying it.
 - HTTPS: for a real semester put the proxy behind campus HTTPS or a
   reverse proxy (Try Caddy). Plain HTTP is fine for the second-computer smoke test.

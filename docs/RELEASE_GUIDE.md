@@ -1,8 +1,9 @@
-# Release & Course-Deployment Guide (v0.1.0)
+# Release & Course-Deployment Guide
 
 The operational runbook for shipping DLC to a class. Written for the
-instructor teaching undergraduate with Digital; students never need to read this file.
-Assumes you have been working on a fork of DLC in order to fit in your classroom.
+instructor teaching undergraduates with Digital; students never need to read this file.
+Assumes you have been working on a fork of DLC in order to fit it to your classroom.
+Version numbers below are examples — use your own tag.
 
 ## What you have
 
@@ -20,27 +21,33 @@ Three pieces:
 3. **Two secrets**: the course token students paste once, and the
    admin token only you hold that opens the admin dashboard.
 
-Prerequisites: All tests in your fork is green (`uv run pytest -q`)
+Prerequisites: all tests in your fork are green (`uv run pytest -q` —
+with `DIGITAL_JAR` set so the jar-gated tests run too), and your own
+Layer 3 replay set passes (`uv run python scripts/l3_replay.py
+<cases.json>`, see `docs/dev/test_notes.md`).
 
 ## 1. Build the zip and cut the GitHub release
 
-1. Build the student zip:
+1. Bump `version` in `pyproject.toml` and the Status line at the top of
+   the README, commit.
+
+2. Build the student zip:
    ```bash
    uv run python scripts/make_release_zip.py
    ```
 
-2. Tag and push:
+3. Tag and push:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.2
+   git push origin v0.1.2
    ```
-3. On GitHub: **Releases → Draft a new release** → choose tag,
+4. On GitHub: **Releases → Draft a new release** → choose tag,
    title, and attach `dist/DigitalLabCoach.zip` as a release asset. 
    Keep the filename exactly `DigitalLabCoach.zip` — the README Download
    button URL depends on it and will keep working for every future version. 
    Publish.
 
-4. Click the README's **Download** button to confirm it serves your zip.
+5. Click the README's **Download** button to confirm it serves your zip.
 
 ## 2. Generate the course secrets
 
@@ -81,9 +88,13 @@ malformed or the course token is missing.
 
 | Layer | Default | Tune with |
 |---|---|---|
-| Per-student daily caps | Mode A 1/day, Mode B 2/day | `dlc/l3/limits.py` `CAPS` |
+| Per-student daily caps | Mode A 1/day, Mode B 2/day | `dlc/l3/limits.py` `CAPS`; enforced only when the student app runs with `DLC_ENFORCE_LIMITS=1` (the release launchers set it) |
 | Per-machine proxy backstop | modeA 8, modeB 10, grade 2, explain 2 calls/day | `CALL_BUDGETS` in `proxy/dlc_proxy.py` |
 | Whole-server circuit breaker | 600 calls/day AND $20 est./day | env `DLC_GLOBAL_DAILY_CALLS`, `DLC_GLOBAL_DAILY_USD` |
+
+The README's *Where to change what* table lists every other knob
+(models, timeout, manifests, official tests, ROM payload, solutions
+folder).
 
 If the breaker is triggered, every AI request answers "the course server has
 reached its daily capacity" until midnight (server time).
@@ -155,7 +166,8 @@ untouched.
 
 ## 7. End-of-release checklist
 
-- [ ] Suite green (`uv run pytest -q`) on the tagged commit.
+- [ ] Suite green (`uv run pytest -q`, with `DIGITAL_JAR` set) on the tagged commit.
+- [ ] Your local Layer 3 replay set passes (`scripts/l3_replay.py`).
 - [ ] Release published; download + `START_HERE` tested on a clean machine.
 - [ ] Proxy up with fresh tokens; `/v1/health` all-true; dashboard loads.
 - [ ] One end-to-end student flow through the proxy (keyless machine).

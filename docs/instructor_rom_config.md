@@ -134,12 +134,10 @@ where `official_rows.txt` holds exactly the `content` text.
 - The words never appear in any UI, the Settings page, `list_tests()`,
   or the Mode A model payload.
 
-## 8. Quick reference (maintenance)
+## 8. Quick reference
 
 | Piece | Where |
 |---|---|
-| Defaults file | `data/official_tests_defaults.json` |
-| Payload reader | `dlc/l3/official_store.py::get_runtime_payload(filename, "rom")` |
-| Injection (tests + Mode A) | `dlc/testing/inject.py::prepare_injected_run` → `_fill_empty_roms` |
-| Fingerprint | `dlc/l3/manifest.py::normalized_test_hash` |
-| Mode A behaviors | `dlc/l3/debugger.py` (`[ROM NOTE]`), `dlc/web/l3_routes.py` (`_apply_rom_hint`) |
+| The one file to edit | `data/official_tests_defaults.json` (entry per lab filename: `content`, `sha1`, optional `runtime`) |
+| Fingerprint command | step 5 above |
+| Everything else instructors can change | the README's *Where to change what* table |

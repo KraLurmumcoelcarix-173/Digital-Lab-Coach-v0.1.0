@@ -1,5 +1,5 @@
 """
-Pin geometry for covered Digital element types (details specified at docs/digital_notes.md).
+Pin geometry for covered Digital element types (details specified at docs/dev/digital_notes.md).
 
 Digital component positions in the .dig file are anchor points. Each
 component's actual pin positions are OFFSETS from that anchor. We use a registry 
@@ -10,7 +10,6 @@ component's <pos x=.. y=..> to get the absolute pin location.
 
 For elements whose pin geometry depends on attributes, we provide a function instead
 of a static list.
-
 """
 
 from dataclasses import dataclass
@@ -25,7 +24,7 @@ class PinSpec:
     offset_x: int
     offset_y: int
     direction: str  
-    inverted: bool = False   # gate input carrying an inverter bubble (inverterConfig)
+    inverted: bool = False
 
 _NOT_PINS = [
     PinSpec("A", offset_x=0,  offset_y=0, direction="in"),
@@ -63,7 +62,7 @@ _ADD_PINS = [
 
 _BITEXTENDER_PINS = [
     PinSpec("in",  0,  0, "in"),
-    PinSpec("out", 80, 0, "out"),
+    PinSpec("out", 60, 0, "out"),
 ]
 
 _BARREL_SHIFTER_PINS = [

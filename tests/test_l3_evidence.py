@@ -240,7 +240,9 @@ def test_payload_matches_frozen_contract_shape():
     assert {"inventory", "selectors", "inputs", "outputs"} <= set(
         payload["circuit"])
     cluster = payload["cluster"]
-    assert set(cluster) == {"rows", "representative_evidence"}
+    assert set(cluster) == {"rows", "representative_evidence", "net_names"}
+    assert all(isinstance(k, str) and isinstance(v, str)
+               for k, v in cluster["net_names"].items())
     assert [set(r) for r in cluster["rows"]] == [
         {"index", "raw", "mismatches"}] * 2
     reps = cluster["representative_evidence"]
@@ -445,3 +447,22 @@ def test_address_input_drivers_traces_selector_gates():
 
     nets[0].pins.append(pin(2, "out", "out"))
     assert _address_input_drivers(circuit, netlist, 10, 0, rows) is None
+
+
+_BUG9 = ("data/sample_circuits/30_bug_benchmark/bug9_swapped_select_gate/"
+         "mini_alu_swapped_gate.dig")
+
+
+def test_bug9_payload_names_nets_and_boosts_the_select_path():
+    res = assemble_evidence_for_file(_BUG9, use_manifest=False)
+    assert res.mode == "analysis" and res.failing_count == 7
+    assert any("frozen over the whole testcase" in n and "And[12]" in n
+               for n in res.notes)
+    payload = res.payloads[0]
+    names = payload["cluster"]["net_names"]
+    assert {"S1", "isADD", "isXOR"} <= set(names.values())
+    top = payload["suspects"]["suspects"][0]
+    assert top["component_index"] == 12 and top["element_name"] == "And"
+    wiring = next(w for w in payload["suspect_wiring"]
+                  if w["component_index"] == 12)
+    assert {p.get("net") for p in wiring["pins"]} == {"isADD", "isXOR", "S1"}

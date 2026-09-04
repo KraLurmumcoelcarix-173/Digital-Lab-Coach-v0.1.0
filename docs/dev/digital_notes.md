@@ -172,15 +172,15 @@ The ablation contrast (Layer 1 alone vs Layer 1+3 vs Layer 3 alone) is the proje
 
 ## Parser scope policy
 
-DLC's parser aims to **semantically understand** elements used in COMP 311 labs so far. Other elements (transistor primitives, FPGA-specific blocks, FSM editor outputs, etc.) are parsed structurally but treated as opaque `UnknownComponent` with named pins for now. This lets the analyzer skip unrecognized components and the LLM describe them generically, while keeping the parser future-proof for new labs.
+DLC's parser aims to **semantically understand** elements used in COMP 311 labs so far. Other elements (FPGA-specific blocks, FSM editor outputs, etc.) are parsed structurally but treated as opaque `UnknownComponent` with named pins for now. This lets the analyzer skip unrecognized components and the LLM describe them generically, while keeping the parser future-proof for new labs.
 
 **Known-and-semantically-supported**:
-Wire (straight, L, diagonal), And, Or, XOr, NAnd, NOr, XNOr, Not, In, Out, Multiplexer, Demultiplexer, Splitter, Tunnel, ROM, Register, Const, Comparator, Add, BitExtender, Clock, Ground, VDD, BarrelShifter, Decoder, PriorityEncoder, Testcase, Rectangle, Seven-Seg
+Wire (straight, L, diagonal), And, Or, XOr, NAnd, NOr, XNOr, Not, In, Out, Multiplexer, Demultiplexer, Splitter, Tunnel, ROM, Register, RegisterFile, Const, Comparator (incl. `Signed`), Add, BitExtender, Clock, Ground, VDD, BarrelShifter, Decoder, PriorityEncoder, Testcase, Rectangle, Text, Seven-Seg, and the tier-2.5 switch-level elements NFET, PFET, PullUp, PullDown (r56–r58: switch-net rendering, strong/weak drive resolution, switch-level simulation; Layer 3 refuses transistor labs by design).
 
-**Annotation-only** (parsed but explicitly carry no signal pins): Testcase, Rectangle. Excluded from implicit-pin candidate set.
+**Annotation-only** (parsed but explicitly carry no signal pins): Testcase, Rectangle, Text. Excluded from implicit-pin candidate set.
 
 **Out of initial scope** (parsed but opaque, may be added later):
-all transistor-level elements, FSM elements, FPGA-board-specific blocks, Verilog wrappers, GAL/JEDEC-specific elements.
+FSM elements, FPGA-board-specific blocks, Verilog wrappers, GAL/JEDEC-specific elements, RAM.
 
 ## CLI Mode (what the autograder uses)
 
@@ -230,15 +230,17 @@ verified empirically:
 - For our parser: recursively load referenced subcircuits to fully analyze a top-level circuit.
 - Subcircuit cache is per-parse-session — same `.dig` referenced N times is loaded once. Circular references raise.
 - A referenced file with a bare name may live in any subfolder; we search recursively and pick the shallowest match (ambiguity is flagged but doesn't fail the parse).
-- **Subcircuit instance pin prediction**: every RESOLVED child gets
-  declared-pin geometry — inputs (In/Clock elements, child FILE order) at
-  `(0, i*20)` from the instance pos, outputs (file order) at
-  `(Width*20, i*20)`. A child with no `Width` attribute renders **3 grid
-  units (60 px) wide — Digital's real default** (SVG-verified on real
-  student trees; our old guess of 10 pushed outputs 140 px right and fed
-  the implicit-pin fallback, which then mislabeled pins). The implicit-pin
-  x-midpoint heuristic below now applies only to UNRESOLVED children
-  (missing files).
+- **Subcircuit instance pin prediction (r61, mirrors Digital's
+  `GenericShape`)**: every RESOLVED child gets declared-pin geometry from
+  the child's In/Clock/Out elements in FILE order. Inputs sit at
+  `(0, i*20)` and outputs at `(Width*20, i*20)` — EXCEPT when the child
+  has exactly ONE output: then the shape is symmetric, the output sits at
+  `(Width*20, inputs//2*20)` and an even input count skips the centre
+  row (2 inputs → {0,40}, 5 inputs → {0..80} with the output at +40).
+  A child with no `Width` attribute is 3 grid units (60 px) wide. Source
+  of truth: `java -cp Digital.jar CLI svg -dig f.dig -svg out.svg` (blue
+  circles = inputs, red = outputs). The implicit-pin x-midpoint heuristic
+  below applies only to UNRESOLVED children (missing files).
 - **Subcircuit instance pin direction resolution** (unresolved children only): the instance has no native geometry, so direction is inferred by splitting the instance's implicit pins at the x-midpoint (left = inputs, right = outputs), sorting each side by y, and zipping against the child circuit's `In`/`Out` elements sorted by y. Implicit-pin count is capped to the child's port count to prevent over-claim from neighboring routing.
 
 ## L1 regression ground truths (SVG-probed on real labs jar-verified)
@@ -505,7 +507,55 @@ verified empirically:
   l3_modeB_result_server, l3_accept_fix_server — authoritative rows
   (mode, cards, tokens, consumed) next to the FE click events.
 
-## Known limitations to revisit (Keep updating during path 1 development)
+## r61–r64 lore (CPU-lab rounds)
+
+- **Signed comparators** (r62): the evaluator's `Comparator` rule applies
+  two's complement at `Bits` when `Signed` is set. Before that, a
+  signed branch unit's `blt`/`bge` rows inverted and the Layer 1 overlay
+  of a full CPU drifted into a parallel execution from the first signed
+  branch on — while the jar verdicts (correct) said "passed".
+- **Formula models** (r63, `dlc/sim/models.py`): Layer 3 Mode A replaces
+  a passing child by the function it computes (ALU, control decode table,
+  register file and data memory with state, imm-gen, branch unit, the
+  Lab 3 sub-units) — only after the model reproduces every row of the
+  child's own testcase, or when the manifest's `subcircuits` block vouches
+  for it. Layer 1 never uses models. Evidence stage on the RV32I CPU:
+  40 s → 0.3 s.
+- **Single-pass replay** (r63, `RowReplay`): a testcase is replayed once,
+  keeping register state between rows; `/api/simulate` caches the replay
+  per file content, so a tick costs one row (33 ms on the CPU) instead of
+  a restart from row 0.
+- **RV32I program coach** (r64): `program_decode` drives a small
+  interpreter that follows branches/jumps and keeps data memory;
+  `encode_category_word` knows all formats; a program that parks in a
+  `jal x0, 0` halt loop gets its extension spliced in FRONT of the loop
+  (`insert_at`), with the halt rows' PC shifted (`observe.pc_port`).
+  Manifest attachment picks the manifest covering most uploaded files
+  (Lab 5 and the RV32I lab share `alu.dig` / `register-file.dig`).
+- **Two ALUs, one interface** (r64b): `lab5_alu` (shifts B by A[5:0], no
+  SLTU) and `rv32i_alu` (shifts A by B[4:0]) are told apart by each
+  file's own testcase.
+- **The gate-swap ALU** (r65): an RV32I ALU whose `isShiftGroup` was
+  built with an And instead of an Or (SLL/SRL rows return A+B) ran
+  through Mode A without a crash, yet the localizer's top-12 never held
+  the culprit — forty decode parts (comparators, constants, Or gates)
+  tied at the same score and the cap kept the LOWEST component indices,
+  so the And (the file's last component) was the first one dropped; the
+  payload also showed nets only as numbers. Fixes: (1) `witness_steer` —
+  the expected value already present on another mux arm marks the mux
+  and the logic behind the wrong `sel` bit(s) as SELECT-PATH suspects;
+  (2) `stuck_components` — outputs frozen across the whole replayed
+  testcase while inputs vary; (3) `cluster.net_names` + per-pin `net`
+  names; (4) the prompt's reading guide names both signals. Repo guard:
+  `bug9_swapped_select_gate` (own design) in the benchmark, the
+  localizer/evidence/debugger tests and the replay set. General lesson:
+  a Mode A run "works" only if the culprit is IN the evidence — check
+  the suspect list on every new failure pattern, not just the verdict.
+- **BitExtender is 60 wide** (r65, SVG-probed): in (0,0), out (60,0);
+  the table said (80,0) and a correctly wired output survived only via
+  endpoint snapping.
+
+## Known limitations to revisit
 
 
 ## Open Questions under investigation

@@ -22,7 +22,8 @@ Two local artifacts:
 A manifest holds only **input patterns and names** (which opcode values
 exist, which digit each ABCD pattern means, which known function a
 subcircuit computes). It has no expected outputs, no wiring, no solution
-content.
+content. Set `DLC_MANIFEST_DIR` to keep your manifests in a folder
+outside the repo checkout.
 
 ---
 

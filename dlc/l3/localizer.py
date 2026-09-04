@@ -147,7 +147,169 @@ _W_MUTED = 1.5
 _W_HOT = 0.5
 _W_CHILD_FAILED = 2.0
 _W_CHILD_PASSED = -1.0
+_W_WITNESS = 2.5
+_W_STUCK = 2.0
 
+_MAX_WITNESSES = 3
+_MIN_WITNESS_BITS = 2
+
+
+def _net_of_pin(netlist: NetList, comp_idx: int, pin_name: str,
+                direction: str):
+    for net in netlist.nets:
+        for p in net.pins:
+            if (p.component_index == comp_idx and p.pin_name == pin_name
+                    and p.direction == direction):
+                return net
+    return None
+
+
+def _upstream_hops(graph: nx.MultiDiGraph, start: int,
+                   limit: set[int]) -> dict[int, int]:
+    hops = {start: 0}
+    frontier = [start]
+    while frontier:
+        nxt = []
+        for n in frontier:
+            for pred in graph.predecessors(n):
+                if pred in limit and pred not in hops:
+                    hops[pred] = hops[n] + 1
+                    nxt.append(pred)
+        frontier = nxt
+    return hops
+
+
+def _wrong_bit_cone(circuit: Circuit, netlist: NetList, sel_net,
+                    diff_bits: list[int], ancestors) -> set[int] | None:
+    from dlc.facts.splitter import parse_splitting
+    drivers = [p for p in sel_net.pins if p.direction == "out"]
+    if len(drivers) != 1:
+        return None
+    d = drivers[0].component_index
+    comp = circuit.components[d]
+    if (comp.element_name != "Splitter"
+            or not drivers[0].pin_name.startswith("out")):
+        return None
+    try:
+        in_groups = parse_splitting(
+            str(comp.attributes.get("Input Splitting", "")))
+        out_groups = parse_splitting(
+            str(comp.attributes.get("Output Splitting", "")))
+        grp = out_groups[int(drivers[0].pin_name[3:])]
+    except (ValueError, IndexError):
+        return None
+    cone = {d}
+    for bit in diff_bits:
+        k = grp.bit_lo + bit
+        src = next((i for i, g in enumerate(in_groups)
+                    if g.bit_lo <= k <= g.bit_hi), None)
+        if src is None:
+            return None
+        in_net = _net_of_pin(netlist, d, f"in{src}", "in")
+        if in_net is None:
+            return None
+        for p in in_net.pins:
+            if p.direction == "out":
+                cone.add(p.component_index)
+                cone |= ancestors(p.component_index)
+    return cone
+
+
+def witness_steer(circuit: Circuit, netlist: NetList, graph: nx.MultiDiGraph,
+                  sim: SimResult, out_idx: int, exp_val: int,
+                  width: int | None, *, net_names: dict | None = None,
+                  ) -> tuple[dict[int, tuple[float, str]], list[str]]:
+    if (width is None or width < _MIN_WITNESS_BITS or exp_val is None
+            or out_idx not in graph):
+        return {}, []
+    mask = (1 << width) - 1
+    want = exp_val & mask
+    if want < 8 or want == mask:
+        return {}, []
+    out_net = _net_of_pin(netlist, out_idx, "in", "in")
+    out_nid = out_net.net_id if out_net is not None else None
+    cone = _static_cone(graph, out_idx)
+    witnesses: list[tuple[int, int]] = []
+    for nid, val in sim.net_values.items():
+        if nid == out_nid or val is None:
+            continue
+        if sim.net_bits.get(nid) != width or (val & mask) != want:
+            continue
+        net = netlist.nets[nid]
+        drivers = [p.component_index for p in net.pins if p.direction == "out"]
+        if not drivers or drivers[0] not in cone:
+            continue
+        if circuit.components[drivers[0]].element_name in (
+                "Const", "Ground", "VDD", "In"):
+            continue
+        witnesses.append((nid, drivers[0]))
+    if not witnesses or len(witnesses) > _MAX_WITNESSES:
+        return {}, []
+
+    anc_cache: dict[int, set[int]] = {}
+
+    def ancestors(n: int) -> set[int]:
+        if n not in anc_cache:
+            anc_cache[n] = set(nx.ancestors(graph, n)) if n in graph else set()
+        return anc_cache[n]
+
+    boosted: dict[int, tuple[float, str]] = {}
+    notes: list[str] = []
+    for nid, driver in witnesses:
+        name = (net_names or {}).get(nid) or f"net {nid}"
+        for m in sorted(cone):
+            comp = circuit.components[m]
+            if comp.element_name != "Multiplexer":
+                continue
+            sel_val = _mux_sel_value(circuit, netlist, sim, m)
+            if sel_val is None:
+                continue
+            arms: set[int] = set()
+            sel_preds: set[int] = set()
+            for pred, _n, edata in graph.in_edges(m, data=True):
+                pin = edata.get("sink_pin") or ""
+                if pin == "sel":
+                    sel_preds.add(pred)
+                elif pin.startswith("in") and (
+                        pred == driver or driver in ancestors(pred)):
+                    try:
+                        arms.add(int(pin[2:]))
+                    except ValueError:
+                        continue
+            if not arms or sel_val in arms:
+                continue
+            arm = min(arms, key=lambda a: (bin(a ^ sel_val).count("1"), a))
+            xor = arm ^ sel_val
+            diff_bits = [b for b in range(xor.bit_length()) if (xor >> b) & 1]
+            sel_net = _net_of_pin(netlist, m, "sel", "in")
+            steer = None
+            if sel_net is not None:
+                try:
+                    steer = _wrong_bit_cone(circuit, netlist, sel_net,
+                                            diff_bits, ancestors)
+                except Exception:
+                    steer = None
+            if steer is None:
+                steer = set(sel_preds)
+                for sp in sel_preds:
+                    steer |= ancestors(sp)
+            steer.add(m)
+            bits_txt = ", ".join(str(b) for b in diff_bits) or "?"
+            reason = (
+                f"SELECT-PATH suspect: {comp.element_name}[{m}] takes arm "
+                f"in{sel_val} while net {name} on its arm in{arm} already "
+                f"carries the expected value — the data is computed right; "
+                f"the logic behind sel bit {bits_txt} chooses the wrong arm")
+            hops = _upstream_hops(graph, m, steer)
+            for idx in steer:
+                w = round(_W_WITNESS - 0.1 * min(hops.get(idx, 8), 8), 2)
+                prev = boosted.get(idx)
+                if prev is None or w > prev[0]:
+                    boosted[idx] = (w, reason)
+            notes.append(
+                f"expected value found on net {name} (arm in{arm} of "
+                f"{comp.element_name}[{m}]); the row selects arm in{sel_val}.")
+    return boosted, notes
 
 def localize(
     circuit: Circuit,
@@ -160,6 +322,9 @@ def localize(
     run_child_self_tests: bool = False,
     jar_path: str | None = None,
     child_test_timeout: float = 60.0,
+    expected_values: dict[str, tuple[int, int | None]] | None = None,
+    stuck: dict[int, str] | None = None,
+    net_names: dict[int, str] | None = None,
 ) -> SuspectReport:
     report = SuspectReport()
     failing = [o["label"] for o in outputs_report if o.get("ok") is not True]
@@ -172,6 +337,7 @@ def localize(
 
     static_cones: dict[str, set[int]] = {}
     active_cones: dict[str, set[int]] = {}
+    steer: dict[int, tuple[float, str]] = {}
     for label in failing:
         out_idx = _output_component_index(circuit, label)
         if out_idx is None:
@@ -179,6 +345,18 @@ def localize(
             continue
         static_cones[label] = _static_cone(graph, out_idx)
         active_cones[label] = _active_cone(circuit, netlist, graph, sim, out_idx)
+        expected = (expected_values or {}).get(label)
+        if expected is not None:
+            try:
+                boosted, w_notes = witness_steer(
+                    circuit, netlist, graph, sim, out_idx, expected[0],
+                    expected[1], net_names=net_names)
+            except Exception:
+                boosted, w_notes = {}, []
+            for idx, hit in boosted.items():
+                if idx not in steer or hit[0] > steer[idx][0]:
+                    steer[idx] = hit
+            report.notes.extend(w_notes)
 
     passing_union: set[int] = set()
     for label in passing:
@@ -233,6 +411,12 @@ def localize(
         if comp.element_name in _HOT_KINDS:
             score += _W_HOT
             reasons.append("selector/splitter — semantic-miswire hot spot")
+        if idx in steer:
+            score += steer[idx][0]
+            reasons.append(steer[idx][1])
+        if stuck and idx in stuck:
+            score += _W_STUCK
+            reasons.append(stuck[idx])
 
         child_ref = None
         child_verdict = None

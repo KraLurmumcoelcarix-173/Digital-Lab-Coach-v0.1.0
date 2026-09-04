@@ -45,6 +45,19 @@ suspect gate, compute what its element kind SHOULD output from its input
 when its inputs are right but its output is only explainable by a
 DIFFERENT kind (inputs 1,0 → output 0 is correct for And but wrong for
 Or: the fix is replace_element, not rewiring).
+`cluster.net_names` maps net ids to the student's own tunnel and port
+names; read `net_values` and each suspect_wiring pin's `net` through it
+so you reason about signals ("isShiftGroup is 0 on every SLL row"), not
+bare numbers. Two localizer reasons outrank every other clue when they
+appear on a suspect:
+- "SELECT-PATH suspect": the expected value already sits on another arm
+  of that multiplexer, so the data path is RIGHT and the logic driving
+  its `sel` chose the wrong arm. Repair the select logic — run the
+  gate-kind sanity check over every boosted gate on the way to `sel` —
+  and never touch the arm's data source.
+- "its output never changes over the whole testcase although its inputs
+  do": that gate is dead on every row; its kind is the first thing to
+  question.
 
 STORED DATA (ROM / LookUpTable) — CHECK IT FIRST, NOT LAST: when a
 suspect stores data, decide the DATA story before any wiring hypothesis.

@@ -820,3 +820,18 @@ def test_opus5_thinking_depth_is_bounded():
                   failing_indices=[0, 1], model="claude-opus-5")
     assert seen.get("effort") == "low"
     assert seen.get("max_tokens") == 16000
+
+
+def test_bug9_swapped_select_gate_is_fixed_by_replace_element():
+    ops = [{"op": "replace_element", "component_index": 12, "new_element": "Or"}]
+    call = _fake([_reply(ops, why="ADD and XOR rows return the AND/OR arm.")])
+    res = debugger.debug_circuit(
+        f"{_BENCH}/bug9_swapped_select_gate/mini_alu_swapped_gate.dig",
+        call=call, use_manifest=False)
+    assert res["mode"] == "analysis" and res["llm_calls"] == 1
+    card = res["cards"][0]
+    assert card["verified"]["confirmed"] is True
+    assert card["fix"]["ops_pretty"] == ["replace [12] And with Or"]
+    prompt = call.log[0]
+    assert "SELECT-PATH suspect" in prompt and '"net_names"' in prompt
+    assert "never changes over the whole testcase" in prompt

@@ -242,3 +242,38 @@ ladder step, the weak-vs-strong scaffolding metric · `l3_fix_animation_played`
 · `l3_lazy_detected` · `l3_modeA_refunded` — an analysis run delivered zero
 cards · `l3_circuit_re_uploaded(dt)` · `l3_now_passing(row)` — logged through
 the Layer-1 sink (`dlc/telemetry/sink.py`, `POST /api/telemetry`) from day one.
+
+## 9. Addenda — behaviors added after the v1.1 freeze (contract string unchanged)
+
+- **Formula models in the evidence stage** (r63): `assemble_evidence`
+  replays the testcase once (`simulate_rows`) with passing subcircuits
+  replaced by validated formula models; the response `notes` list what
+  was substituted (`subcircuits evaluated as formula models: …`). The
+  payload shapes of §3 are unchanged — only the values arrive faster.
+- **Mode B program extensions on halt-loop programs** (r64): a program
+  group may carry `insert_at`, `insert_before_row`, `pc_shift`, `pc_col`;
+  the words are spliced in front of the loop and the rows inserted before
+  the halt rows, whose PC cell is shifted. `/api/l3/inject` accepts the
+  same four fields.
+- **Manifest attachment** (r64): the manifest that covers the most
+  uploaded filenames wins (ties keep file order), so labs can share
+  subcircuit files.
+- **Regression replay** (r65): `scripts/l3_replay.py` re-runs recorded
+  Mode A analyses against the current code with the jar; every
+  optimization of this pipeline must keep the recorded cases green.
+- **Select-path and frozen-output evidence** (r65, found on a gate-swap
+  ALU): the evidence stage now replays the WHOLE testcase once (also on
+  the jar path) and adds two localizer signals. *Witness*: when a failing
+  output's expected value already sits on another net of its cone, every
+  multiplexer fed by that net on an arm it did not select is steering the
+  output away from the right value; the mux and the logic behind its
+  `sel` — narrowed to the differing sel bits when `sel` is a joined bus —
+  get the reason `SELECT-PATH suspect: …` (weight fades with hop
+  distance). *Frozen output*: a component whose every output net keeps one
+  value across all rows while an input varies gets `its output never
+  changes over the whole testcase …`; the run's `notes` list them. Payload
+  additions (shape otherwise unchanged): `cluster.net_names` (net id →
+  the student's tunnel/port name for the nets in `representative_evidence`)
+  and a `net` name on every `suspect_wiring` pin entry. Without these a
+  swapped And/Or deep in a decode block was tie-broken out of the top-12
+  suspects by component index and the model never saw it.
